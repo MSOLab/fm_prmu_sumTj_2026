@@ -81,9 +81,7 @@ def test_cp_cpsat_circuit_runs_and_builds_schedule():
     assert total_ops == len(instance.job_id_list) * len(instance.stage_id_list)
 
     # Check objective value
-    job_2_tardiness_map = schedule.get_tardiness_map(
-        instance.job_2_duedate_map, instance.stage_id_list[-1]
-    )
+    job_2_tardiness_map = schedule.get_tardiness_map(instance.job_2_duedate_map)
     assert sum(job_2_tardiness_map.values()) == obj_value
 
     # Check permutation schedule: each stage should have the same job sequence

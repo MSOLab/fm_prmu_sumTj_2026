@@ -12,6 +12,9 @@ class FlowshopSchedule:
         self._stages: dict[str, FlowshopStage] = {}
         """Stage name -> FlowshopStage instance."""
 
+        self._last_stage_name: str | None = None
+        """Name of the last stage in the flowshop."""
+
         # Internal states
 
         self.job_2_last_oper_end_time_map: dict[str, int] = defaultdict(int)
@@ -32,9 +35,12 @@ class FlowshopSchedule:
         Returns:
             FlowshopSchedule: A new instance of FlowshopSchedule.
         """
+        assert len(stage_name_list) > 0, "Stage name list cannot be empty"
+
         schedule = cls()
         for stage_name in stage_name_list:
             schedule._stages[stage_name] = FlowshopStage(stage_name)
+        schedule._last_stage_name = stage_name_list[-1]
         return schedule
 
     def deepcopy(self) -> FlowshopSchedule:
@@ -70,6 +76,7 @@ class FlowshopSchedule:
             int: The maximum makespan across all stages.
         """
         return max((stage.makespan for stage in self._stages.values()), default=0)
+
 
     def get_stage_by_name(self, stage_name: str) -> FlowshopStage:
         """
@@ -124,9 +131,7 @@ class FlowshopSchedule:
                 return_dict[k] = v
         return return_dict
 
-    def get_tardiness_map(
-        self, job_2_duedate_map: dict[str, int], last_stage_name: str
-    ) -> dict[str, int]:
+    def get_tardiness_map(self, job_2_duedate_map: dict[str, int]) -> dict[str, int]:
         """Calculate the tardiness for each job based on the due dates provided.
 
         Args:
@@ -138,9 +143,9 @@ class FlowshopSchedule:
         """
         job_2_tardiness_map: dict[str, int] = {}
 
-        if last_stage_name not in self._stages:
-            raise ValueError(f"Last stage {last_stage_name} not found in schedule")
-        last_stage = self.get_stage_by_name(last_stage_name)
+        assert self._last_stage_name is not None, "Last stage name is not set"
+
+        last_stage = self.get_stage_by_name(self._last_stage_name)
         for operation in last_stage.operations:
             job_name = operation.job_name
             if job_name in job_2_duedate_map:
@@ -149,6 +154,18 @@ class FlowshopSchedule:
                     tardiness = operation.end - due_date
                     job_2_tardiness_map[job_name] = tardiness
         return job_2_tardiness_map
+
+    def get_total_tardiness(self, job_2_duedate_map: dict[str, int]) -> int:
+        """
+        Calculate the total tardiness of all jobs in the schedule.
+
+        Args:
+            duedate_dict (dict[str, int]): A mapping of job names to their due dates.
+
+        Returns:
+            int: The total tardiness across all jobs.
+        """
+        return sum(self.get_tardiness_map(job_2_duedate_map).values())
 
     def get_stage_2_job_list_map(self) -> dict[str, list[str]]:
         """

@@ -1,0 +1,12 @@
+# Enforce LF line endings for text files
+* text=auto eol=lf
+
+# Keep binary files untouched
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+
+# Ensure that hook scripts keep LF
+.git/hooks/* text eol=lf

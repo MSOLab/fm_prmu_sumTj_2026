@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import math
 from itertools import permutations
 
 from mbls.cpsat.cp_model_with_fixed_interval import CpModelWithFixedInterval
 from ortools.sat.python.cp_model import IntVar
+from routix.util.comparison import float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
+
+from .scheduling.flowshop_schedule import FlowshopOperation, FlowshopSchedule
 
 
 class CpCpsatCircuit(CpModelWithFixedInterval):
@@ -99,6 +103,19 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         self.minimize(total_tard)
         self.obj_var = total_tard
 
+    def set_obj_lower_bound(self, bound: float) -> None:
+        if self.obj_var is None:
+            return
+
+        # If the bound is very close to an integer, treat it as such.
+        # Otherwise, use ceiling to ensure we don't cut off valid integer solutions.
+        if float_equals(bound, round(bound)):
+            int_bound = round(bound)
+        else:
+            int_bound = math.ceil(bound)
+
+        self.add(self.obj_var >= int_bound)
+
     # Constraints
 
     def define_constraints(self) -> None:
@@ -169,3 +186,27 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
                 end_time_map[j, i] = end
 
         return start_time_map, end_time_map
+
+    def create_schedule(self) -> FlowshopSchedule:
+        start_time_map, end_time_map = self.extract_start_end_time_map()
+        schedule = FlowshopSchedule.from_stage_name_list(self.i_list)
+
+        for j in self.j_list:
+            for i in self.i_list:
+                s = int(start_time_map[j, i])
+                e = int(end_time_map[j, i])
+                op = FlowshopOperation(job_name=j, stage_name=i, start=s, end=e)
+                added = schedule.schedule_operation(op)
+                assert added is not None, f"Failed to add operation {j},{i} to schedule"
+
+        return schedule
+
+    # methods to add hints
+
+    def add_start_hints_from_start_time_map(
+        self, start_time_map: dict[tuple[str, str], int]
+    ) -> None:
+        for (j, i), s_time in start_time_map.items():
+            if (j, i) not in self.var_op_start:
+                raise KeyError(f"Invalid job-stage pair: ({j}, {i})")
+            self.add_hint(self.var_op_start[j, i], s_time)
