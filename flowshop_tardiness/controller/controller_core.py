@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from mbls.cpsat import CpsatStatus, CpSubroutineController
 from routix import DynamicDataObject, StoppingCriteria
@@ -9,6 +9,7 @@ from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
 from ..cp_cpsat_circuit import CpCpsatCircuit
 from ..painter.gantt import GanttPlotter
+from ..report import FsCpsatSolverReport
 from ..scheduling.flowshop_schedule import FlowshopSchedule
 from ..solution_manager import FsSolutionManager
 
@@ -28,7 +29,7 @@ class FlowshopTardinessControllerCore(
         self,
         instance: FlowshopDuedateParameters,
         shared_param_dict: dict,
-        subroutine_flow: DynamicDataObject,
+        subroutine_flow: Sequence[DynamicDataObject] | DynamicDataObject,
         stopping_criteria: StoppingCriteria,
     ):
         super().__init__(
@@ -282,3 +283,173 @@ class FlowshopTardinessControllerCore(
         return solver_report.obj_value
 
     # End post-run process
+
+    # Start solver call methods
+
+    def solve_current_cp_remaining_time_limit(
+        self,
+        computational_time: float,
+        solver_thread_cnt: int,
+        no_improvement_timelimit: float | None = None,
+        obj_value_is_valid: bool = False,
+        obj_bound_is_valid: bool = False,
+        is_initial_solution: bool = False,
+        error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
+    ):
+        _timelimit = self.get_remaining_time_limit(computational_time)
+
+        # Utilize the objective bound if available
+        if obj_value_is_valid and self.solution_manager.best_obj_bound is not None:
+            self.cp_model.set_obj_lower_bound(self.solution_manager.best_obj_bound)
+
+        # mdl_txt_path = self.get_file_path_for_subroutine("_cp_sat_model.txt")
+        # self.cp_model.export_to_file(str(mdl_txt_path))
+
+        solver_report = self.solve_current_cp_model(
+            _timelimit,
+            solver_thread_cnt,
+            no_improvement_timelimit=no_improvement_timelimit,
+            random_seed=self.random_seed,
+            e_timer=self.timer,
+            log_level_obj_value=logging.INFO,
+            log_level_obj_bound=logging.INFO,
+            obj_value_is_valid=obj_value_is_valid,
+            obj_bound_is_valid=obj_bound_is_valid,
+        )
+
+        solver_report = FsCpsatSolverReport.from_other(
+            solver_report, is_init=is_initial_solution
+        )
+
+        # If the objective value or bound is not valid, use the best known values.
+        report_updates: dict[str, Any] = {}
+        if obj_value_is_valid:
+            report_updates["obj_value"] = solver_report.obj_value
+        else:
+            report_updates["obj_value"] = self.solution_manager.best_obj_value
+        if obj_bound_is_valid:
+            report_updates["obj_bound"] = solver_report.obj_bound
+        else:
+            report_updates["obj_bound"] = self.solution_manager.best_obj_bound
+
+        if report_updates:
+            solver_report = solver_report.copy(
+                obj_value=report_updates.get("obj_value"),
+                obj_bound=report_updates.get("obj_bound"),
+            )
+
+        if solver_report.obj_value is None:
+            if obj_value_is_valid:
+                logging.warning("Failed to find a valid objective value.")
+                return
+        else:
+            solution: FlowshopSchedule | None = None
+            if solver_report.is_feasible:
+                solution = self.cp_model.create_schedule()
+                if error_if_infeasible:
+                    self.check_feasibility(solution.get_start_time_map())
+                obj_value_by_solution = solution.get_total_tardiness(
+                    self.instance.job_2_duedate_map
+                )
+                if obj_value_by_solution != solver_report.obj_value:
+                    # schedule_Tj_map = solution.get_tardiness_map(
+                    #     self.instance.job_2_duedate_map
+                    # )
+                    # solver_Tj_map = self.cp_model.extract_Tj_map()
+                    # # Compute per-job differences (solver Tj - schedule Tj)
+                    # solver_minus_schedule_map = {}
+                    # for j, schedule_val in schedule_Tj_map.items():
+                    #     solver_val = solver_Tj_map.get(j, 0)
+                    #     if solver_val != schedule_val:
+                    #         solver_minus_schedule_map[j] = solver_val - schedule_val
+
+                    # # If there are any differences, raise an error with details
+                    # if solver_minus_schedule_map:
+                    #     raise ValueError(
+                    #         "Per-job tardiness differences (solver Tj - schedule Tj): %s",
+                    #         solver_minus_schedule_map,
+                    #     )
+
+                    # if sum(solver_Tj_map.values()) != obj_value_by_solution:
+                    #     raise ValueError(
+                    #         "Sum of per-job tardiness from solver (%d) does not match "
+                    #         "objective value from solution (%d)."
+                    #         % (sum(solver_Tj_map.values()), obj_value_by_solution)
+                    #     )
+
+                    # if sum(schedule_Tj_map.values()) != solver_report.obj_value:
+                    #     raise ValueError(
+                    #         "Sum of per-job tardiness from schedule (%d) does not match "
+                    #         "objective value from solver (%d)."
+                    #         % (sum(schedule_Tj_map.values()), solver_report.obj_value)
+                    #     )
+                    if obj_value_by_solution > solver_report.obj_value:
+                        raise ValueError(
+                            f"Objective value mismatch: Reported {solver_report.obj_value}, "
+                            f"Calculated {obj_value_by_solution}"
+                        )
+                    else:  # obj_value_by_solution < solver_report.obj_value
+                        logging.warning(
+                            f"Objective value discrepancy: Reported {solver_report.obj_value}, "
+                            f"Calculated {obj_value_by_solution}"
+                        )
+                        last_timestamp = self.timer.elapsed_sec
+                        self.add_obj_value_log(
+                            last_timestamp,
+                            obj_value_by_solution,
+                            is_maximize=False,
+                        )
+                        extended_obj_value_records = solver_report.obj_value_records
+                        extended_obj_value_records.append(
+                            (last_timestamp, obj_value_by_solution)
+                        )
+                        solver_report = FsCpsatSolverReport(
+                            elapsed_time=solver_report.elapsed_time,
+                            obj_value=obj_value_by_solution,
+                            obj_bound=solver_report.obj_bound,
+                            status=solver_report.status,
+                            obj_value_records=extended_obj_value_records,
+                            obj_bound_records=solver_report.obj_bound_records,
+                            is_init=solver_report.is_init,
+                        )
+                # Register the solution
+                was_updated = self.solution_manager.register(solver_report, solution)
+                if was_updated and draw_gantt:
+                    self.draw_incumbent_gantt()
+
+    def solve_with_initial_solution(
+        self,
+        computational_time: float,
+        solver_thread_cnt: int,
+        no_improvement_timelimit: float | None = None,
+        obj_value_is_valid: bool = False,
+        obj_bound_is_valid: bool = False,
+        error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
+    ):
+        incumbent_solution = self.solution_manager.get_incumbent()
+        is_initial_run = incumbent_solution is None
+
+        if incumbent_solution:
+            self.cp_model.clear_hints()
+            logging.info(
+                "Applying incumbent solution with objValue "
+                f"{incumbent_solution.makespan} as a hint."
+            )
+            self.cp_model.add_start_hints_from_start_time_map(
+                incumbent_solution.get_start_time_map(),
+            )
+
+        self.solve_current_cp_remaining_time_limit(
+            computational_time,
+            solver_thread_cnt,
+            no_improvement_timelimit=no_improvement_timelimit,
+            obj_value_is_valid=obj_value_is_valid,
+            obj_bound_is_valid=obj_bound_is_valid,
+            is_initial_solution=is_initial_run,
+            error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
+        )
+
+    # End solver call methods
