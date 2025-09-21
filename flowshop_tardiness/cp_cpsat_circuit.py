@@ -33,12 +33,23 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     """$P_{ji}$: processing time of job j at stage i"""
 
     D: dict[str, int]
-    """$D_{j}$: due date of job j"""
+    """$D_j$: due date of job j"""
+
+    # Variables
+
+    var_Tj: dict[str, IntVar]
+    """$T_j$: tardiness of job j"""
+
+    # var_Lj: dict[str, IntVar]
+    # """$L_j$: lateness of job j"""
+
+    # var_Uj: dict[str, IntVar]
+    # """$U_j$: binary variable indicating if job j is late (1 if late, 0 otherwise)"""
 
     # Objective
 
     obj_var: IntVar
-    """Defines the makespan objective for the scheduling problem."""
+    """Defines the objective for the scheduling problem."""
 
     def __init__(self, horizon: int) -> None:
         super().__init__(horizon)
@@ -70,9 +81,9 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         self.i_list = instance.stage_id_list
         _p = instance.p_manager.job_stage_2_value_map(self.j_list, self.i_list)
         self.p = {
-            (j, i): int(float(_p[j, i])) for j in self.j_list for i in self.i_list
+            (j, i): int(round(_p[j, i])) for j in self.j_list for i in self.i_list
         }
-        self.D = {j: int(float(instance.job_2_duedate_map[j])) for j in self.j_list}
+        self.D = {j: int(round(instance.job_2_duedate_map[j])) for j in self.j_list}
 
     # Variables
 
@@ -85,23 +96,111 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     # Objective
 
     def define_total_tardiness_objective(self) -> None:
-        """Total tardiness objective: minimize sum_j max(end_j - D_j, 0)."""
+        """
+        Total tardiness objective: minimize \\sum_j{T_j} where T_j := max(end_j - D_j, 0).
+
+        Rationale for not using add_max_equality:
+        https://d-krupke.github.io/cpsat-primer/04_modelling.html?highlight=add_max_equality#04-modelling-absmaxmin
+        """
         j_list = self.j_list
         last_i = self.i_list[-1]
 
-        tard_vars: list[IntVar] = []
+        self.var_Tj = {}
+        total_ub = 0
         for j in j_list:
-            tard_j = self.new_int_var(0, self.horizon - self.D[j], f"tard_{j}")
-            self.add_max_equality(tard_j, [self.var_op_end[j, last_i] - self.D[j], 0])
-            tard_vars.append(tard_j)
+            ub = max(self.horizon - self.D[j], 0)
+            self.var_Tj[j] = self.new_int_var(0, ub, f"T_{j}")
+            self.add(self.var_Tj[j] >= self.var_op_end[j, last_i] - self.D[j])
+            total_ub += ub
 
-        total_ub = sum(self.horizon - self.D[j] for j in j_list)
-        total_tard = self.new_int_var(0, total_ub, "total_tardiness")
-        # sum equality
-        self.add(total_tard == sum(tard_vars))
+        self.obj_var = self.new_int_var(0, total_ub, "sum_Tj")
+        self.add(self.obj_var == sum(self.var_Tj[j] for j in j_list))
 
-        self.minimize(total_tard)
-        self.obj_var = total_tard
+        self.minimize(self.obj_var)
+
+    def define_total_tardiness_objective_max_equality(self) -> None:
+        """
+        Total tardiness objective: minimize \\sum_j{T_j} where T_j := max(end_j - D_j, 0).
+
+        Uses `add_max_equality` for clarity.
+        """
+        j_list = self.j_list
+        last_i = self.i_list[-1]
+
+        self.var_Tj = {}
+        total_ub = 0
+        for j in j_list:
+            ub = max(self.horizon - self.D[j], 0)
+            self.var_Tj[j] = self.new_int_var(0, ub, f"T_{j}")
+            self.add_max_equality(
+                self.var_Tj[j], [self.var_op_end[j, last_i] - self.D[j], 0]
+            )
+            total_ub += ub
+
+        self.obj_var = self.new_int_var(0, total_ub, "sum_Tj")
+        self.add(self.obj_var == sum(self.var_Tj[j] for j in j_list))
+
+        self.minimize(self.obj_var)
+
+    # def define_total_tardiness_objective_1(self) -> None:
+    #     """Total tardiness objective: minimize \\sum_j{T_j} where T_j := max(end_j - D_j, 0)."""
+    #     j_list = self.j_list
+    #     last_i = self.i_list[-1]
+
+    #     self.var_Lj = {}
+    #     self.var_Uj = {}
+    #     self.var_Tj = {}
+    #     total_ub = 0
+    #     for j in j_list:
+    #         self.var_Uj[j] = self.new_bool_var(f"U_{j}")
+
+    #         self.var_Lj[j] = self.new_int_var(
+    #             -self.D[j], self.horizon - self.D[j], f"L_{j}"
+    #         )
+    #         self.add(self.var_Lj[j] == self.var_op_end[j, last_i] - self.D[j])
+
+    #         self.add(self.var_Lj[j] >= 1).only_enforce_if(self.var_Uj[j])
+    #         self.add(self.var_Lj[j] <= 0).only_enforce_if(self.var_Uj[j].Not())
+
+    #         ub = max(self.horizon - self.D[j], 0)
+    #         self.var_Tj[j] = self.new_int_var(0, ub, f"T_{j}")
+    #         self.add(self.var_Tj[j] == self.var_Lj[j]).only_enforce_if(self.var_Uj[j])
+    #         self.add(self.var_Tj[j] == 0).only_enforce_if(self.var_Uj[j].Not())
+    #         total_ub += ub
+
+    #     self.obj_var = self.new_int_var(0, total_ub, "sum_Tj")
+    #     self.add(self.obj_var == sum(self.var_Tj[j] for j in j_list))
+
+    #     self.minimize(self.obj_var)
+
+    # def define_total_tardiness_objective_2(self) -> None:
+    #     """Total tardiness objective: minimize \\sum_j{T_j} where T_j := max(end_j - D_j, 0)."""
+    #     j_list = self.j_list
+    #     last_i = self.i_list[-1]
+
+    #     self.var_Lj = {}
+    #     self.var_Ej = {}
+    #     self.var_Tj = {}
+    #     total_ub = 0
+    #     for j in j_list:
+    #         self.var_Lj[j] = self.new_int_var(
+    #             -self.D[j], self.horizon - self.D[j], f"L_{j}"
+    #         )
+    #         self.add(self.var_Lj[j] == self.var_op_end[j, last_i] - self.D[j])
+
+    #         self.var_Ej[j] = self.new_int_var(0, self.D[j], f"E_{j}")
+
+    #         ub = max(self.horizon - self.D[j], 0)
+    #         self.var_Tj[j] = self.new_int_var(0, ub, f"T_{j}")
+
+    #         self.add(self.var_Lj[j] == self.var_Tj[j] - self.var_Ej[j])
+
+    #         total_ub += ub
+
+    #     self.obj_var = self.new_int_var(0, total_ub, "sum_Tj")
+    #     self.add(self.obj_var == sum(self.var_Tj[j] for j in j_list))
+
+    #     self.minimize(self.obj_var)
 
     def set_obj_lower_bound(self, bound: float) -> None:
         if self.obj_var is None:
@@ -153,7 +252,8 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         self.add_circuit(arc_list)
 
         # Link circuit arcs with start/end times
-        # If arc (j, j') is selected, then end_j <= start_j'
+        # If arc (j, j') is selected, then end_j <= start_j' \forall j\in J, j'\in J, j \neq j'
+        # Dummy arcs are not time-linked intentionally
         for jInt, jpInt in permutations(integer_j_list, 2):
             j = integer_j_2_j_map.get(jInt, "dummy")
             jp = integer_j_2_j_map.get(jpInt, "dummy")
@@ -186,6 +286,17 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
                 end_time_map[j, i] = end
 
         return start_time_map, end_time_map
+
+    def extract_Tj_map(self) -> dict[str, int]:
+        """Extract per-job tardiness T_j values from solved CP model.
+
+        Returns:
+            dict[str, int]: job -> T_j
+        """
+        Tj_map: dict[str, int] = {}
+        for j, var in self.var_Tj.items():
+            Tj_map[j] = self.solver.value(var)
+        return Tj_map
 
     def create_schedule(self) -> FlowshopSchedule:
         start_time_map, end_time_map = self.extract_start_end_time_map()

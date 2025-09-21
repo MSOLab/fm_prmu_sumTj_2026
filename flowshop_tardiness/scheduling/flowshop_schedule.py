@@ -151,8 +151,7 @@ class FlowshopSchedule:
             if job_name in job_2_duedate_map:
                 due_date = job_2_duedate_map[job_name]
                 if operation.end > due_date:
-                    tardiness = operation.end - due_date
-                    job_2_tardiness_map[job_name] = tardiness
+                    job_2_tardiness_map[job_name] = operation.end - due_date
         return job_2_tardiness_map
 
     def get_total_tardiness(self, job_2_duedate_map: dict[str, int]) -> int:
