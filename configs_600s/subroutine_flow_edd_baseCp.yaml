@@ -1,0 +1,9 @@
+- method: set_random_seed
+  seed: 42
+- method: initialize_by_edd
+  draw_gantt: True
+- method: solve_base_cp_model
+  computational_time: 600
+  solver_thread_cnt: 8
+  is_initial_solution: False
+  draw_gantt: False

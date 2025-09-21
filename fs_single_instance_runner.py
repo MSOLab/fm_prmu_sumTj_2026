@@ -1,7 +1,7 @@
 import datetime
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from mbls.cpsat import ObjValueBoundStore
 from routix import DynamicDataObject, StoppingCriteria
@@ -40,7 +40,7 @@ class FsSingleInstanceRunner(
         self,
         instance: FlowshopDuedateParameters,
         shared_param_dict: dict,
-        subroutine_flow: DynamicDataObject,
+        subroutine_flow: Sequence[DynamicDataObject] | DynamicDataObject,
         stopping_criteria: StoppingCriteria,
         output_dir: Path,
         output_metadata: dict[str, Any],
@@ -277,9 +277,22 @@ if __name__ == "__main__":
     with vrm_path.open("r") as f:
         instance = FlowshopDuedateParameters.from_vrm_data("test", f)
         shared_param_dict = {"horizon": 100000}
-        subroutine_flow = DynamicDataObject.from_dict({"method": "initialize_by_edd"})
+        # subroutine_flow = DynamicDataObject.from_dict({"method": "initialize_by_edd"})
+        subroutine_flow = DynamicDataObject.from_sequence(
+            [
+                {"method": "set_random_seed", "seed": 0},
+                {"method": "initialize_by_edd"},
+                {
+                    "method": "solve_base_cp_model",
+                    "computational_time": 12,
+                    "solver_thread_cnt": 1,
+                    "is_initial_solution": False,
+                    "draw_gantt": False,
+                },
+            ]
+        )
         stopping_criteria = StoppingCriteria.from_dict({"timelimit": 60})
-        output_dir = repo_root / "test_output"
+        output_dir = repo_root / "Outputs/singleInsRunnerMain"
         output_metadata = {}
 
         runner = FsSingleInstanceRunner(

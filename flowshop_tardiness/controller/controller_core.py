@@ -432,10 +432,13 @@ class FlowshopTardinessControllerCore(
         is_initial_run = incumbent_solution is None
 
         if incumbent_solution:
+            incumbent_obj_value = incumbent_solution.get_total_tardiness(
+                self.instance.job_2_duedate_map
+            )
             self.cp_model.clear_hints()
             logging.info(
                 "Applying incumbent solution with objValue "
-                f"{incumbent_solution.makespan} as a hint."
+                f"{incumbent_obj_value} as a hint."
             )
             self.cp_model.add_start_hints_from_start_time_map(
                 incumbent_solution.get_start_time_map(),

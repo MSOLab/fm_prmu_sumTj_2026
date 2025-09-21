@@ -29,7 +29,7 @@ class FsSolutionManager(SolutionManager[FsSubroutineReport, FlowshopSchedule]):
         # False if close enough (considering floating point precision)
         if float_equals(value_a, value_b):
             return False
-        # A smaller makespan is better (minimization).
+        # A smaller objective value is better (minimization).
         return value_a < value_b
 
     def _a_is_better_obj_bound(self, bound_a: float, bound_b: float | None) -> bool:

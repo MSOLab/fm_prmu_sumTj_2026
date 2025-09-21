@@ -7,9 +7,11 @@ requires-python = "==3.11.*"
 dependencies = [
     "mbls",
     "ortools>=9.14.6206",
+    "pydantic>=2.11.9",
     "pyyaml>=6.0.2",
     "routix",
     "schore",
+    "xlsxwriter>=3.2.9",
 ]
 license = { text = "MIT" }
 
