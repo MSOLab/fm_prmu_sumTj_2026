@@ -1,4 +1,6 @@
+import datetime
 import logging
+import math
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -25,6 +27,11 @@ class FlowshopTardinessControllerCore(
     """Total elapsed time for the controller."""
 
     # End controller state
+
+    # Start controller pre-defined values
+    method_names_to_run_before_resume: set[str]
+    """Name of methods to run before resuming from a paused state."""
+
     def __init__(
         self,
         instance: FlowshopDuedateParameters,
@@ -41,6 +48,12 @@ class FlowshopTardinessControllerCore(
         )
         self.solution_manager = FsSolutionManager()
         self.solution_manager.set_job_2_duedate_map(instance.job_2_duedate_map)
+
+        self.method_names_to_run_before_resume = {
+            "set_random_seed",
+            "set_cp_model_as_base_cp_model",
+        }
+        assert "" not in self.method_names_to_run_before_resume
 
         # Frequently used parameters
         self.job_2_stage_2_p_dict = self.instance.p_manager.job_2_stage_2_value_map(
@@ -208,8 +221,25 @@ class FlowshopTardinessControllerCore(
             self._subroutine_flow, (str, bytes)
         ):
             for idx, subroutine_data in enumerate(self._subroutine_flow):
-                skip_method_call = idx < flow_resume_idx
-                self._run_flow(subroutine_data, skip_method_call=skip_method_call)
+                # Always run specific initializer methods when resuming
+                # even if they were already executed before pausing.
+                # e.g., set_random_seed, set_cp_model_as_base_cp_model
+                # Treat their execution as not consuming the global timelimit.
+                if idx < flow_resume_idx:
+                    if (
+                        subroutine_data.get("method", "")
+                        in self.method_names_to_run_before_resume
+                    ):
+                        e_timer = ElapsedTimer()
+                        self._run_flow(subroutine_data)
+                        virtual_dt = datetime.datetime.now() - datetime.timedelta(
+                            seconds=e_timer.elapsed_sec
+                        )
+                        self.timer.set_start_time(virtual_dt)
+                    else:
+                        self._run_flow(subroutine_data, skip_method_call=True)
+                else:
+                    self._run_flow(subroutine_data)
         else:
             logging.warning(
                 "Subroutine flow is not a sequence; running as a single step."
@@ -363,7 +393,11 @@ class FlowshopTardinessControllerCore(
         _timelimit = self.get_remaining_time_limit(computational_time)
 
         # Utilize the objective bound if available
-        if obj_value_is_valid and self.solution_manager.best_obj_bound is not None:
+        if (
+            obj_value_is_valid
+            and self.solution_manager.best_obj_bound is not None
+            and not math.isnan(self.solution_manager.best_obj_bound)
+        ):
             self.cp_model.set_obj_lower_bound(self.solution_manager.best_obj_bound)
 
         # mdl_txt_path = self.get_file_path_for_subroutine("_cp_sat_model.txt")

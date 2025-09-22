@@ -225,9 +225,13 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
 
     #     self.minimize(self.obj_var)
 
-    def set_obj_lower_bound(self, bound: float) -> None:
-        if self.obj_var is None:
+    def set_obj_lower_bound(self, bound: float | None) -> None:
+        if bound is None:
             return
+        if math.isnan(bound):
+            return
+        if self.obj_var is None:
+            raise ValueError("Objective variable is not defined yet.")
 
         # If the bound is very close to an integer, treat it as such.
         # Otherwise, use ceiling to ensure we don't cut off valid integer solutions.

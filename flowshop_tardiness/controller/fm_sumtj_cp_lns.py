@@ -9,6 +9,14 @@ from .controller_core import FlowshopTardinessControllerCore
 
 
 class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
+    # Subroutine: methods to run before resuming from a paused state.
+
+    def set_random_seed(self, seed: int):
+        return super().set_random_seed(seed)
+
+    def set_cp_model_as_base_cp_model(self) -> None:
+        return super().set_cp_model_as_base_cp_model()
+
     # Subroutine: solve base CP model
 
     def solve_base_cp_model(
