@@ -47,12 +47,9 @@ class FlowshopTardinessControllerCore(
             self.instance.job_id_list, self.instance.stage_id_list
         )
         """Job name -> stage name -> processing time map"""
-        self.stage_2_job_2_p_dict = self.instance.p_manager.stage_2_job_2_value_map(
-            self.instance.stage_id_list, self.instance.job_id_list
-        )
-        """Stage name -> job name -> processing time map"""
 
         logging.info(
+            f"Controller initialized; took {self.timer.elapsed_sec:.3f} sec. "
             f"Start solving {self.instance.name} using CP model class:"
             f" {self.cp_model_class.__module__}.{self.cp_model_class.__name__}",
         )

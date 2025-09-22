@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 import math
 from itertools import permutations
 
 from mbls.cpsat.cp_model_with_fixed_interval import CpModelWithFixedInterval
 from ortools.sat.python.cp_model import IntVar
+from routix import ElapsedTimer
 from routix.util.comparison import float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
@@ -63,10 +65,21 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         return result
 
     def define_model(self, instance: FlowshopDuedateParameters) -> None:
+        elapsed = ElapsedTimer()
         self.define_parameters(instance)
+        logging.info(f"Defined parameters; took {elapsed.elapsed_sec:.3f} sec.")
+
+        elapsed.set_start_time_as_now()
         self.define_variables()
+        logging.info(f"Defined variables; took {elapsed.elapsed_sec:.3f} sec.")
+
+        elapsed.set_start_time_as_now()
         self.define_total_tardiness_objective()
+        logging.info(f"Defined objective; took {elapsed.elapsed_sec:.3f} sec.")
+
+        elapsed.set_start_time_as_now()
         self.define_constraints()
+        logging.info(f"Defined constraints; took {elapsed.elapsed_sec:.3f} sec.")
 
     # Parameters
 
@@ -222,11 +235,16 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         j_list = self.j_list
         i_list = self.i_list
 
+        timer = ElapsedTimer()
+
         # Precedence between consecutive stages for each job
         consecutive_stage_pairs = list(zip(i_list[:-1], i_list[1:]))
         for jInt in j_list:
             for i, next_i in consecutive_stage_pairs:
                 self.add(self.var_op_end[jInt, i] <= self.var_op_start[jInt, next_i])
+
+        logging.info(f"  Precedence constraints took {timer.elapsed_sec:.3f} sec.")
+        timer.set_start_time_as_now()
 
         # NoOverlap on each stage: needless since circuit constraint implies it
         # for i in i_list:
@@ -251,17 +269,29 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         # Single hamiltonian circuit
         self.add_circuit(arc_list)
 
+        logging.info(f"  Circuit constraints took {timer.elapsed_sec:.3f} sec.")
+        timer.set_start_time_as_now()
+
         # Link circuit arcs with start/end times
         # If arc (j, j') is selected, then end_j <= start_j' \forall j\in J, j'\in J, j \neq j'
         # Dummy arcs are not time-linked intentionally
+        lb = -self.horizon
+        ub = 0
         for jInt, jpInt in permutations(integer_j_list, 2):
             j = integer_j_2_j_map.get(jInt, "dummy")
             jp = integer_j_2_j_map.get(jpInt, "dummy")
             j_before_jp = arcs[jInt, jpInt]
+
             for i in i_list:
-                self.add(
-                    self.var_op_end[j, i] <= self.var_op_start[jp, i],
-                ).only_enforce_if(j_before_jp)
+                self.add_linear_constraint_enforced_fast(
+                    var_list=[self.var_op_end[j, i], self.var_op_start[jp, i]],
+                    coeff_list=[1, -1],
+                    domain=(lb, ub),
+                    enforcers=[j_before_jp],
+                )
+
+        logging.info(f"  Time-linking constraints took {timer.elapsed_sec:.3f} sec.")
+        # timer.set_start_time_as_now()
 
     # Extraction methods
 
