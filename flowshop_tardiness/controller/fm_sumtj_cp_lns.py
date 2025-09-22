@@ -18,7 +18,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         draw_gantt: bool = False,
     ):
         """
-        Solve the base CP model for the hybrid flow shop problem.
+        Solve the base CP model for the F|prmu|C_max problem.
 
         This method resets the CP model and solves it with the given computational time and number of workers.
         - If `is_initial_solution` is True, the solution is treated as the initial solution (e.g., for logging or summary purposes).
@@ -59,7 +59,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         # Create an empty schedule
         schedule = FlowshopSchedule.from_stage_name_list(self.instance.stage_id_list)
         # Dispatch
-        job_sequence = self.get_edd_sequence()
         for j in job_sequence:
             added = schedule.dispatch_job_by_stages(
                 j, self.instance.stage_id_list, self.job_2_stage_2_p_dict[j]
