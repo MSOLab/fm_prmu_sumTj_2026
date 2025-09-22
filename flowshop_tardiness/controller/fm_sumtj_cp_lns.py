@@ -78,7 +78,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         sub_timer = ElapsedTimer()
         schedule = self.get_dispatched_schedule(job_sequence)
         if error_if_infeasible:
-            self.check_feasibility(schedule.get_start_time_map())
+            self.check_feasibility(schedule)
         obj_value = schedule.get_total_tardiness(self.instance.job_2_duedate_map)
         logging.info(log_msg_format.format(obj_value=obj_value))
 

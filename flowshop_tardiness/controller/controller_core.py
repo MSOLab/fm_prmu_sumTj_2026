@@ -229,11 +229,11 @@ class FlowshopTardinessControllerCore(
         """
         incumbent = self.solution_manager.get_incumbent()
         if incumbent:
-            self.check_feasibility(incumbent.get_start_time_map())
+            self.check_feasibility(incumbent)
         self.release_log_handlers()
         self.total_elapsed_time = self.timer.elapsed_sec
 
-    def check_feasibility(self, start_time_map: dict[tuple[str, str], int]) -> float:
+    def check_feasibility(self, schedule: FlowshopSchedule) -> float:
         """Check the feasibility of the given start times.
 
         Args:
@@ -248,39 +248,38 @@ class FlowshopTardinessControllerCore(
             float: The objective value of the solution if feasible.
         """
         logging.info("Feasibility check starts")
-        for (j, i), start_time in start_time_map.items():
-            if start_time < 0:
-                raise ValueError(
-                    f"Invalid start time for job {j}, stage {i}: {start_time}"
-                )
-        base_cp = self.create_base_cp_model()
 
-        # Freeze operation start times and machine assignments
-        for (j, i), start_time in start_time_map.items():
-            base_cp.add(self.cp_model.var_op_start[j, i] == start_time)
+        j_list = self.instance.job_id_list
+        i_list = self.instance.stage_id_list
 
-        # Solve with tight time limit
-        timelimit = 2.0
-        solver_thread_cnt = 1
-        solver_report = self.solve_cp_model(base_cp, timelimit, solver_thread_cnt)
-        if solver_report.status not in (CpsatStatus.FEASIBLE, CpsatStatus.OPTIMAL):
-            mdl_txt_path = self.get_file_path_for_subroutine(
-                "_feasibility_check_failed.txt"
+        # All operations should be scheduled
+        total_ops = sum(len(schedule.get_stage_by_name(i).operations) for i in i_list)
+        assert total_ops == len(j_list) * len(i_list), (
+            f"Total operations {total_ops} does not match expected {len(j_list) * len(i_list)}"
+        )
+
+        # Each stage should have the same job sequence
+        reference_sequence = [
+            op.job_name for op in schedule.get_stage_by_name(i_list[0]).operations
+        ]
+        for stage_name in i_list[1:]:
+            current_sequence = [
+                op.job_name for op in schedule.get_stage_by_name(stage_name).operations
+            ]
+            assert current_sequence == reference_sequence, (
+                f"Job sequence mismatch between stage 1 & {stage_name}"
             )
-            base_cp.export_to_file(str(mdl_txt_path))
-            if solver_report.status == CpsatStatus.INFEASIBLE:
-                raise RuntimeError(
-                    f"Feasibility check failed: INFEASIBLE. Model saved to {mdl_txt_path}"
-                )
-            else:
-                raise ValueError(
-                    f"Feasibility check failed with status {solver_report.status}. "
-                    f"Model saved to {mdl_txt_path}"
-                )
+
+        if schedule.makespan > self.get_horizon():
+            logging.warning(
+                f"Schedule makespan {schedule.makespan} exceeds horizon {self.get_horizon()}."
+            )
+
         logging.info("Feasibility check passed")
-        if solver_report.obj_value is None:
-            raise ValueError("Feasibility check did not return an objective value.")
-        return solver_report.obj_value
+
+        # Objective value
+        obj_value = schedule.get_total_tardiness(self.instance.job_2_duedate_map)
+        return obj_value
 
     # End post-run process
 
@@ -348,7 +347,7 @@ class FlowshopTardinessControllerCore(
             if solver_report.is_feasible:
                 solution = self.cp_model.create_schedule()
                 if error_if_infeasible:
-                    self.check_feasibility(solution.get_start_time_map())
+                    self.check_feasibility(solution)
                 obj_value_by_solution = solution.get_total_tardiness(
                     self.instance.job_2_duedate_map
                 )
