@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 from typing import Any, Sequence
 
+import numpy as np
 import pandas as pd
 from routix import DynamicDataObject, StoppingCriteria
 from routix.runner import MultiScenarioRunner
@@ -203,32 +204,36 @@ class FsMultiScenarioRunner(
             rpd_col_name_format = self.base_output_metadata.get(
                 "rpd_col_name_format", "RPD_{}"
             )
-            gal_col_name_format = self.base_output_metadata.get(
+            gap_col_name_format = self.base_output_metadata.get(
                 "gap_col_name_format", "Gap_{}"
             )
             scenarios = [
                 col for col in best_obj_value_df.columns if col != "instanceName"
             ]
-            if (
+
+            has_baseline_val = (
                 "baselineObjVal" in dashboard_df.columns
                 and dashboard_df["baselineObjVal"].notna().any()
-            ):
+            )
+            has_baseline_bound = (
+                "baselineBound" in dashboard_df.columns
+                and dashboard_df["baselineBound"].notna().any()
+            )
+
+            if has_baseline_val:
+                bks = dashboard_df["baselineObjVal"]
                 for scenario in scenarios:
-                    rpd_col_name = rpd_col_name_format.format(scenario)
-                    dashboard_df[rpd_col_name] = (
-                        dashboard_df[scenario] - dashboard_df["baselineObjVal"]
-                    ) / dashboard_df["baselineObjVal"]
-                    gap_col_name = gal_col_name_format.format(scenario)
-                    # if dashboard_df["baselineBound"] == 0 & dashboard_df[scenario] == 0, set gap to 0
-                    # elif dashboard_df["baselineBound"] == 0 & dashboard_df[scenario] > 0, set gap to 1
-                    # else, (UB-LB)/UB
-                    dashboard_df[gap_col_name] = (
-                        (dashboard_df[scenario] - dashboard_df["baselineBound"])
-                        / dashboard_df[scenario]
-                        .replace(0, pd.NA)
-                        .fillna(
-                            (dashboard_df[scenario] > 0).astype(int)
-                        )  # 0 if both are 0, else 1
+                    sc = dashboard_df[scenario]
+                    dashboard_df[rpd_col_name_format.format(scenario)] = case_ratio(
+                        sc - bks, bks
+                    )
+
+            if has_baseline_bound:
+                lb = dashboard_df["baselineBound"]
+                for scenario in scenarios:
+                    ub = dashboard_df[scenario]  # here "ub" is the scenario objective
+                    dashboard_df[gap_col_name_format.format(scenario)] = case_ratio(
+                        ub - lb, lb
                     )
 
             # 4. Define the desired column order
@@ -246,9 +251,9 @@ class FsMultiScenarioRunner(
                 if rpd_col_name_format.format(scenario) in dashboard_df
             ]
             gap_cols = [
-                gal_col_name_format.format(scenario)
+                gap_col_name_format.format(scenario)
                 for scenario in scenarios
-                if gal_col_name_format.format(scenario) in dashboard_df
+                if gap_col_name_format.format(scenario) in dashboard_df
             ]
 
             # Combine lists in the desired order
@@ -335,12 +340,13 @@ class FsMultiScenarioRunner(
                     for col in dashboard_df.columns:
                         if col.startswith("RPD_"):
                             header.append(
-                                ("Relative percentage deviation", col.replace("RPD_", ""))
+                                (
+                                    "Relative percentage deviation",
+                                    col.replace("RPD_", ""),
+                                )
                             )
                         elif col.startswith("Gap_"):
-                            header.append(
-                                ("SolverGap", col.replace("Gap_", ""))
-                            )
+                            header.append(("SolverGap", col.replace("Gap_", "")))
                         elif col == "instanceName":
                             header.append(("", "insId"))
                         elif col == "baselineObjVal":
@@ -360,7 +366,7 @@ class FsMultiScenarioRunner(
                     # --- Apply formatting and set column widths ---
 
                     # relDiff first_col and last_col
-                    rel_diff_first_col = float("inf")  # Placeholder for first column
+                    rel_diff_first_col = -1  # Placeholder for first column
                     rel_diff_last_col = 0
 
                     # +1 for the index column
@@ -380,7 +386,7 @@ class FsMultiScenarioRunner(
                         worksheet.set_column(col_idx, col_idx, width=max_len)
 
                         if col_name[0] == "relDiff between baseline":
-                            if rel_diff_first_col == float("inf"):
+                            if rel_diff_first_col == -1:
                                 rel_diff_first_col = col_idx
                             if rel_diff_last_col < col_idx:
                                 rel_diff_last_col = col_idx
@@ -388,7 +394,7 @@ class FsMultiScenarioRunner(
                                 col_idx, col_idx, max_len, percent_format
                             )
 
-                    if rel_diff_first_col != float("inf"):
+                    if rel_diff_first_col != -1:
                         worksheet.conditional_format(
                             data_start_row,
                             rel_diff_first_col,
@@ -464,6 +470,17 @@ class FsMultiScenarioRunner(
             logging.info(f"Successfully generated Excel report at: {path}")
         except Exception as e:
             logging.error(f"Failed to write Excel report: {e}", exc_info=True)
+
+
+def case_ratio(
+    result: pd.Series, ref: pd.Series, both_zero_val=0.0, ref_zero_result_posnum=1.0
+) -> pd.Series:
+    arr = np.select(
+        condlist=[ref.eq(0) & result.eq(0), ref.eq(0) & result.gt(0), ref.ne(0)],
+        choicelist=[both_zero_val, ref_zero_result_posnum, result / ref],
+        default=np.nan,  # <-- ArrayLike OK
+    )
+    return pd.Series(arr, index=result.index).astype("Float64")  # np.nan -> <NA>
 
 
 if __name__ == "__main__":
