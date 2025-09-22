@@ -2,8 +2,8 @@ import logging
 from pathlib import Path
 from typing import Any, Sequence
 
-from mbls.cpsat import CpSubroutineController
-from routix import DynamicDataObject, StoppingCriteria
+from mbls.cpsat import CpsatSolverReport, CpSubroutineController
+from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
 from routix.util.comparison import float_a_leq_b, float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
@@ -244,6 +244,7 @@ class FlowshopTardinessControllerCore(
         Returns:
             float: The objective value of the solution if feasible.
         """
+        sub_timer = ElapsedTimer()
         logging.info("Feasibility check starts")
 
         j_list = self.instance.job_id_list
@@ -272,7 +273,7 @@ class FlowshopTardinessControllerCore(
                 f"Schedule makespan {schedule.makespan} exceeds horizon {self.get_horizon()}."
             )
 
-        logging.info("Feasibility check passed")
+        logging.info(f"Feasibility check passed; took {sub_timer.elapsed_sec:.2f} sec")
 
         # Objective value
         obj_value = schedule.get_total_tardiness(self.instance.job_2_duedate_map)
@@ -368,7 +369,7 @@ class FlowshopTardinessControllerCore(
         # mdl_txt_path = self.get_file_path_for_subroutine("_cp_sat_model.txt")
         # self.cp_model.export_to_file(str(mdl_txt_path))
 
-        solver_report = self.solve_current_cp_model(
+        solver_report: CpsatSolverReport = self.solve_current_cp_model(
             _timelimit,
             solver_thread_cnt,
             no_improvement_timelimit=no_improvement_timelimit,
@@ -380,41 +381,41 @@ class FlowshopTardinessControllerCore(
             obj_bound_is_valid=obj_bound_is_valid,
         )
 
-        solver_report = FsCpsatSolverReport.from_other(
+        fs_solver_report = FsCpsatSolverReport.from_other(
             solver_report, is_init=is_initial_solution
         )
 
         # If the objective value or bound is not valid, use the best known values.
         report_updates: dict[str, Any] = {}
         if obj_value_is_valid:
-            report_updates["obj_value"] = solver_report.obj_value
+            report_updates["obj_value"] = fs_solver_report.obj_value
         else:
             report_updates["obj_value"] = self.solution_manager.best_obj_value
         if obj_bound_is_valid:
-            report_updates["obj_bound"] = solver_report.obj_bound
+            report_updates["obj_bound"] = fs_solver_report.obj_bound
         else:
             report_updates["obj_bound"] = self.solution_manager.best_obj_bound
 
         if report_updates:
-            solver_report = solver_report.copy(
+            fs_solver_report = fs_solver_report.copy(
                 obj_value=report_updates.get("obj_value"),
                 obj_bound=report_updates.get("obj_bound"),
             )
 
-        if solver_report.obj_value is None:
+        if fs_solver_report.obj_value is None:
             if obj_value_is_valid:
                 logging.warning("Failed to find a valid objective value.")
                 return
         else:
             solution: FlowshopSchedule | None = None
-            if solver_report.is_feasible:
+            if fs_solver_report.is_feasible:
                 solution = self.cp_model.create_schedule()
                 if error_if_infeasible:
                     self.check_feasibility(solution)
                 obj_value_by_solution = solution.get_total_tardiness(
                     self.instance.job_2_duedate_map
                 )
-                if obj_value_by_solution != solver_report.obj_value:
+                if obj_value_by_solution != fs_solver_report.obj_value:
                     # schedule_Tj_map = solution.get_tardiness_map(
                     #     self.instance.job_2_duedate_map
                     # )
@@ -446,14 +447,14 @@ class FlowshopTardinessControllerCore(
                     #         "objective value from solver (%d)."
                     #         % (sum(schedule_Tj_map.values()), solver_report.obj_value)
                     #     )
-                    if obj_value_by_solution > solver_report.obj_value:
+                    if obj_value_by_solution > fs_solver_report.obj_value:
                         raise ValueError(
-                            f"Objective value mismatch: Reported {solver_report.obj_value}, "
+                            f"Objective value mismatch: Reported {fs_solver_report.obj_value}, "
                             f"Calculated {obj_value_by_solution}"
                         )
                     else:  # obj_value_by_solution < solver_report.obj_value
                         logging.warning(
-                            f"Objective value discrepancy: Reported {solver_report.obj_value}, "
+                            f"Objective value discrepancy: Reported {fs_solver_report.obj_value}, "
                             f"Calculated {obj_value_by_solution}"
                         )
                         last_timestamp = self.timer.elapsed_sec
@@ -462,21 +463,21 @@ class FlowshopTardinessControllerCore(
                             obj_value_by_solution,
                             is_maximize=False,
                         )
-                        extended_obj_value_records = solver_report.obj_value_records
+                        extended_obj_value_records = fs_solver_report.obj_value_records
                         extended_obj_value_records.append(
                             (last_timestamp, obj_value_by_solution)
                         )
-                        solver_report = FsCpsatSolverReport(
-                            elapsed_time=solver_report.elapsed_time,
+                        fs_solver_report = FsCpsatSolverReport(
+                            elapsed_time=fs_solver_report.elapsed_time,
                             obj_value=obj_value_by_solution,
-                            obj_bound=solver_report.obj_bound,
-                            status=solver_report.status,
+                            obj_bound=fs_solver_report.obj_bound,
+                            status=fs_solver_report.status,
                             obj_value_records=extended_obj_value_records,
-                            obj_bound_records=solver_report.obj_bound_records,
-                            is_init=solver_report.is_init,
+                            obj_bound_records=fs_solver_report.obj_bound_records,
+                            is_init=fs_solver_report.is_init,
                         )
                 # Register the solution
-                was_updated = self.solution_manager.register(solver_report, solution)
+                was_updated = self.solution_manager.register(fs_solver_report, solution)
                 if was_updated and draw_gantt:
                     self.draw_incumbent_gantt()
 
