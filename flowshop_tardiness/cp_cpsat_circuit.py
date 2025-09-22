@@ -41,13 +41,13 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     # Variables
 
     prec_imm: dict[tuple[str, str], IntVar]
-    """$prec_{j,j'}$: Immediate precedence variables for the circuit constraints"""
+    """$prec_{j1,j2}$: Immediate precedence variables for the circuit constraints"""
 
     pos: dict[str, IntVar]
     """Position of job in the sequence"""
 
     prec_ind: dict[tuple[str, str], IntVar]
-    """$prec_{j,j'}$: Indirect precedence variables for the circuit constraints"""
+    """$prec_{j1,j2}$: Indirect precedence variables for the circuit constraints"""
 
     var_Tj: dict[str, IntVar]
     """$T_j$: tardiness of job j"""
@@ -404,7 +404,7 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     # methods to add hints
 
     def add_hints_from_schedule(self, schedule: FlowshopSchedule) -> None:
-        self.add_sequence_hints(schedule.get_stage_2_job_list_map()[self.i_list[0]])
+        self.add_sequence_hints(schedule.get_last_stage_job_list())
         self.add_start_hints_from_start_time_map(schedule.get_start_time_map())
         self.add_end_hints_from_end_time_map(schedule.get_end_time_map())
 
@@ -469,7 +469,37 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         Args:
             schedule (FlowshopSchedule): The schedule to base the job sequence on.
         """
-        job_sequence = schedule.get_stage_2_job_list_map()[self.i_list[0]]
+        job_sequence = schedule.get_last_stage_job_list()
         for j1_idx, j1 in enumerate(job_sequence):
             for j2 in job_sequence[j1_idx + 1 :]:
                 self.add(self.prec_ind[(j1, j2)] == 1)
+
+    # Profiling methods
+
+    def add_indirect_precedence_constraints_by_sequence(
+        self, job_sequence: list[str]
+    ) -> None:
+        for idx, j1 in enumerate(job_sequence):
+            for j2 in job_sequence[idx + 1 :]:
+                self.add(self.prec_ind[j1, j2] == 1)
+
+    # Subproblem generation
+
+    def create_problem_of_job_subset(self, job_subset: set[str]) -> CpCpsatCircuit:
+        if not job_subset.issubset(set(self.j_list)):
+            raise ValueError("job_subset must be a subset of the original job list.")
+        new_model = self.__class__(self.horizon)
+
+        # Filter parameters based on job_subset
+        new_model.j_list = [j for j in self.j_list if j in job_subset]
+        new_model.i_list = self.i_list.copy()
+        new_model.p = {
+            (j, i): self.p[j, i] for j in new_model.j_list for i in new_model.i_list
+        }
+        new_model.D = {j: self.D[j] for j in new_model.j_list}
+        # Define variables, objective, and constraints
+        new_model.define_variables()
+        new_model.define_total_tardiness_objective()
+        new_model.define_constraints()
+
+        return new_model

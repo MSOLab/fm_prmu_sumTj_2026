@@ -149,10 +149,18 @@ dicts_of_i_o_data_path:
   #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_allinit.yaml"
   #   output_dir: "output_600s/allInit"
   #   description: "ALLINIT"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_nehedd_baseCp.yaml"
+  #   output_dir: "output_600s/nehedd_baseCp"
+  #   description: "NEHEDD -> base CP"
   - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-    subroutine_flow_rel_path: "configs_600s/subroutine_flow_nehedd_baseCp.yaml"
-    output_dir: "output_600s/nehedd_baseCp"
-    description: "NEHEDD -> base CP"
+    subroutine_flow_rel_path: "configs_600s/subroutine_flow_nehedd_ic1010.yaml"
+    output_dir: "output_600s/nehedd_IC1010"
+    description: "NEHEDD -> IC(10,10)"
+  - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+    subroutine_flow_rel_path: "configs_600s/subroutine_flow_nehedd_ic1020.yaml"
+    output_dir: "output_600s/nehedd_IC1020"
+    description: "NEHEDD -> IC(10,20)"
 
 # Output and Logging configuration
 output_dir_scenarios: "Outputs_scenarios"
@@ -172,4 +180,4 @@ drop_first_values_percent: 0.0
 # Optional metadata for post-processing only
 # analysis_dir_path: "$HFS_RESULT_DIR/Calop1/20250912T001404_281753"
 # analysis_timestamp: "20250922T114450_781385"
-# resume_dir_path: resources/vrm_prev_calc/20250923T011049_333399/output_600s/nehedd
+resume_dir_path: resources/vrm_prev_calc/20250923T011049_333399/output_600s/nehedd

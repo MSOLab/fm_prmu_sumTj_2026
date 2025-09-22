@@ -56,6 +56,7 @@ class FlowshopSchedule:
             k: v.deepcopy() if hasattr(v, "deepcopy") else deepcopy(v)
             for k, v in self._stages.items()
         }
+        new_schedule._last_stage_name = self._last_stage_name
         # Deep copy internal states
         new_schedule.job_2_last_oper_end_time_map = deepcopy(
             self.job_2_last_oper_end_time_map
@@ -147,10 +148,9 @@ class FlowshopSchedule:
         last_stage = self.get_stage_by_name(self._last_stage_name)
         for operation in last_stage.operations:
             job_name = operation.job_name
-            if job_name in job_2_duedate_map:
-                due_date = job_2_duedate_map[job_name]
-                if operation.end > due_date:
-                    job_2_tardiness_map[job_name] = operation.end - due_date
+            due_date = job_2_duedate_map[job_name]
+            if operation.end > due_date:
+                job_2_tardiness_map[job_name] = operation.end - due_date
         return job_2_tardiness_map
 
     def get_total_tardiness(self, job_2_duedate_map: dict[str, int]) -> int:
@@ -176,6 +176,19 @@ class FlowshopSchedule:
             stage_name: [activity.job_name for activity in stage.activity_list]
             for stage_name, stage in self._stages.items()
         }
+
+    def get_last_stage_job_list(self) -> list[str]:
+        """
+        Get the list of job names scheduled in the last stage of the flowshop.
+
+        Raises:
+            ValueError: If the last stage name is not set.
+        """
+        if self._last_stage_name is None:
+            raise ValueError("Last stage name is not set.")
+
+        last_stage = self.get_stage_by_name(self._last_stage_name)
+        return [operation.job_name for operation in last_stage.operations]
 
     # End getters
 

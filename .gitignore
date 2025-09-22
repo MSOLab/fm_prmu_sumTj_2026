@@ -10,3 +10,4 @@ wheels/
 .venv
 
 Outputs*/
+resources/vrm_prev_calc/

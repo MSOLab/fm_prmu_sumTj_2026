@@ -260,6 +260,9 @@ class FlowshopTardinessControllerCore(
         self.release_log_handlers()
         self.total_elapsed_time = self.timer.elapsed_sec
 
+    def get_obj_value(self, schedule: FlowshopSchedule) -> float:
+        return schedule.get_total_tardiness(self.instance.job_2_duedate_map)
+
     def check_feasibility(self, schedule: FlowshopSchedule) -> float:
         """Check the feasibility of the given start times.
 
@@ -287,16 +290,13 @@ class FlowshopTardinessControllerCore(
         )
 
         # Each stage should have the same job sequence
-        reference_sequence = [
-            op.job_name for op in schedule.get_stage_by_name(i_list[0]).operations
-        ]
+        i_2_j_list_map = schedule.get_stage_2_job_list_map()
+        reference_sequence = i_2_j_list_map[i_list[0]]
         for stage_name in i_list[1:]:
-            current_sequence = [
-                op.job_name for op in schedule.get_stage_by_name(stage_name).operations
-            ]
-            assert current_sequence == reference_sequence, (
-                f"Job sequence mismatch between stage 1 & {stage_name}"
-            )
+            if i_2_j_list_map[stage_name] != reference_sequence:
+                raise ValueError(
+                    f"Job sequence mismatch between stage {i_list[0]} & {stage_name}."
+                )
 
         if schedule.makespan > self.get_horizon():
             logging.warning(
@@ -305,9 +305,7 @@ class FlowshopTardinessControllerCore(
 
         logging.info(f"Feasibility check passed; took {sub_timer.elapsed_sec:.2f} sec")
 
-        # Objective value
-        obj_value = schedule.get_total_tardiness(self.instance.job_2_duedate_map)
-        return obj_value
+        return self.get_obj_value(schedule)
 
     def check_end_time_map_feasibility(
         self, end_time_map: dict[tuple[str, str], int]
@@ -451,9 +449,7 @@ class FlowshopTardinessControllerCore(
                 solution = self.cp_model.create_schedule()
                 if error_if_infeasible:
                     self.check_feasibility(solution)
-                obj_value_by_solution = solution.get_total_tardiness(
-                    self.instance.job_2_duedate_map
-                )
+                obj_value_by_solution = self.get_obj_value(solution)
                 if obj_value_by_solution != fs_solver_report.obj_value:
                     # schedule_Tj_map = solution.get_tardiness_map(
                     #     self.instance.job_2_duedate_map
@@ -539,9 +535,7 @@ class FlowshopTardinessControllerCore(
         is_initial_run = incumbent_solution is None
 
         if incumbent_solution:
-            incumbent_obj_value = incumbent_solution.get_total_tardiness(
-                self.instance.job_2_duedate_map
-            )
+            incumbent_obj_value = self.get_obj_value(incumbent_solution)
             logging.info(
                 "Applying incumbent solution with objValue "
                 f"{incumbent_obj_value} as a hint."
