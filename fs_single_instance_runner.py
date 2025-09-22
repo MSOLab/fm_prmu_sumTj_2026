@@ -15,6 +15,7 @@ from schore.parameters_examples.shop.flow import (
 from flowshop_tardiness.controller import FlowshopTardinessCpLnsController
 from flowshop_tardiness.fs_input_summary import FsInputSummary
 from flowshop_tardiness.fs_io_summary import FsIoSummary
+from flowshop_tardiness.io_solution import END_TIME_MAP_KEY, START_TIME_MAP_KEY
 from flowshop_tardiness.report.fs_subroutine_report import FsSubroutineReport
 from flowshop_tardiness.report.fs_subroutine_report_statistics import (
     FsSubroutineReportStatistics,
@@ -196,10 +197,12 @@ class FsSingleInstanceRunner(
         incumbent_solution = self.ctrlr.solution_manager.get_incumbent()
         if incumbent_solution:
             solution_dict = {
-                "start_times": tuple_to_pyyaml_key(
+                START_TIME_MAP_KEY: tuple_to_pyyaml_key(
                     incumbent_solution.get_start_time_map()
                 ),
-                "end_times": tuple_to_pyyaml_key(incumbent_solution.get_end_time_map()),
+                END_TIME_MAP_KEY: tuple_to_pyyaml_key(
+                    incumbent_solution.get_end_time_map()
+                ),
             }
             object_to_yaml(solution_dict, self.solution_path, encoding=encoding)
 
