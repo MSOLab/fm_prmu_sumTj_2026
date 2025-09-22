@@ -145,8 +145,10 @@ class FsMultiInstanceRunner(
                 temp_controller = temp_runner.get_controller()
                 try:
                     start_time_map = get_start_time_dict(sol_path)
-                    obj_val = temp_controller.check_feasibility(start_time_map)
                     end_time_map = get_end_time_dict(sol_path)
+                    obj_val = temp_controller.check_end_time_map_feasibility(
+                        end_time_map
+                    )
                     self.ins_name_to_start_time_map_map[ins_name] = start_time_map
                     self.ins_name_to_end_time_map_map[ins_name] = end_time_map
                     self.ins_name_to_obj_value_map[ins_name] = obj_val

@@ -278,6 +278,72 @@ class FlowshopTardinessControllerCore(
         obj_value = schedule.get_total_tardiness(self.instance.job_2_duedate_map)
         return obj_value
 
+    def check_end_time_map_feasibility(
+        self, end_time_map: dict[tuple[str, str], int]
+    ) -> float:
+        """Check the feasibility of the given end times.
+
+        Args:
+            end_time_map (dict[tuple[str, str], int]): A mapping of (job, stage) to end time.
+
+        Returns:
+            float: The objective value of the solution if feasible.
+        """
+        logging.info("Feasibility check starts")
+
+        j_list = self.instance.job_id_list
+        i_list = self.instance.stage_id_list
+
+        # Validate end times
+        for (j, i), end_time in end_time_map.items():
+            if j not in j_list:
+                raise ValueError(f"Job {j} not found in job list.")
+            if i not in i_list:
+                raise ValueError(f"Stage {i} not found in stage list.")
+            if end_time < 0:
+                raise ValueError(
+                    f"Negative end time {end_time} for job {j}, stage {i}."
+                )
+
+        i_2_j_2_end_time_map: dict[str, dict[str, int]] = {}
+        for (j, i), end_time in end_time_map.items():
+            i_2_j_2_end_time_map.setdefault(i, {})[j] = end_time
+
+        # All operations should be scheduled
+        for i in i_list:
+            if len(i_2_j_2_end_time_map.get(i, {})) != len(j_list):
+                raise ValueError(f"Stage {i} does not have all jobs scheduled.")
+
+        # Each stage should have the same job sequence
+        # Sort jobs by end time within the first stage
+        reference_sequence = sorted(
+            j_list, key=lambda j: i_2_j_2_end_time_map[i_list[0]][j]
+        )
+        for stage_name in i_list[1:]:
+            # Sort jobs by end time within the current stage
+            current_sequence = sorted(
+                j_list, key=lambda j: i_2_j_2_end_time_map[stage_name][j]
+            )
+            if current_sequence != reference_sequence:
+                raise ValueError(
+                    f"Job sequence mismatch between stage {i_list[0]} & {stage_name}"
+                )
+
+        logging.info("Feasibility check passed")
+
+        # Calc objective value
+        obj_value = 0
+        last_stage = i_list[-1]
+        for j in j_list:
+            if j not in i_2_j_2_end_time_map[last_stage]:
+                raise ValueError(f"Job {j} not found in last stage {last_stage}.")
+            obj_value += max(
+                0,
+                i_2_j_2_end_time_map[last_stage][j]
+                - self.instance.job_2_duedate_map[j],
+            )
+        return obj_value
+
     # End post-run process
 
     # Start solver call methods
