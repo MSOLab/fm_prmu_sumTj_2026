@@ -225,7 +225,7 @@ class FsMultiScenarioRunner(
                 for scenario in scenarios:
                     sc = dashboard_df[scenario]
                     dashboard_df[rpd_col_name_format.format(scenario)] = case_ratio(
-                        sc - bks, bks
+                        sc - bks, bks, both_zero_val=0, divisor_zero_dividend_posnum=1
                     )
 
             if has_baseline_bound:
@@ -233,7 +233,7 @@ class FsMultiScenarioRunner(
                 for scenario in scenarios:
                     ub = dashboard_df[scenario]  # here "ub" is the scenario objective
                     dashboard_df[gap_col_name_format.format(scenario)] = case_ratio(
-                        ub - lb, lb
+                        ub - lb, ub, both_zero_val=0, divisor_zero_dividend_posnum=1
                     )
 
             # 4. Define the desired column order
@@ -328,7 +328,7 @@ class FsMultiScenarioRunner(
         try:
             with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
                 # --- Write sheets in the desired order ---
-                workbook: Workbook = writer.book
+                workbook: Workbook = writer.book  # type: ignore
                 # --- Create formats ---
                 percent_format = workbook.add_format({"num_format": "0.00%"})
 
@@ -473,14 +473,21 @@ class FsMultiScenarioRunner(
 
 
 def case_ratio(
-    result: pd.Series, ref: pd.Series, both_zero_val=0.0, ref_zero_result_posnum=1.0
+    dividend: pd.Series,
+    divisor: pd.Series,
+    both_zero_val=0.0,
+    divisor_zero_dividend_posnum=1.0,
 ) -> pd.Series:
     arr = np.select(
-        condlist=[ref.eq(0) & result.eq(0), ref.eq(0) & result.gt(0), ref.ne(0)],
-        choicelist=[both_zero_val, ref_zero_result_posnum, result / ref],
+        condlist=[
+            divisor.eq(0) & dividend.eq(0),
+            divisor.eq(0) & dividend.gt(0),
+            divisor.ne(0),
+        ],
+        choicelist=[both_zero_val, divisor_zero_dividend_posnum, dividend / divisor],
         default=np.nan,  # <-- ArrayLike OK
     )
-    return pd.Series(arr, index=result.index).astype("Float64")  # np.nan -> <NA>
+    return pd.Series(arr, index=dividend.index).astype("Float64")
 
 
 if __name__ == "__main__":
