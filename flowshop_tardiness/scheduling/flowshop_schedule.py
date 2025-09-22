@@ -77,7 +77,6 @@ class FlowshopSchedule:
         """
         return max((stage.makespan for stage in self._stages.values()), default=0)
 
-
     def get_stage_by_name(self, stage_name: str) -> FlowshopStage:
         """
         Get a stage by its name.
