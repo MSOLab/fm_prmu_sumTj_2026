@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from typing import Any, Sequence
 
-from mbls.cpsat import CpsatStatus, CpSubroutineController
+from mbls.cpsat import CpSubroutineController
 from routix import DynamicDataObject, StoppingCriteria
 from routix.util.comparison import float_a_leq_b, float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
@@ -497,14 +497,12 @@ class FlowshopTardinessControllerCore(
             incumbent_obj_value = incumbent_solution.get_total_tardiness(
                 self.instance.job_2_duedate_map
             )
-            self.cp_model.clear_hints()
             logging.info(
                 "Applying incumbent solution with objValue "
                 f"{incumbent_obj_value} as a hint."
             )
-            self.cp_model.add_start_hints_from_start_time_map(
-                incumbent_solution.get_start_time_map(),
-            )
+            self.cp_model.clear_hints()
+            self.cp_model.add_hints_from_schedule(incumbent_solution)
 
         self.solve_current_cp_remaining_time_limit(
             computational_time,

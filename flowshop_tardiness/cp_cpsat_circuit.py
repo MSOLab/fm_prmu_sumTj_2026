@@ -4,6 +4,7 @@ import logging
 import math
 from itertools import permutations
 
+from mbls.cpsat import CpsatStatus
 from mbls.cpsat.cp_model_with_fixed_interval import CpModelWithFixedInterval
 from ortools.sat.python.cp_model import IntVar
 from routix import ElapsedTimer
@@ -38,6 +39,15 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     """$D_j$: due date of job j"""
 
     # Variables
+
+    prec_imm: dict[tuple[str, str], IntVar]
+    """$prec_{j,j'}$: Immediate precedence variables for the circuit constraints"""
+
+    pos: dict[str, IntVar]
+    """Position of job in the sequence"""
+
+    prec_ind: dict[tuple[str, str], IntVar]
+    """$prec_{j,j'}$: Indirect precedence variables for the circuit constraints"""
 
     var_Tj: dict[str, IntVar]
     """$T_j$: tardiness of job j"""
@@ -239,9 +249,9 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
 
         # Precedence between consecutive stages for each job
         consecutive_stage_pairs = list(zip(i_list[:-1], i_list[1:]))
-        for jInt in j_list:
+        for j in j_list:
             for i, next_i in consecutive_stage_pairs:
-                self.add(self.var_op_end[jInt, i] <= self.var_op_start[jInt, next_i])
+                self.add(self.var_op_end[j, i] <= self.var_op_start[j, next_i])
 
         logging.info(f"  Precedence constraints took {timer.elapsed_sec:.3f} sec.")
         timer.set_start_time_as_now()
@@ -256,15 +266,17 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         integer_j_list = sorted(integer_j_2_j_map.keys())
         integer_j_and_dummy_list = [0] + integer_j_list
 
-        arcs = {}
+        dummy_node = "dummy"
+        self.prec_imm = {}
         arc_list = []
+
         # \forall j\in J, j'\in J, j \neq j':
-        for jInt, jpInt in permutations(integer_j_and_dummy_list, 2):
-            j = integer_j_2_j_map.get(jInt, "dummy")
-            jp = integer_j_2_j_map.get(jpInt, "dummy")
-            j_before_jp = self.new_bool_var(f"arc_{j}_{jp}")
-            arcs[jInt, jpInt] = j_before_jp
-            arc_list.append((jInt, jpInt, j_before_jp))
+        for j1Int, j2Int in permutations(integer_j_and_dummy_list, 2):
+            j1 = integer_j_2_j_map.get(j1Int, dummy_node)
+            j2 = integer_j_2_j_map.get(j2Int, dummy_node)
+            j1_before_j2 = self.new_bool_var(f"prec_imm_{j1}_{j2}")
+            self.prec_imm[j1, j2] = j1_before_j2
+            arc_list.append((j1Int, j2Int, j1_before_j2))
 
         # Single hamiltonian circuit
         self.add_circuit(arc_list)
@@ -272,22 +284,65 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         logging.info(f"  Circuit constraints took {timer.elapsed_sec:.3f} sec.")
         timer.set_start_time_as_now()
 
+        first_pos = 0
+        last_pos = len(j_list) - 1
+        self.pos = {
+            j: self.new_int_var(first_pos, last_pos, f"pos_{j}") for j in j_list
+        }
+        self.add_all_different([self.pos[j] for j in j_list])
+
+        # Immediate precedence -> first or last position
+        for j in j_list:
+            self.add(self.pos[j] == first_pos).only_enforce_if(
+                self.prec_imm[dummy_node, j]
+            )
+            self.add(self.pos[j] == last_pos).only_enforce_if(
+                self.prec_imm[j, dummy_node]
+            )
+
+        # Immediate precedence -> other positions
+        for j1, j2 in permutations(j_list, 2):
+            self.add(self.pos[j1] + 1 == self.pos[j2]).only_enforce_if(
+                self.prec_imm[j1, j2]
+            )
+
+        # Indirect precedence
+        self.prec_ind = {}
+        for j1_idx, j1 in enumerate(j_list):
+            for j2 in j_list[j1_idx + 1 :]:
+                self.prec_ind[j1, j2] = self.new_bool_var(f"prec_ind_{j1}_{j2}")
+                self.prec_ind[j2, j1] = self.new_bool_var(f"prec_ind_{j2}_{j1}")
+                self.add(self.prec_ind[j1, j2] + self.prec_ind[j2, j1] == 1)
+
+        # Position -> indirect precedence
+        for j1, j2 in permutations(j_list, 2):
+            # self.add(self.pos[j1] + 1 <= self.pos[j2]).only_enforce_if(
+            #     self.prec_ind[j1, j2]
+            # )
+            self.add_linear_constraint_enforced_fast(
+                var_list=[self.pos[j1], self.pos[j2]],
+                coeff_list=[1, -1],
+                domain=(-last_pos, -1),
+                enforcers=[self.prec_ind[j1, j2]],
+            )
+
+        logging.info(f"  Position constraints took {timer.elapsed_sec:.3f} sec.")
+        timer.set_start_time_as_now()
+
         # Link circuit arcs with start/end times
         # If arc (j, j') is selected, then end_j <= start_j' \forall j\in J, j'\in J, j \neq j'
         # Dummy arcs are not time-linked intentionally
-        lb = -self.horizon
-        ub = 0
-        for jInt, jpInt in permutations(integer_j_list, 2):
-            j = integer_j_2_j_map.get(jInt, "dummy")
-            jp = integer_j_2_j_map.get(jpInt, "dummy")
-            j_before_jp = arcs[jInt, jpInt]
-
+        domain = (-self.horizon, 0)
+        for j1, j2 in permutations(j_list, 2):
             for i in i_list:
+                # self.add(
+                #     self.var_op_end[j1, i] <= self.var_op_start[j2, i]
+                # ).only_enforce_if(self.prec_ind[j1, j2])
                 self.add_linear_constraint_enforced_fast(
-                    var_list=[self.var_op_end[j, i], self.var_op_start[jp, i]],
+                    var_list=[self.var_op_end[j1, i], self.var_op_start[j2, i]],
                     coeff_list=[1, -1],
-                    domain=(lb, ub),
-                    enforcers=[j_before_jp],
+                    domain=domain,
+                    enforcers=[self.prec_ind[j1, j2]],
                 )
 
         logging.info(f"  Time-linking constraints took {timer.elapsed_sec:.3f} sec.")
@@ -344,6 +399,16 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
 
     # methods to add hints
 
+    def add_hints_from_schedule(self, schedule: FlowshopSchedule) -> None:
+        self.add_sequence_hints(schedule.get_stage_2_job_list_map()[self.i_list[0]])
+        self.add_start_hints_from_start_time_map(schedule.get_start_time_map())
+        self.add_end_hints_from_end_time_map(schedule.get_end_time_map())
+
+    def add_sequence_hints(self, job_sequence: list[str]) -> None:
+        for j1_idx, j1 in enumerate(job_sequence):
+            for j2 in job_sequence[j1_idx + 1 :]:
+                self.add_hint(self.prec_ind[(j1, j2)], 1)
+
     def add_start_hints_from_start_time_map(
         self, start_time_map: dict[tuple[str, str], int]
     ) -> None:
@@ -351,3 +416,56 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
             if (j, i) not in self.var_op_start:
                 raise KeyError(f"Invalid job-stage pair: ({j}, {i})")
             self.add_hint(self.var_op_start[j, i], s_time)
+
+    def add_end_hints_from_end_time_map(
+        self, end_time_map: dict[tuple[str, str], int]
+    ) -> None:
+        for (j, i), e_time in end_time_map.items():
+            if (j, i) not in self.var_op_end:
+                raise KeyError(f"Invalid job-stage pair: ({j}, {i})")
+            self.add_hint(self.var_op_end[j, i], e_time)
+
+    def solve_and_get_status(
+        self, computational_time: float, num_workers: int
+    ) -> tuple[CpsatStatus, float, float, float]:
+        """Solve the CP model.
+
+        Args:
+            computational_time (float): The maximum computational time in seconds.
+            num_workers (int): The number of parallel workers (i.e. threads) to use during search.
+
+        Returns:
+            tuple[CpsatStatus, float, float, float]: A tuple containing
+                - the solver status,
+                - elapsed time,
+                - the value of the objective, and
+                - the best lower (upper) bound of the objective function.
+        """
+        self.init_solver(computational_time, num_workers)
+
+        cp_solver_status = self.solver.solve(self)
+        cpsat_status = CpsatStatus.from_cp_solver_status(cp_solver_status)
+        elapsed_time = self.solver.wall_time
+
+        if cpsat_status.is_feasible:
+            obj_value = self.solver.objective_value
+            obj_bound = self.solver.best_objective_bound
+        else:
+            obj_value, obj_bound = CpsatStatus.get_obj_value_and_bound_for_infeasible(
+                self.is_maximize()
+            )
+
+        return cpsat_status, elapsed_time, obj_value, obj_bound
+
+    def fix_sequence(self, schedule: FlowshopSchedule) -> None:
+        """
+        Fix the job sequence (using indirect precedence variables)
+        based on the provided schedule.
+
+        Args:
+            schedule (FlowshopSchedule): The schedule to base the job sequence on.
+        """
+        job_sequence = schedule.get_stage_2_job_list_map()[self.i_list[0]]
+        for j1_idx, j1 in enumerate(job_sequence):
+            for j2 in job_sequence[j1_idx + 1 :]:
+                self.add(self.prec_ind[(j1, j2)] == 1)
