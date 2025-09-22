@@ -1,10 +1,9 @@
+- method: initialize_by_nehedd
 - method: set_random_seed
   seed: 42
-- method: initialize_by_edd
-  draw_gantt: False
 - method: set_cp_model_as_base_cp_model
 - method: solve_base_cp_model
-  computational_time: 600
+  computational_time: 5
   solver_thread_cnt: 8
   is_initial_solution: False
   draw_gantt: False

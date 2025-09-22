@@ -40,7 +40,13 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             is_initial_solution (bool, optional): If True, marks this run as producing the initial solution (affects summary/logging). Defaults to False.
             draw_gantt (bool, optional): If True, draws the Gantt chart of the solution after solving. Defaults to False.
         """
-        self.cp_model.delete_added_constraints()
+        if self.base_cp_model_is_set:
+            self.cp_model.delete_added_constraints()
+        else:
+            raise RuntimeError(
+                "Base CP model is not set. Call set_cp_model_as_base_cp_model() first."
+            )
+
         if is_initial_solution:
             self.solve_current_cp_remaining_time_limit(
                 computational_time,

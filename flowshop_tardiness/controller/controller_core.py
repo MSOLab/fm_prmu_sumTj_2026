@@ -390,6 +390,11 @@ class FlowshopTardinessControllerCore(
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ):
+        if not self.base_cp_model_is_set:
+            raise RuntimeError(
+                "Base CP model is not set. Call set_cp_model_as_base_cp_model() first."
+            )
+
         _timelimit = self.get_remaining_time_limit(computational_time)
 
         # Utilize the objective bound if available
@@ -525,6 +530,11 @@ class FlowshopTardinessControllerCore(
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ):
+        if not self.base_cp_model_is_set:
+            raise RuntimeError(
+                "Base CP model is not set. Call set_cp_model_as_base_cp_model() first."
+            )
+
         incumbent_solution = self.solution_manager.get_incumbent()
         is_initial_run = incumbent_solution is None
 

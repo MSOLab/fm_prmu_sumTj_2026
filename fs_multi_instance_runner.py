@@ -353,7 +353,7 @@ if __name__ == "__main__":
     )
     stopping_criteria = StoppingCriteria.from_dict({"timelimit": 60})
     output_dir = repo_root / "Outputs/multiInsRunnerMain"
-    output_metadata = {}
+    output_metadata: dict[str, Any] = {}
 
     runner = FsMultiInstanceRunner(
         FsSingleInstanceRunner,
