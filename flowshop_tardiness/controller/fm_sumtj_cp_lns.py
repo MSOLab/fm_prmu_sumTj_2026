@@ -509,6 +509,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             job_sequence[i : i + added_batch_size]
             for i in range(0, len(job_sequence), added_batch_size)
         ]
+        all_stage_set = set(self.instance.stage_id_list)
 
         job_subset: set[str] = set()
         for job_sublist in sequence_of_job_sublist:
@@ -523,7 +524,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             )
             for j in job_sublist:
                 partial_sol.dispatch_job_by_stages(
-                    j, self.instance.stage_id_list, self.job_2_stage_2_p_dict[j]
+                    j,
+                    self.instance.stage_id_list,
+                    self.job_2_stage_2_p_dict[j],
+                    after_last=True,
                 )
 
             sub_cp_mdl = self.cp_model.create_problem_of_job_subset(job_subset)
@@ -556,12 +560,21 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 last_solution = sub_cp_mdl.create_schedule()
                 # If last_solution is not better than partial_dispatched_sol,
                 if last_solution is None:
-                    last_solution = partial_sol
+                    raise ValueError("Subproblem returned feasible but no solution.")
                 elif self.get_obj_value(last_solution) >= self.get_obj_value(
                     partial_sol
                 ):
+                    logging.info(
+                        f"Subproblem with {job_subset_cnt}/{job_cnt} jobs "
+                        "did not improve the partial dispatched solution. "
+                        "Using the partial dispatched solution."
+                    )
                     # Use the partial dispatched solution
                     last_solution = partial_sol
+                else:
+                    logging.info(
+                        f"Subproblem with {job_subset_cnt}/{job_cnt} jobs found a better solution."
+                    )
             else:
                 logging.warning(
                     f"Subproblem with {job_subset_cnt}/{job_cnt} jobs is infeasible. "
@@ -569,14 +582,25 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 )
                 # Use the partial dispatched solution
                 last_solution = partial_sol
+            last_solution.verify_stage_job_sequence()
 
             # Dispatch remaining jobs to create a schedule feasible to the original problem
             all_dispatched_sol = last_solution.deepcopy()
             remaining_jobs = [j for j in job_sequence if j not in job_subset]
             for j in remaining_jobs:
-                all_dispatched_sol.dispatch_job_by_stages(
-                    j, self.instance.stage_id_list, self.job_2_stage_2_p_dict[j]
+                ops = all_dispatched_sol.dispatch_job_by_stages(
+                    j,
+                    self.instance.stage_id_list,
+                    self.job_2_stage_2_p_dict[j],
+                    after_last=True,
                 )
+                stage_set = set(op.stage_name for op in ops)
+                if stage_set != all_stage_set:
+                    raise ValueError(
+                        f"Failed to dispatch job {j} to stages {all_stage_set - stage_set}"
+                    )
+            all_dispatched_sol.verify_stage_job_sequence()
+
             # Store the objective value logs
 
             # Obj. value of dispatched solution as a value
