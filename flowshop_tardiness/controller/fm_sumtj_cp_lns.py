@@ -545,6 +545,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 and not math.isnan(self.solution_manager.best_obj_bound)
             ):
                 sub_cp_mdl.set_obj_lower_bound(self.solution_manager.best_obj_bound)
+            logging.info(
+                "Starting CP on subproblem with %d jobs at %s",
+                job_subset_cnt,
+                sub_timer.get_formatted_elapsed_time(),
+            )
             iter_report = self.solve_cp_model(
                 sub_cp_mdl,
                 _timelimit,
@@ -552,6 +557,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 random_seed=self.random_seed,
                 no_improvement_timelimit=no_improvement_timelimit,
                 e_timer=sub_timer,
+                log_level_obj_value=logging.INFO,
+                log_level_obj_bound=logging.INFO,
                 obj_value_is_valid=all_jobs_are_included,
             )
             last_timestamp = sub_timer.elapsed_sec

@@ -13,14 +13,10 @@ from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from .scheduling.flowshop_schedule import FlowshopOperation, FlowshopSchedule
 
 
-class CpCpsatCircuit(CpModelWithFixedInterval):
+class CpCpsatIndirectPrec(CpModelWithFixedInterval):
     """
     Implementation of the CP model for the flowshop problem to minimize total tardiness
-    using circuit constraints.
-
-    Reference:
-
-    - [Google OR-Tools sample for sequences in no-overlap](https://github.com/google/or-tools/blob/7ee639cf6981a9beeba908cf543a50f4ee7413ad/ortools/sat/samples/sequences_in_no_overlap_sample_sat.py#L148)
+    using indirect precedence constraints only.
     """
 
     # Indices & Parameters
@@ -39,23 +35,11 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
 
     # Variables
 
-    prec_imm: dict[tuple[str, str], IntVar]
-    """$prec_{j1,j2}$: Immediate precedence variables for the circuit constraints"""
-
-    pos: dict[str, IntVar]
-    """Position of job in the sequence"""
-
-    prec_ind: dict[tuple[str, str], IntVar]
+    prec: dict[tuple[str, str], IntVar]
     """$prec_{j1,j2}$: Indirect precedence variables for the circuit constraints"""
 
     var_Tj: dict[str, IntVar]
     """$T_j$: tardiness of job j"""
-
-    # var_Lj: dict[str, IntVar]
-    # """$L_j$: lateness of job j"""
-
-    # var_Uj: dict[str, IntVar]
-    # """$U_j$: binary variable indicating if job j is late (1 if late, 0 otherwise)"""
 
     # Objective
 
@@ -68,7 +52,7 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     @classmethod
     def from_instance(
         cls, instance: FlowshopDuedateParameters, horizon: int
-    ) -> CpCpsatCircuit:
+    ) -> CpCpsatIndirectPrec:
         result = cls(horizon)
         result.define_model(instance)
         return result
@@ -110,37 +94,24 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     # Variables
 
     def define_variables(self) -> None:
+        j_list = self.j_list
+
         # Interval variables
-        for j in self.j_list:
+        for j in j_list:
             for i in self.i_list:
                 self.define_fixed_interval_var((j, i), self.p[j, i])
+
+        # Indirect precedence
+        self.prec = {}
+        for j1_idx, j1 in enumerate(j_list):
+            for j2 in j_list[j1_idx + 1 :]:
+                self.prec[j1, j2] = self.new_bool_var(f"prec_ind_{j1}_{j2}")
+                self.prec[j2, j1] = self.new_bool_var(f"prec_ind_{j2}_{j1}")
+                self.add(self.prec[j1, j2] + self.prec[j2, j1] == 1)
 
     # Objective
 
     def define_total_tardiness_objective(self) -> None:
-        """
-        Total tardiness objective: minimize \\sum_j{T_j} where T_j := max(end_j - D_j, 0).
-
-        Rationale for not using add_max_equality:
-        https://d-krupke.github.io/cpsat-primer/04_modelling.html?highlight=add_max_equality#04-modelling-absmaxmin
-        """
-        j_list = self.j_list
-        last_i = self.i_list[-1]
-
-        self.var_Tj = {}
-        total_ub = 0
-        for j in j_list:
-            ub = max(self.horizon - self.D[j], 0)
-            self.var_Tj[j] = self.new_int_var(0, ub, f"T_{j}")
-            self.add(self.var_Tj[j] >= self.var_op_end[j, last_i] - self.D[j])
-            total_ub += ub
-
-        self.obj_var = self.new_int_var(0, total_ub, "sum_Tj")
-        self.add(self.obj_var == sum(self.var_Tj[j] for j in j_list))
-
-        self.minimize(self.obj_var)
-
-    def define_total_tardiness_objective_max_equality(self) -> None:
         """
         Total tardiness objective: minimize \\sum_j{T_j} where T_j := max(end_j - D_j, 0).
 
@@ -163,66 +134,6 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         self.add(self.obj_var == sum(self.var_Tj[j] for j in j_list))
 
         self.minimize(self.obj_var)
-
-    # def define_total_tardiness_objective_1(self) -> None:
-    #     """Total tardiness objective: minimize \\sum_j{T_j} where T_j := max(end_j - D_j, 0)."""
-    #     j_list = self.j_list
-    #     last_i = self.i_list[-1]
-
-    #     self.var_Lj = {}
-    #     self.var_Uj = {}
-    #     self.var_Tj = {}
-    #     total_ub = 0
-    #     for j in j_list:
-    #         self.var_Uj[j] = self.new_bool_var(f"U_{j}")
-
-    #         self.var_Lj[j] = self.new_int_var(
-    #             -self.D[j], self.horizon - self.D[j], f"L_{j}"
-    #         )
-    #         self.add(self.var_Lj[j] == self.var_op_end[j, last_i] - self.D[j])
-
-    #         self.add(self.var_Lj[j] >= 1).only_enforce_if(self.var_Uj[j])
-    #         self.add(self.var_Lj[j] <= 0).only_enforce_if(self.var_Uj[j].Not())
-
-    #         ub = max(self.horizon - self.D[j], 0)
-    #         self.var_Tj[j] = self.new_int_var(0, ub, f"T_{j}")
-    #         self.add(self.var_Tj[j] == self.var_Lj[j]).only_enforce_if(self.var_Uj[j])
-    #         self.add(self.var_Tj[j] == 0).only_enforce_if(self.var_Uj[j].Not())
-    #         total_ub += ub
-
-    #     self.obj_var = self.new_int_var(0, total_ub, "sum_Tj")
-    #     self.add(self.obj_var == sum(self.var_Tj[j] for j in j_list))
-
-    #     self.minimize(self.obj_var)
-
-    # def define_total_tardiness_objective_2(self) -> None:
-    #     """Total tardiness objective: minimize \\sum_j{T_j} where T_j := max(end_j - D_j, 0)."""
-    #     j_list = self.j_list
-    #     last_i = self.i_list[-1]
-
-    #     self.var_Lj = {}
-    #     self.var_Ej = {}
-    #     self.var_Tj = {}
-    #     total_ub = 0
-    #     for j in j_list:
-    #         self.var_Lj[j] = self.new_int_var(
-    #             -self.D[j], self.horizon - self.D[j], f"L_{j}"
-    #         )
-    #         self.add(self.var_Lj[j] == self.var_op_end[j, last_i] - self.D[j])
-
-    #         self.var_Ej[j] = self.new_int_var(0, self.D[j], f"E_{j}")
-
-    #         ub = max(self.horizon - self.D[j], 0)
-    #         self.var_Tj[j] = self.new_int_var(0, ub, f"T_{j}")
-
-    #         self.add(self.var_Lj[j] == self.var_Tj[j] - self.var_Ej[j])
-
-    #         total_ub += ub
-
-    #     self.obj_var = self.new_int_var(0, total_ub, "sum_Tj")
-    #     self.add(self.obj_var == sum(self.var_Tj[j] for j in j_list))
-
-    #     self.minimize(self.obj_var)
 
     def set_obj_lower_bound(self, bound: float | None) -> None:
         if bound is None:
@@ -250,6 +161,10 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
 
         timer = ElapsedTimer()
 
+        # NoOverlap on each stage
+        for i in i_list:
+            self.add_no_overlap([self.var_op_intvl[j, i] for j in j_list])
+
         # Precedence between consecutive stages for each job
         consecutive_stage_pairs = list(zip(i_list[:-1], i_list[1:]))
         for j in j_list:
@@ -259,97 +174,43 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         logging.info(f"  Precedence constraints took {timer.elapsed_sec:.3f} sec.")
         timer.set_start_time_as_now()
 
-        # NoOverlap on each stage: needless since circuit constraint implies it
-        # for i in i_list:
-        #     self.add_no_overlap([self.var_op_intvl[j, i] for j in j_list])
-
-        # Circuit constraints to enforce permutation schedule on each stage
-        # Integer list for jobs (1..n) and a dummy (0)
-        integer_j_2_j_map = {idx + 1: j for idx, j in enumerate(j_list)}
-        integer_j_list = sorted(integer_j_2_j_map.keys())
-        integer_j_and_dummy_list = [0] + integer_j_list
-
-        dummy_node = "dummy"
-        self.prec_imm = {}
-        arc_list = []
-
-        # \forall j\in J, j'\in J, j \neq j':
-        for j1Int, j2Int in permutations(integer_j_and_dummy_list, 2):
-            j1 = integer_j_2_j_map.get(j1Int, dummy_node)
-            j2 = integer_j_2_j_map.get(j2Int, dummy_node)
-            j1_before_j2 = self.new_bool_var(f"prec_imm_{j1}_{j2}")
-            self.prec_imm[j1, j2] = j1_before_j2
-            arc_list.append((j1Int, j2Int, j1_before_j2))
-
-        # Single hamiltonian circuit
-        self.add_circuit(arc_list)
-
-        logging.info(f"  Circuit constraints took {timer.elapsed_sec:.3f} sec.")
-        timer.set_start_time_as_now()
-
-        first_pos = 0
-        last_pos = len(j_list) - 1
-        self.pos = {
-            j: self.new_int_var(first_pos, last_pos, f"pos_{j}") for j in j_list
-        }
-        self.add_all_different([self.pos[j] for j in j_list])
-
-        # Immediate precedence -> first or last position
-        for j in j_list:
-            self.add(self.pos[j] == first_pos).only_enforce_if(
-                self.prec_imm[dummy_node, j]
-            )
-            self.add(self.pos[j] == last_pos).only_enforce_if(
-                self.prec_imm[j, dummy_node]
-            )
-
-        # Immediate precedence -> other positions
-        for j1, j2 in permutations(j_list, 2):
-            self.add(self.pos[j1] + 1 == self.pos[j2]).only_enforce_if(
-                self.prec_imm[j1, j2]
-            )
-
-        # Indirect precedence
-        self.prec_ind = {}
-        for j1_idx, j1 in enumerate(j_list):
-            for j2 in j_list[j1_idx + 1 :]:
-                self.prec_ind[j1, j2] = self.new_bool_var(f"prec_ind_{j1}_{j2}")
-                self.prec_ind[j2, j1] = self.new_bool_var(f"prec_ind_{j2}_{j1}")
-                self.add(self.prec_ind[j1, j2] + self.prec_ind[j2, j1] == 1)
-
-        # Position -> indirect precedence
-        for j1, j2 in permutations(j_list, 2):
-            # self.add(self.pos[j1] + 1 <= self.pos[j2]).only_enforce_if(
-            #     self.prec_ind[j1, j2]
-            # )
-            self.add_linear_constraint_enforced_fast(
-                var_list=[self.pos[j1], self.pos[j2]],
-                coeff_list=[1, -1],
-                domain=(-last_pos, -1),
-                enforcers=[self.prec_ind[j1, j2]],
-            )
-
-        logging.info(f"  Position constraints took {timer.elapsed_sec:.3f} sec.")
-        timer.set_start_time_as_now()
-
-        # Link circuit arcs with start/end times
-        # If arc (j, j') is selected, then end_j <= start_j' \forall j\in J, j'\in J, j \neq j'
-        # Dummy arcs are not time-linked intentionally
+        # Link precedence and time
+        # prec[j1,j2] is True -> end[j1,i] <= start[j2,i] for all i
         domain = (-self.horizon, 0)
         for j1, j2 in permutations(j_list, 2):
             for i in i_list:
                 # self.add(
                 #     self.var_op_end[j1, i] <= self.var_op_start[j2, i]
-                # ).only_enforce_if(self.prec_ind[j1, j2])
+                # ).only_enforce_if(self.prec[j1, j2])
                 self.add_linear_constraint_enforced_fast(
                     var_list=[self.var_op_end[j1, i], self.var_op_start[j2, i]],
                     coeff_list=[1, -1],
                     domain=domain,
-                    enforcers=[self.prec_ind[j1, j2]],
+                    enforcers=[self.prec[j1, j2]],
                 )
 
         logging.info(f"  Time-linking constraints took {timer.elapsed_sec:.3f} sec.")
-        # timer.set_start_time_as_now()
+
+    #     self.add_rank_constraints()
+
+    # def add_rank_constraints(self) -> None:
+    #     sub_timer = ElapsedTimer()
+
+    #     # Define rank variables
+    #     rank_vars: dict[str, IntVar] = {}
+    #     n = len(self.j_list)
+    #     for j in self.j_list:
+    #         rank_vars[j] = self.new_int_var(0, n - 1, f"rank_{j}")
+
+    #     self.add_all_different(list(rank_vars.values()))
+
+    #     # Link rank variables with precedence variables
+    #     for j in self.j_list:
+    #         self.add(
+    #             sum(self.prec[j, jp] for jp in self.j_list if jp != j) == rank_vars[j]
+    #         )
+
+    #     logging.info(f"  Rank constraints took {sub_timer.elapsed_sec:.3f} sec.")
 
     # Extraction methods
 
@@ -410,7 +271,7 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     def add_sequence_hints(self, job_sequence: list[str]) -> None:
         for j1_idx, j1 in enumerate(job_sequence):
             for j2 in job_sequence[j1_idx + 1 :]:
-                self.add_hint(self.prec_ind[(j1, j2)], 1)
+                self.add_hint(self.prec[(j1, j2)], 1)
 
     def add_start_hints_from_start_time_map(
         self, start_time_map: dict[tuple[str, str], int]
@@ -435,11 +296,11 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     ) -> None:
         for idx, j1 in enumerate(job_sequence):
             for j2 in job_sequence[idx + 1 :]:
-                self.add(self.prec_ind[j1, j2] == 1)
+                self.add(self.prec[j1, j2] == 1)
 
     # Subproblem generation
 
-    def create_problem_of_job_subset(self, job_subset: set[str]) -> CpCpsatCircuit:
+    def create_problem_of_job_subset(self, job_subset: set[str]) -> CpCpsatIndirectPrec:
         if not job_subset.issubset(set(self.j_list)):
             raise ValueError("job_subset must be a subset of the original job list.")
         new_model = self.__class__(self.horizon)
