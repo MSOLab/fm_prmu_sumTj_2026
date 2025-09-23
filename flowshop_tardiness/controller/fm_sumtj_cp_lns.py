@@ -531,6 +531,16 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     after_last=True,
                 )
 
+            if self.get_obj_value(partial_sol) == 0:
+                # If the partial solution already shows no tardiness,
+                # skip CP solving for this subset
+                last_solution = partial_sol
+                logging.info(
+                    f"All jobs in the current subset of {job_subset_cnt} jobs"
+                    " are completed on time. Skipping CP solving."
+                )
+                continue
+
             sub_cp_mdl = self.cp_model.create_problem_of_job_subset(job_subset)
             if last_solution is not None:
                 sub_cp_mdl.add_indirect_precedence_constraints_by_sequence(
