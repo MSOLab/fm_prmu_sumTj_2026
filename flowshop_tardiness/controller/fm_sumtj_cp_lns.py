@@ -511,6 +511,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         ]
         all_stage_set = set(self.instance.stage_id_list)
 
+        halt_incremental_cp_processing = False
         job_subset: set[str] = set()
         for job_sublist in sequence_of_job_sublist:
             job_subset.update(job_sublist)
@@ -582,7 +583,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 )
                 # Use the partial dispatched solution
                 last_solution = partial_sol
-            last_solution.verify_stage_job_sequence()
+                halt_incremental_cp_processing = True
 
             # Dispatch remaining jobs to create a schedule feasible to the original problem
             all_dispatched_sol = last_solution.deepcopy()
@@ -608,18 +609,19 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 last_timestamp, self.get_obj_value(all_dispatched_sol), is_maximize=None
             )
 
+            # Obj. values of Un-dispatched solution as bounds
+            last_solution_obj_value = self.get_obj_value(last_solution)
             if iter_report.is_feasible:
-                # Obj. values of Un-dispatched solution as bounds
                 undispatched_obj_value_records = sub_cp_mdl.get_obj_value_records()
                 for elapsed, value in undispatched_obj_value_records:
                     sub_obj_store.add_obj_bound(elapsed, value, is_maximize=None)
                 if (
                     last_timestamp,
-                    self.get_obj_value(last_solution),
+                    last_solution_obj_value,
                 ) not in undispatched_obj_value_records:
                     sub_obj_store.add_obj_bound(
                         last_timestamp,
-                        self.get_obj_value(last_solution),
+                        last_solution_obj_value,
                         is_maximize=None,
                     )
                 _last_timestamp_note = f"{job_subset_cnt}/{job_cnt}"
@@ -631,34 +633,63 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             else:
                 sub_obj_store.add_obj_bound(
                     last_timestamp,
-                    self.get_obj_value(last_solution),
+                    last_solution_obj_value,
                     is_maximize=None,
                 )
                 _last_timestamp_note = f"{job_subset_cnt}/{job_cnt} (infeasible)"
                 sub_obj_store.add_last_timestamp_note(
                     _last_timestamp_note,
                     obj_value_is_valid=True,
-                    obj_bound_is_valid=False,
+                    obj_bound_is_valid=True,
                 )
 
+            if halt_incremental_cp_processing:
+                logging.warning(
+                    "Stopping further incremental CP due to previous infeasibility."
+                )
+                break
+
+        # Dispatch remaining jobs if any
         if last_solution is None:
-            logging.warning("Incremental CP construction failed to find a solution.")
-            report = FsSubroutineReport(
-                elapsed_time=sub_timer.elapsed_sec,
-                obj_value=None,
-                obj_bound=None,
-                is_init=is_init,
+            last_solution = FlowshopSchedule.from_stage_name_list(
+                self.instance.stage_id_list
             )
-            self.solution_manager.register(report, None)
-            return
+        remaining_jobs = [j for j in job_sequence if j not in job_subset]
+        if remaining_jobs:
+            logging.info(
+                f"Dispatching the remaining {len(remaining_jobs)} jobs after incremental CP."
+            )
+            for j in remaining_jobs:
+                last_solution.dispatch_job_by_stages(
+                    j,
+                    self.instance.stage_id_list,
+                    self.job_2_stage_2_p_dict[j],
+                    after_last=True,
+                )
+            last_solution_obj_value = self.get_obj_value(last_solution)
+            sub_obj_store.add_obj_value(
+                sub_timer.elapsed_sec,
+                last_solution_obj_value,
+                is_maximize=None,
+            )
+            sub_obj_store.add_obj_bound(
+                sub_timer.elapsed_sec,
+                last_solution_obj_value,
+                is_maximize=None,
+            )
+            sub_obj_store.add_last_timestamp_note(
+                "Final dispatch after incremental CP",
+                obj_value_is_valid=True,
+                obj_bound_is_valid=True,
+            )
 
         if error_if_infeasible:
             self.check_feasibility(last_solution)
-
+        last_solution_obj_value = self.get_obj_value(last_solution)
         # Create report for the final solution and register it
         final_report = FsSubroutineReport(
             elapsed_time=sub_timer.elapsed_sec,
-            obj_value=float(self.get_obj_value(last_solution)),
+            obj_value=float(last_solution_obj_value),
             obj_bound=None,
             is_init=is_init,
         )
@@ -666,8 +697,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         if was_updated:
             log_time = self.timer.elapsed_sec
-            self.add_obj_value_log(
-                log_time, float(self.get_obj_value(last_solution)), is_maximize=False
+            self.add_obj_value_log(log_time, last_solution_obj_value, is_maximize=None)
+            _last_timestamp_note = self._get_call_context_of_current_method()
+            self.obj_store.add_last_timestamp_note(
+                _last_timestamp_note, obj_value_is_valid=True
             )
             if draw_gantt:
                 self.draw_incumbent_gantt()
