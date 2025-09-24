@@ -13,7 +13,7 @@ from .controller_core import FlowshopTardinessControllerCore
 class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     # Subroutine: methods to run before resuming from a paused state.
 
-    cp_model_presolve: bool = False  # TODO: make it configurable
+    cp_model_presolve: bool | None = False  # TODO: make it configurable
     """Whether to presolve the CP model before solving."""
 
     def set_random_seed(self, seed: int):
