@@ -54,6 +54,7 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
         cls, instance: FlowshopDuedateParameters, horizon: int
     ) -> CpCpsatIndirectPrec:
         result = cls(horizon)
+        result.name = f"{cls.__name__}_{instance.name}"
         result.define_model(instance)
         return result
 
@@ -161,9 +162,10 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
 
         timer = ElapsedTimer()
 
-        # NoOverlap on each stage
-        for i in i_list:
-            self.add_no_overlap([self.var_op_intvl[j, i] for j in j_list])
+        # NoOverlap on each stage:
+        # Needless since precedence constraints and time-linking already enforce no-overlap.
+        # for i in i_list:
+        #     self.add_no_overlap([self.var_op_intvl[j, i] for j in j_list])
 
         # Precedence between consecutive stages for each job
         consecutive_stage_pairs = list(zip(i_list[:-1], i_list[1:]))
@@ -264,14 +266,16 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
     # methods to add hints
 
     def add_hints_from_schedule(self, schedule: FlowshopSchedule) -> None:
-        self.add_sequence_hints(schedule.get_last_stage_job_list())
+        self.add_tardiness_hints_from_Tj_map(schedule.get_tardiness_map(self.D))
         self.add_start_hints_from_start_time_map(schedule.get_start_time_map())
         self.add_end_hints_from_end_time_map(schedule.get_end_time_map())
+        self.add_sequence_hints(schedule.get_last_stage_job_list())
 
     def add_sequence_hints(self, job_sequence: list[str]) -> None:
         for j1_idx, j1 in enumerate(job_sequence):
             for j2 in job_sequence[j1_idx + 1 :]:
                 self.add_hint(self.prec[(j1, j2)], 1)
+                self.add_hint(self.prec[(j2, j1)], 0)
 
     def add_start_hints_from_start_time_map(
         self, start_time_map: dict[tuple[str, str], int]
@@ -289,6 +293,14 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
                 raise KeyError(f"Invalid job-stage pair: ({j}, {i})")
             self.add_hint(self.var_op_end[j, i], e_time)
 
+    def add_tardiness_hints_from_Tj_map(self, Tj_map: dict[str, int]) -> None:
+        sum_Tj = 0
+        for j in self.j_list:
+            Tj = Tj_map.get(j, 0)
+            self.add_hint(self.var_Tj[j], Tj)
+            sum_Tj += Tj
+        self.add_hint(self.obj_var, sum_Tj)
+
     # Profiling methods
 
     def add_indirect_precedence_constraints_by_sequence(
@@ -297,6 +309,7 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
         for idx, j1 in enumerate(job_sequence):
             for j2 in job_sequence[idx + 1 :]:
                 self.add(self.prec[j1, j2] == 1)
+                self.add(self.prec[j2, j1] == 0)
 
     # Subproblem generation
 

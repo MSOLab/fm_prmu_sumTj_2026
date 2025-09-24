@@ -70,6 +70,7 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         cls, instance: FlowshopDuedateParameters, horizon: int
     ) -> CpCpsatCircuit:
         result = cls(horizon)
+        result.name = f"{cls.__name__}_{instance.name}"
         result.define_model(instance)
         return result
 
@@ -110,10 +111,26 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     # Variables
 
     def define_variables(self) -> None:
+        j_list = self.j_list
         # Interval variables
-        for j in self.j_list:
+        for j in j_list:
             for i in self.i_list:
                 self.define_fixed_interval_var((j, i), self.p[j, i])
+
+        self.first_pos = 0
+        self.last_pos = len(j_list) - 1
+        self.pos = {
+            j: self.new_int_var(self.first_pos, self.last_pos, f"pos_{j}")
+            for j in j_list
+        }
+
+        # Indirect precedence
+        self.prec_ind = {}
+        for j1_idx, j1 in enumerate(j_list):
+            for j2 in j_list[j1_idx + 1 :]:
+                self.prec_ind[j1, j2] = self.new_bool_var(f"prec_ind_{j1}_{j2}")
+                self.prec_ind[j2, j1] = self.new_bool_var(f"prec_ind_{j2}_{j1}")
+                self.add(self.prec_ind[j1, j2] + self.prec_ind[j2, j1] == 1)
 
     # Objective
 
@@ -287,19 +304,14 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         logging.info(f"  Circuit constraints took {timer.elapsed_sec:.3f} sec.")
         timer.set_start_time_as_now()
 
-        first_pos = 0
-        last_pos = len(j_list) - 1
-        self.pos = {
-            j: self.new_int_var(first_pos, last_pos, f"pos_{j}") for j in j_list
-        }
         self.add_all_different([self.pos[j] for j in j_list])
 
         # Immediate precedence -> first or last position
         for j in j_list:
-            self.add(self.pos[j] == first_pos).only_enforce_if(
+            self.add(self.pos[j] == self.first_pos).only_enforce_if(
                 self.prec_imm[dummy_node, j]
             )
-            self.add(self.pos[j] == last_pos).only_enforce_if(
+            self.add(self.pos[j] == self.last_pos).only_enforce_if(
                 self.prec_imm[j, dummy_node]
             )
 
@@ -309,14 +321,6 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
                 self.prec_imm[j1, j2]
             )
 
-        # Indirect precedence
-        self.prec_ind = {}
-        for j1_idx, j1 in enumerate(j_list):
-            for j2 in j_list[j1_idx + 1 :]:
-                self.prec_ind[j1, j2] = self.new_bool_var(f"prec_ind_{j1}_{j2}")
-                self.prec_ind[j2, j1] = self.new_bool_var(f"prec_ind_{j2}_{j1}")
-                self.add(self.prec_ind[j1, j2] + self.prec_ind[j2, j1] == 1)
-
         # Position -> indirect precedence
         for j1, j2 in permutations(j_list, 2):
             # self.add(self.pos[j1] + 1 <= self.pos[j2]).only_enforce_if(
@@ -325,7 +329,7 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
             self.add_linear_constraint_enforced_fast(
                 var_list=[self.pos[j1], self.pos[j2]],
                 coeff_list=[1, -1],
-                domain=(-last_pos, -1),
+                domain=(-self.last_pos, -1),
                 enforcers=[self.prec_ind[j1, j2]],
             )
 
@@ -403,14 +407,46 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     # methods to add hints
 
     def add_hints_from_schedule(self, schedule: FlowshopSchedule) -> None:
-        self.add_sequence_hints(schedule.get_last_stage_job_list())
+        self.add_tardiness_hints_from_Tj_map(schedule.get_tardiness_map(self.D))
         self.add_start_hints_from_start_time_map(schedule.get_start_time_map())
         self.add_end_hints_from_end_time_map(schedule.get_end_time_map())
+        self.add_sequence_hints(schedule.get_last_stage_job_list())
 
     def add_sequence_hints(self, job_sequence: list[str]) -> None:
+        if set(job_sequence) != set(self.j_list):
+            raise ValueError("job_sequence must be a permutation of the job list.")
+
+        # for all j, j' in J, j != j'
+        for j, jp in permutations(job_sequence, 2):
+            if (j, jp) not in self.prec_imm:
+                raise KeyError(f"Invalid job pair: ({j}, {jp})")
+            # if (j, j') is in the sequence
+            if job_sequence.index(j) + 1 == job_sequence.index(jp):
+                # then prec_imm[j, j'] = 1
+                self.add_hint(self.prec_imm[j, jp], 1)
+            else:
+                # else 0
+                self.add_hint(self.prec_imm[j, jp], 0)
+
+        dummy_node = "dummy"
+        for j in self.j_list:
+            if j == job_sequence[0]:
+                self.add_hint(self.prec_imm[dummy_node, j], 1)
+                self.add_hint(self.prec_imm[j, dummy_node], 0)
+            elif j == job_sequence[-1]:
+                self.add_hint(self.prec_imm[dummy_node, j], 0)
+                self.add_hint(self.prec_imm[j, dummy_node], 1)
+            else:
+                self.add_hint(self.prec_imm[dummy_node, j], 0)
+                self.add_hint(self.prec_imm[j, dummy_node], 0)
+
+        for idx, j in enumerate(job_sequence):
+            self.add_hint(self.pos[j], idx)
+
         for j1_idx, j1 in enumerate(job_sequence):
             for j2 in job_sequence[j1_idx + 1 :]:
                 self.add_hint(self.prec_ind[(j1, j2)], 1)
+                self.add_hint(self.prec_ind[(j2, j1)], 0)
 
     def add_start_hints_from_start_time_map(
         self, start_time_map: dict[tuple[str, str], int]
@@ -428,6 +464,15 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
                 raise KeyError(f"Invalid job-stage pair: ({j}, {i})")
             self.add_hint(self.var_op_end[j, i], e_time)
 
+    def add_tardiness_hints_from_Tj_map(self, Tj_map: dict[str, int]) -> None:
+        sum_Tj = 0
+        for j in self.j_list:
+            Tj = Tj_map.get(j, 0)
+            self.add_hint(self.var_Tj[j], Tj)
+            sum_Tj += Tj
+        if self.obj_var is not None:
+            self.add_hint(self.obj_var, sum_Tj)
+
     # Profiling methods
 
     def add_indirect_precedence_constraints_by_sequence(
@@ -436,6 +481,7 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         for idx, j1 in enumerate(job_sequence):
             for j2 in job_sequence[idx + 1 :]:
                 self.add(self.prec_ind[j1, j2] == 1)
+                self.add(self.prec_ind[j2, j1] == 0)
 
     # Subproblem generation
 
