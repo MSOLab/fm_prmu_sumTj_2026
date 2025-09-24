@@ -26,6 +26,13 @@ class FsMultiScenarioRunner(
 ):
     stat_name_func_pairs = [("Average", "mean"), ("Max", "max"), ("Min", "min")]
 
+    relative_percentage_deviation_col_prefix = "RPDv_"
+    relative_percentage_deviation_col_format = "RPDv_{}"
+    gap_col_prefix = "Gap_"
+    gap_col_format = "Gap_{}"
+    relative_percentage_difference_col_prefix = "RPDf_"
+    relative_percentage_difference_col_format = "RPDf_{}"
+
     def __init__(
         self,
         m_i_runner_class: type[FsMultiInstanceRunner],
@@ -201,11 +208,14 @@ class FsMultiScenarioRunner(
                 dashboard_df["baselineObjVal"] = None
 
             # 3. Calculate gaps for each scenario
-            rpd_col_name_format = self.base_output_metadata.get(
-                "rpd_col_name_format", "RPD_{}"
+            rpdv_col_name_format = self.base_output_metadata.get(
+                "rpdv_col_name_format", self.relative_percentage_deviation_col_format
             )
             gap_col_name_format = self.base_output_metadata.get(
-                "gap_col_name_format", "Gap_{}"
+                "gap_col_name_format", self.gap_col_format
+            )
+            rpdf_col_name_format = self.base_output_metadata.get(
+                "rpdf_col_name_format", self.relative_percentage_difference_col_format
             )
             scenarios = [
                 col for col in best_obj_value_df.columns if col != "instanceName"
@@ -224,16 +234,45 @@ class FsMultiScenarioRunner(
                 bks = dashboard_df["baselineObjVal"]
                 for scenario in scenarios:
                     sc = dashboard_df[scenario]
-                    dashboard_df[rpd_col_name_format.format(scenario)] = case_ratio(
-                        sc - bks, bks, both_zero_val=0, divisor_zero_dividend_posnum=1
+                    # dashboard_df[rpdv_col_name_format.format(scenario)] = case_ratio(
+                    #     sc - bks, sc, both_zero_val=0, bks_zero_sc_pos_val=0.01
+                    # )
+                    rpdv_series = pd.Series(np.nan, index=sc.index, dtype="Float64")
+                    # vectorized masks
+                    mask_na = sc.isna() | bks.isna()
+                    mask_both_zero = (bks == 0) & (sc == 0)
+                    mask_bks_zero_sc_pos = (bks == 0) & (sc > 0)
+                    mask_bks_zero_sc_neg = (bks == 0) & (sc < 0)
+                    mask_else = ~(
+                        mask_na
+                        | mask_both_zero
+                        | mask_bks_zero_sc_pos
+                        | mask_bks_zero_sc_neg
                     )
+                    # Assign values (use np.nan instead of pd.NA to satisfy type checker)
+                    # rpdv_series.loc[mask_na] = np.nan  # already NaN by initialization
+                    rpdv_series.loc[mask_both_zero] = 0.0
+                    rpdv_series.loc[mask_bks_zero_sc_pos] = 0.01
+                    rpdv_series.loc[mask_bks_zero_sc_neg] = -0.01
+                    rpdv_series.loc[mask_else] = ((sc - bks) / sc)[mask_else].astype(
+                        "Float64"
+                    )
+                    dashboard_df[rpdv_col_name_format.format(scenario)] = rpdv_series
 
             if has_baseline_bound:
                 lb = dashboard_df["baselineBound"]
                 for scenario in scenarios:
                     ub = dashboard_df[scenario]  # here "ub" is the scenario objective
                     dashboard_df[gap_col_name_format.format(scenario)] = case_ratio(
-                        ub - lb, ub, both_zero_val=0, divisor_zero_dividend_posnum=1
+                        ub - lb, ub, both_zero_val=0
+                    )
+
+            if has_baseline_val:
+                bks = dashboard_df["baselineObjVal"]
+                for scenario in scenarios:
+                    sc = dashboard_df[scenario]
+                    dashboard_df[rpdf_col_name_format.format(scenario)] = case_ratio(
+                        sc - bks, (sc + bks) / 2, both_zero_val=0
                     )
 
             # 4. Define the desired column order
@@ -246,14 +285,19 @@ class FsMultiScenarioRunner(
                 ["baselineBound"] if "baselineBound" in dashboard_df.columns else []
             )
             relative_percentage_deviation_cols = [
-                rpd_col_name_format.format(scenario)
+                rpdv_col_name_format.format(scenario)
                 for scenario in scenarios
-                if rpd_col_name_format.format(scenario) in dashboard_df
+                if rpdv_col_name_format.format(scenario) in dashboard_df
             ]
             gap_cols = [
                 gap_col_name_format.format(scenario)
                 for scenario in scenarios
                 if gap_col_name_format.format(scenario) in dashboard_df
+            ]
+            relative_percentage_difference_cols = [
+                rpdf_col_name_format.format(scenario)
+                for scenario in scenarios
+                if rpdf_col_name_format.format(scenario) in dashboard_df
             ]
 
             # Combine lists in the desired order
@@ -264,6 +308,7 @@ class FsMultiScenarioRunner(
                 + baseline_bound_col
                 + relative_percentage_deviation_cols
                 + gap_cols
+                + relative_percentage_difference_cols
             )
 
             # Reorder the DataFrame
@@ -338,15 +383,34 @@ class FsMultiScenarioRunner(
                     # Create the multi-level header
                     header = []
                     for col in dashboard_df.columns:
-                        if col.startswith("RPD_"):
+                        if col.startswith(
+                            self.relative_percentage_deviation_col_prefix
+                        ):
                             header.append(
                                 (
-                                    "Relative percentage deviation",
-                                    col.replace("RPD_", ""),
+                                    "Relative % deviation",
+                                    col.replace(
+                                        self.relative_percentage_deviation_col_prefix,
+                                        "",
+                                    ),
                                 )
                             )
-                        elif col.startswith("Gap_"):
-                            header.append(("SolverGap", col.replace("Gap_", "")))
+                        elif col.startswith(self.gap_col_prefix):
+                            header.append(
+                                ("SolverGap", col.replace(self.gap_col_prefix, ""))
+                            )
+                        elif col.startswith(
+                            self.relative_percentage_difference_col_prefix
+                        ):
+                            header.append(
+                                (
+                                    "Relative % difference",
+                                    col.replace(
+                                        self.relative_percentage_difference_col_prefix,
+                                        "",
+                                    ),
+                                )
+                            )
                         elif col == "instanceName":
                             header.append(("", "insId"))
                         elif col == "baselineObjVal":
@@ -459,7 +523,7 @@ class FsMultiScenarioRunner(
                             + 2
                         )
                         worksheet.set_column(col_idx, col_idx, width=max_len)
-                        if col_name in {"Gap", "RPD"}:
+                        if col_name in {"Gap"}:
                             worksheet.set_column(
                                 col_idx,
                                 col_idx,
@@ -475,19 +539,78 @@ class FsMultiScenarioRunner(
 def case_ratio(
     dividend: pd.Series,
     divisor: pd.Series,
-    both_zero_val=0.0,
-    divisor_zero_dividend_posnum=1.0,
+    both_zero_val: float | None = None,
+    divisor_zero_dividend_positive_val: float | None = None,
+    divisor_zero_dividend_negative_val: float | None = None,
 ) -> pd.Series:
-    arr = np.select(
-        condlist=[
-            divisor.eq(0) & dividend.eq(0),
-            divisor.eq(0) & dividend.gt(0),
-            divisor.ne(0),
-        ],
-        choicelist=[both_zero_val, divisor_zero_dividend_posnum, dividend / divisor],
-        default=np.nan,  # <-- ArrayLike OK
+    """
+    Compute element-wise ratio between two pandas Series with special case handling.
+
+    This function divides `dividend` by `divisor` element-wise and handles
+    edge cases where the divisor is zero:
+
+    - If both dividend and divisor are zero, returns `both_zero_val`.
+    - If divisor is zero and dividend is positive, returns
+      `divisor_zero_dividend_positive_val`.
+    - If divisor is zero and dividend is negative, returns
+      `divisor_zero_dividend_negative_val`.
+    - Otherwise, computes the standard division `dividend / divisor`.
+
+    If any of the special-case values are set to `None` (default),
+    the corresponding result will be `NaN`.
+
+    Args:
+        dividend (pd.Series): Numerator values for the ratio.
+        divisor (pd.Series): Denominator values for the ratio.
+        both_zero_val (float | None, optional): Value to assign when both dividend and divisor are zero.
+            Defaults to None (which results in NaN).
+        divisor_zero_dividend_positive_val (float | None, optional): Value to assign when divisor is zero and dividend is positive.
+            Defaults to None (which results in NaN).
+        divisor_zero_dividend_negative_val (float | None, optional): Value to assign when divisor is zero and dividend is negative.
+            Defaults to None (which results in NaN).
+
+    Returns:
+        pd.Series: Element-wise ratio between dividend and divisor with special case handling.
+    """
+    assert dividend.shape == divisor.shape, (
+        "dividend and divisor must have the same shape"
     )
-    return pd.Series(arr, index=dividend.index).astype("Float64")
+
+    # Convert to numeric float arrays for safe NumPy operations (pd.NA/non-numeric -> NaN)
+    a = pd.to_numeric(dividend, errors="coerce").to_numpy(dtype="float64", copy=False)
+    b = pd.to_numeric(divisor, errors="coerce").to_numpy(dtype="float64", copy=False)
+
+    # 결과 버퍼(모두 NaN으로 시작)
+    out = np.full(a.shape, np.nan, dtype="float64")
+
+    # Output buffer (initialized to all NaN)
+    m_div = b != 0
+    np.divide(a, b, out=out, where=m_div)
+
+    # Special cases where b == 0
+    m_zero = ~m_div
+    m0 = m_zero & (a == 0)  # 0/0
+    m1 = m_zero & (a > 0)  # +/0
+    m2 = m_zero & (a < 0)  # -/0
+
+    # Replace None with NaN to avoid dtype pollution
+    v0 = np.nan if both_zero_val is None else both_zero_val
+    v1p = (
+        np.nan
+        if divisor_zero_dividend_positive_val is None
+        else divisor_zero_dividend_positive_val
+    )
+    v1n = (
+        np.nan
+        if divisor_zero_dividend_negative_val is None
+        else divisor_zero_dividend_negative_val
+    )
+
+    out[m0] = v0
+    out[m1] = v1p
+    out[m2] = v1n
+
+    return pd.Series(out, index=dividend.index, dtype="Float64")
 
 
 if __name__ == "__main__":
@@ -544,7 +667,7 @@ if __name__ == "__main__":
 
     output_dir = repo_root / "Outputs/multiScenarioRunnerMain"
 
-    output_metadata = {}
+    output_metadata: dict[str, Any] = {}
 
     run_mode = RunMode.FULL_RUN
 

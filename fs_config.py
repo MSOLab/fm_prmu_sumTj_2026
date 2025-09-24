@@ -28,7 +28,7 @@ class BaselineColumnMapping(BaseModel):
     instance: str = Field(
         "Instance", description="Column name for the instance identifier."
     )
-    obj_val: str = Field("UB", description="Column name for the objective value.")
+    obj_val: str = Field("BKS", description="Column name for the objective value.")
     obj_bound: str = Field("LB", description="Column name for the objective bound.")
 
 class MainMetadata(BaseModel):
@@ -59,7 +59,7 @@ class MainMetadata(BaseModel):
     baseline_column_mapping: BaselineColumnMapping = Field(
         default_factory=lambda: BaselineColumnMapping(
             instance="Instance",
-            obj_val="UB",
+            obj_val="BKS",
             obj_bound="LB",
         ),
         description="Mapping for baseline data columns.",
