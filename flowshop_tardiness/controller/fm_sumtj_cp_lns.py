@@ -13,6 +13,9 @@ from .controller_core import FlowshopTardinessControllerCore
 class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     # Subroutine: methods to run before resuming from a paused state.
 
+    cp_model_presolve: bool = False  # TODO: make it configurable
+    """Whether to presolve the CP model before solving."""
+
     def set_random_seed(self, seed: int):
         return super().set_random_seed(seed)
 
@@ -53,6 +56,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             self.solve_current_cp_remaining_time_limit(
                 computational_time,
                 solver_thread_cnt,
+                cp_model_presolve=self.cp_model_presolve,
                 obj_value_is_valid=True,
                 obj_bound_is_valid=True,
                 is_initial_solution=True,
@@ -64,6 +68,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             self.solve_with_initial_solution(
                 computational_time,
                 solver_thread_cnt,
+                cp_model_presolve=self.cp_model_presolve,
                 obj_value_is_valid=True,
                 obj_bound_is_valid=True,
                 error_if_infeasible=True,
@@ -531,15 +536,15 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     after_last=True,
                 )
 
-            if self.get_obj_value(partial_sol) == 0:
-                # If the partial solution already shows no tardiness,
-                # skip CP solving for this subset
-                last_solution = partial_sol
-                logging.info(
-                    f"All jobs in the current subset of {job_subset_cnt} jobs"
-                    " are completed on time. Skipping CP solving."
-                )
-                continue
+            # if self.get_obj_value(partial_sol) == 0:
+            #     # If the partial solution already shows no tardiness,
+            #     # skip CP solving for this subset
+            #     last_solution = partial_sol
+            #     logging.info(
+            #         f"All jobs in the current subset of {job_subset_cnt} jobs"
+            #         " are completed on time. Skipping CP solving."
+            #     )
+            #     continue
 
             sub_cp_mdl = self.cp_model.create_problem_of_job_subset(job_subset)
             if last_solution is not None:
@@ -566,9 +571,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 solver_thread_cnt,
                 random_seed=self.random_seed,
                 no_improvement_timelimit=no_improvement_timelimit,
+                cp_model_presolve=self.cp_model_presolve,
                 e_timer=sub_timer,
                 log_level_obj_value=logging.INFO,
                 log_level_obj_bound=logging.INFO,
+                log_level_solver=self.log_solver_level,
+                log_search_progress=self.log_search_progress,
                 obj_value_is_valid=all_jobs_are_included,
             )
             last_timestamp = sub_timer.elapsed_sec

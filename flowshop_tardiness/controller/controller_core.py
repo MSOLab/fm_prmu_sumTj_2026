@@ -33,6 +33,10 @@ class FlowshopTardinessControllerCore(
     # Start controller pre-defined values
     method_names_to_run_before_resume: set[str]
     """Name of methods to run before resuming from a paused state."""
+    log_solver_level: int
+    """Logging level for the solver output."""
+    log_search_progress: bool
+    """Whether to log search progress during CP solving."""
 
     def __init__(
         self,
@@ -56,6 +60,8 @@ class FlowshopTardinessControllerCore(
             "set_cp_model_as_base_cp_model",
         }
         assert "" not in self.method_names_to_run_before_resume
+        self.log_solver_level = logging.INFO  # TODO: make it configurable
+        self.log_search_progress = True  # TODO: make it configurable
 
         # Frequently used parameters
         self.job_2_stage_2_p_dict = self.instance.p_manager.job_2_stage_2_value_map(
@@ -384,6 +390,7 @@ class FlowshopTardinessControllerCore(
         computational_time: float,
         solver_thread_cnt: int,
         no_improvement_timelimit: float | None = None,
+        cp_model_presolve: bool | None = None,
         obj_value_is_valid: bool = False,
         obj_bound_is_valid: bool = False,
         is_initial_solution: bool = False,
@@ -412,10 +419,13 @@ class FlowshopTardinessControllerCore(
             _timelimit,
             solver_thread_cnt,
             no_improvement_timelimit=no_improvement_timelimit,
+            cp_model_presolve=cp_model_presolve,
             random_seed=self.random_seed,
             e_timer=self.timer,
             log_level_obj_value=logging.INFO,
             log_level_obj_bound=logging.INFO,
+            log_level_solver=self.log_solver_level,
+            log_search_progress=self.log_search_progress,
             obj_value_is_valid=obj_value_is_valid,
             obj_bound_is_valid=obj_bound_is_valid,
         )
@@ -523,6 +533,7 @@ class FlowshopTardinessControllerCore(
         computational_time: float,
         solver_thread_cnt: int,
         no_improvement_timelimit: float | None = None,
+        cp_model_presolve: bool | None = None,
         obj_value_is_valid: bool = False,
         obj_bound_is_valid: bool = False,
         error_if_infeasible: bool = False,
@@ -549,6 +560,7 @@ class FlowshopTardinessControllerCore(
             computational_time,
             solver_thread_cnt,
             no_improvement_timelimit=no_improvement_timelimit,
+            cp_model_presolve=cp_model_presolve,
             obj_value_is_valid=obj_value_is_valid,
             obj_bound_is_valid=obj_bound_is_valid,
             is_initial_solution=is_initial_run,
