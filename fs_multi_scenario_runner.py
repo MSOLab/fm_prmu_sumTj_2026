@@ -582,10 +582,9 @@ def case_ratio(
     a = pd.to_numeric(dividend, errors="coerce").to_numpy(dtype="float64", copy=False)
     b = pd.to_numeric(divisor, errors="coerce").to_numpy(dtype="float64", copy=False)
 
-    # 결과 버퍼(모두 NaN으로 시작)
+    # Output buffer (initialized to all NaN)
     out = np.full(a.shape, np.nan, dtype="float64")
 
-    # Output buffer (initialized to all NaN)
     m_div = b != 0
     np.divide(a, b, out=out, where=m_div)
 
