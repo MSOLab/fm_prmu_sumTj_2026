@@ -239,7 +239,7 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
         return start_time_map, end_time_map
 
     def extract_Tj_map(self) -> dict[str, int]:
-        """Extract per-job tardiness T_j values from solved CP model.
+        """Extract per-job tardiness values from solved CP model.
 
         Returns:
             dict[str, int]: job -> T_j
