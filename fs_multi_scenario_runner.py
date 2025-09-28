@@ -430,7 +430,9 @@ class FsMultiScenarioRunner(
                     # --- Apply formatting and set column widths ---
 
                     # relDiff first_col and last_col
-                    rel_diff_first_col = -1  # Placeholder for first column
+                    rel_diff_first_col: int | None = (
+                        None  # Placeholder for first column
+                    )
                     rel_diff_last_col = 0
 
                     # +1 for the index column
@@ -450,7 +452,7 @@ class FsMultiScenarioRunner(
                         worksheet.set_column(col_idx, col_idx, width=max_len)
 
                         if col_name[0] == "relDiff between baseline":
-                            if rel_diff_first_col == -1:
+                            if rel_diff_first_col is None:
                                 rel_diff_first_col = col_idx
                             if rel_diff_last_col < col_idx:
                                 rel_diff_last_col = col_idx
@@ -458,7 +460,7 @@ class FsMultiScenarioRunner(
                                 col_idx, col_idx, max_len, percent_format
                             )
 
-                    if rel_diff_first_col != -1:
+                    if rel_diff_first_col is not None:
                         worksheet.conditional_format(
                             data_start_row,
                             rel_diff_first_col,

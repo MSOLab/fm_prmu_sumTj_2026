@@ -9,6 +9,8 @@ from ..report import FsSubroutineReport
 from ..scheduling.flowshop_schedule import FlowshopSchedule
 from .controller_core import FlowshopTardinessControllerCore
 
+REL_TOL = 1e-9  # for safe float comparisons
+
 
 class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     # Subroutine: methods to run before resuming from a paused state.
@@ -175,7 +177,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         def key_fn(j: str):
             tp = total_p(j)
             # safe division (handles pathological zero-proc jobs)
-            denom = tp if tp > 0.0 else 1e-9
+            denom = tp if tp > 0.0 else REL_TOL
             ratio = dmap[j] / denom
             # tie-breakers: due date, total proc time, id (for determinism)
             return (ratio, dmap[j], tp, j)

@@ -136,6 +136,7 @@ class FlowshopSchedule:
 
         Args:
             job_2_duedate_map (dict[str, int]): A mapping of job names to their due dates.
+                If a job is not in this map, its due date is assumed to be 0.
 
         Returns:
             dict[str, int]: A dictionary of job names to their tardiness (end_time - due_date)
@@ -148,7 +149,9 @@ class FlowshopSchedule:
         last_stage = self.get_stage_by_name(self._last_stage_name)
         for operation in last_stage.operations:
             job_name = operation.job_name
-            due_date = job_2_duedate_map[job_name]
+            due_date = 0
+            if job_name in job_2_duedate_map:
+                due_date = job_2_duedate_map[job_name]
             if operation.end > due_date:
                 job_2_tardiness_map[job_name] = operation.end - due_date
         return job_2_tardiness_map
