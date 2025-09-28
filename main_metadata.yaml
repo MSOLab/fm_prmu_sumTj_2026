@@ -3,124 +3,164 @@ vrm_common_params_rel_path: "resources/vrm_common_params.yaml"
 baseline_csv_path: "resources/vrm_ref/naderi2023CPOCodeResult.csv"
 input_dir: "resources/vrm"
 benchmark_idx_list:
-  - 1
-  - 6
-  - 11
-  - 16
-  - 21
-  - 26
-  - 31
-  - 36
-  - 41
-  - 46
-  - 51
-  - 56
-  - 61
-  - 66
-  - 71
-  - 76
-  - 81
-  - 86
-  - 91
-  - 96
-  - 101
-  - 106
-  - 111
-  - 116
-  - 121
-  - 126
-  - 131
-  - 136
-  - 141
-  - 146
-  - 151
-  - 156
-  - 161
-  - 166
-  - 171
-  - 176
-  - 181
-  - 186
-  - 191
-  - 196
-  - 201
-  - 206
-  - 211
-  - 216
-  - 221
-  - 226
-  - 231
-  - 236
-  - 241
-  - 246
-  - 251
-  - 256
-  - 261
-  - 266
-  - 271
-  - 276
-  - 281
-  - 286
-  - 291
-  - 296
-  - 301
-  - 306
-  - 311
-  - 316
-  - 321
-  - 326
-  - 331
-  - 336
-  - 341
-  - 346
-  - 351
-  - 356
-  - 361
-  - 366
-  - 371
-  - 376
-  - 381
-  - 386
-  - 391
-  - 396
-  - 401
-  - 406
-  - 411
-  - 416
-  - 421
-  - 426
-  - 431
-  - 436
-  - 441
-  - 446
-  - 451
-  - 456
-  - 461
-  - 466
-  - 471
-  - 476
-  - 481
-  - 486
-  - 491
-  - 496
-  - 501
-  - 506
-  - 511
-  - 516
-  - 521
-  - 526
-  - 531
-  - 536
-# first: 1
-# last: 540
+  # - 1
+  # - 6
+  # - 11
+  # - 16
+  # - 21
+  # - 26
+  # - 31
+  # - 36
+  # - 41
+  # - 46
+  # - 51
+  # - 56
+  # - 61
+  # - 66
+  # - 71
+  # - 76
+  # - 81
+  # - 86
+  # - 91
+  # - 96
+  # - 101
+  # - 106
+  # - 111
+  # - 116
+  # - 121
+  # - 126
+  # - 131
+  # - 136
+  # - 141
+  # - 146
+  # - 151
+  # - 156
+  # - 161
+  # - 166
+  # - 171
+  # - 176
+  # - 181
+  # - 186
+  # - 191
+  # - 196
+  # - 201
+  # - 206
+  # - 211
+  # - 216
+  # - 221
+  # - 226
+  # - 231
+  # - 236
+  # - 241
+  # - 246
+  # - 251
+  # - 256
+  # - 261
+  # - 266
+  # - 271
+  # - 276
+  # - 281
+  # - 286
+  # - 291
+  # - 296
+  # - 301
+  # - 306
+  # - 311
+  # - 316
+  # - 321
+  # - 326
+  # - 331
+  # - 336
+  # - 341
+  # - 346
+  # - 351
+  # - 356
+  # - 361
+  # - 366
+  # - 371
+  # - 376
+  # - 381
+  # - 386
+  # - 391
+  # - 396
+  # - 401
+  # - 406
+  # - 411
+  # - 416
+  # - 421
+  # - 426
+  # - 431
+  # - 436
+  # - 441
+  # - 446
+  # - 451
+  # - 456
+  # - 461
+  # - 466
+  # - 471
+  # - 476
+  # - 481
+  # - 486
+  # - 491
+  # - 496
+  # - 501
+  # - 506
+  # - 511
+  # - 516
+  # - 521
+  # - 526
+  # - 531
+  # - 536
+first: 1
+last: 540
 benchmark_filename_format: "{}.txt"
 
 # Scenario configurations
 dicts_of_i_o_data_path:
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_edd_baseCp.yaml"
+  #   output_dir: "output_600s/edd_baseCp"
+  #   description: "EDD -> base CP"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_edd.yaml"
+  #   output_dir: "output_600s/edd"
+  #   description: "EDD"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_eddp.yaml"
+  #   output_dir: "output_600s/eddp"
+  #   description: "EDDP"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_mdd.yaml"
+  #   output_dir: "output_600s/mdd"
+  #   description: "MDD"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_slack.yaml"
+  #   output_dir: "output_600s/slack"
+  #   description: "SLACK"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_srmwk.yaml"
+  #   output_dir: "output_600s/srmwk"
+  #   description: "SRMWK"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_nehedd.yaml"
+  #   output_dir: "output_600s/nehedd"
+  #   description: "NEHEDD"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_allinit.yaml"
+  #   output_dir: "output_600s/allInit"
+  #   description: "ALLINIT"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_nehedd_ic1010.yaml"
+  #   output_dir: "output_600s/nehedd_IC1010"
+  #   description: "NEHEDD -> IC(10,10)"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_nehedd_ic1020.yaml"
+  #   output_dir: "output_600s/nehedd_IC1020"
+  #   description: "NEHEDD -> IC(10,20)"
   - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-    subroutine_flow_rel_path: "configs_600s/subroutine_flow_edd_baseCp.yaml"
-    output_dir: "output_600s/edd_baseCp"
-    description: "EDD -> base CP"
+    subroutine_flow_rel_path: "configs_600s/subroutine_flow_nehedd_baseCp.yaml"
+    output_dir: "output_600s/nehedd_baseCp"
+    description: "NEHEDD -> base CP 600s"
 
 # Output and Logging configuration
 output_dir_scenarios: "Outputs_scenarios"
@@ -128,7 +168,7 @@ scenario_log_filename: "hfs_multi_scenario_runner.log"
 result_dir_name: "results"
 
 # Execution configuration
-instance_worker_cnt: 1
+instance_worker_cnt: 4
 
 # Analysis and plotting options
 draw_gantt: false
@@ -139,5 +179,5 @@ progress_plot_filename_format: "{}_progress_plot.png"
 drop_first_values_percent: 0.0
 # Optional metadata for post-processing only
 # analysis_dir_path: "$HFS_RESULT_DIR/Calop1/20250912T001404_281753"
-# analysis_timestamp: "20250819T000123_343274"
-# resume_dir_path: resources/vrm_prev_calc/20250906T212736_116407
+# analysis_timestamp: "20250923T185753_526917"
+# resume_dir_path: resources/vrm_prev_calc/20250923T011049_333399/output_600s/nehedd

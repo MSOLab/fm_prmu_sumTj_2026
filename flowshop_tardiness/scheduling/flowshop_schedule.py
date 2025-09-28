@@ -56,6 +56,7 @@ class FlowshopSchedule:
             k: v.deepcopy() if hasattr(v, "deepcopy") else deepcopy(v)
             for k, v in self._stages.items()
         }
+        new_schedule._last_stage_name = self._last_stage_name
         # Deep copy internal states
         new_schedule.job_2_last_oper_end_time_map = deepcopy(
             self.job_2_last_oper_end_time_map
@@ -76,7 +77,6 @@ class FlowshopSchedule:
             int: The maximum makespan across all stages.
         """
         return max((stage.makespan for stage in self._stages.values()), default=0)
-
 
     def get_stage_by_name(self, stage_name: str) -> FlowshopStage:
         """
@@ -136,6 +136,7 @@ class FlowshopSchedule:
 
         Args:
             job_2_duedate_map (dict[str, int]): A mapping of job names to their due dates.
+                If a job is not in this map, its due date is assumed to be 0.
 
         Returns:
             dict[str, int]: A dictionary of job names to their tardiness (end_time - due_date)
@@ -148,10 +149,9 @@ class FlowshopSchedule:
         last_stage = self.get_stage_by_name(self._last_stage_name)
         for operation in last_stage.operations:
             job_name = operation.job_name
-            if job_name in job_2_duedate_map:
-                due_date = job_2_duedate_map[job_name]
-                if operation.end > due_date:
-                    job_2_tardiness_map[job_name] = operation.end - due_date
+            due_date = job_2_duedate_map.get(job_name, 0)
+            if operation.end > due_date:
+                job_2_tardiness_map[job_name] = operation.end - due_date
         return job_2_tardiness_map
 
     def get_total_tardiness(self, job_2_duedate_map: dict[str, int]) -> int:
@@ -178,6 +178,19 @@ class FlowshopSchedule:
             for stage_name, stage in self._stages.items()
         }
 
+    def get_last_stage_job_list(self) -> list[str]:
+        """
+        Get the list of job names scheduled in the last stage of the flowshop.
+
+        Raises:
+            ValueError: If the last stage name is not set.
+        """
+        if self._last_stage_name is None:
+            raise ValueError("Last stage name is not set.")
+
+        last_stage = self.get_stage_by_name(self._last_stage_name)
+        return [operation.job_name for operation in last_stage.operations]
+
     # End getters
 
     # Start setters
@@ -190,7 +203,12 @@ class FlowshopSchedule:
         )
 
     def dispatch_operation_earliest(
-        self, job_name: str, stage_name: str, p: int, release_t: int = 0
+        self,
+        job_name: str,
+        stage_name: str,
+        p: int,
+        release_t: int = 0,
+        after_last: bool = False,
     ) -> FlowshopOperation:
         """
         Dispatch an operation to the (single machine) stage at the earliest available time.
@@ -209,7 +227,9 @@ class FlowshopSchedule:
         """
         stage = self.get_stage_by_name(stage_name)
         _release_t = max(release_t, self.job_2_last_oper_end_time_map[job_name])
-        start_time = int(stage.get_earliest_start_time(p, _release_t))
+        start_time = int(
+            stage.get_earliest_start_time(p, _release_t, after_last=after_last)
+        )
         # integer casting to ensure start_time is an integer
         # (not np.int64 for YAML compatibility)
         end_time = int(start_time + p)
@@ -235,6 +255,7 @@ class FlowshopSchedule:
         stage_name_list: list[str],
         stage_name_2_p_map: dict[str, int],
         release_t: int = 0,
+        after_last: bool = False,
     ) -> list[FlowshopOperation]:
         """Dispatch a job across multiple stages, scheduling each stage's operation
         on the earliest available time (respecting job precedence).
@@ -255,7 +276,7 @@ class FlowshopSchedule:
         for stage_name in stage_name_list:
             p = stage_name_2_p_map[stage_name]
             op = self.dispatch_operation_earliest(
-                job_name, stage_name, p, last_end_time
+                job_name, stage_name, p, last_end_time, after_last=after_last
             )
             operations.append(op)
             last_end_time = op.end
@@ -297,3 +318,16 @@ class FlowshopSchedule:
         return all_removed
 
     # End setters
+
+    # Start utility methods
+
+    def verify_stage_job_sequence(self) -> None:
+        i_list = list(self._stages.keys())
+        i_2_j_list_map = self.get_stage_2_job_list_map()
+        reference_sequence = i_2_j_list_map[i_list[0]]
+        for stage_name in i_list[1:]:
+            if i_2_j_list_map[stage_name] != reference_sequence:
+                raise ValueError(
+                    f"Job sequence mismatch between stage {i_list[0]} & {stage_name}."
+                    f" {reference_sequence} != {i_2_j_list_map[stage_name]}"
+                )

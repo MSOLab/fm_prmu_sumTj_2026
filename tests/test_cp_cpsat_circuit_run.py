@@ -63,11 +63,11 @@ def test_cp_cpsat_circuit_runs_and_builds_schedule():
     GanttPlotter().export_flowshop_plot(Path("test_output.png"), start_map, end_map)
 
     # Build FlowshopSchedule and populate operations
-    stage_list = instance.stage_id_list
-    schedule = FlowshopSchedule.from_stage_name_list(stage_list)
+    i_list = instance.stage_id_list
+    schedule = FlowshopSchedule.from_stage_name_list(i_list)
 
     for j in instance.job_id_list:
-        for i in stage_list:
+        for i in i_list:
             s = int(start_map[j, i])
             e = int(end_map[j, i])
             op = FlowshopOperation(job_name=j, stage_name=i, start=s, end=e)
@@ -81,17 +81,14 @@ def test_cp_cpsat_circuit_runs_and_builds_schedule():
     assert total_ops == len(instance.job_id_list) * len(instance.stage_id_list)
 
     # Check objective value
-    job_2_tardiness_map = schedule.get_tardiness_map(instance.job_2_duedate_map)
-    assert sum(job_2_tardiness_map.values()) == obj_value
+    total_tardiness = schedule.get_total_tardiness(instance.job_2_duedate_map)
+    assert total_tardiness == obj_value
 
     # Check permutation schedule: each stage should have the same job sequence
-    reference_sequence = [
-        op.job_name for op in schedule._stages[stage_list[0]].operations
-    ]
-    for stage_name in stage_list[1:]:
-        current_sequence = [
-            op.job_name for op in schedule._stages[stage_name].operations
-        ]
-        assert current_sequence == reference_sequence, (
-            f"Job sequence mismatch at stage {stage_name}"
-        )
+    i_2_j_list_map = schedule.get_stage_2_job_list_map()
+    reference_sequence = i_2_j_list_map[i_list[0]]
+    for stage_name in i_list[1:]:
+        if i_2_j_list_map[stage_name] != reference_sequence:
+            raise ValueError(
+                f"Job sequence mismatch between stage {i_list[0]} & {stage_name}."
+            )
