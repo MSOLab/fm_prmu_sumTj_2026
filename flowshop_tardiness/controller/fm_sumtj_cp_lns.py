@@ -586,18 +586,19 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             if iter_report.is_feasible:
                 # Update the last solution
                 last_solution = sub_cp_mdl.create_schedule()
-                # If last_solution is not better than partial_dispatched_sol,
                 if last_solution is None:
+                    # If the new solution is None, raise an error.
                     raise ValueError("Subproblem returned feasible but no solution.")
                 elif self.get_obj_value(last_solution) >= self.get_obj_value(
                     partial_sol
                 ):
+                    # If the new solution is not better than the partial solution,
+                    # revert to the dispatched solution.
                     logging.info(
                         f"Subproblem with {job_subset_cnt}/{job_cnt} jobs "
                         "did not improve the partial dispatched solution. "
                         "Using the partial dispatched solution."
                     )
-                    # Use the partial dispatched solution
                     last_solution = partial_sol
                 else:
                     logging.info(

@@ -149,9 +149,7 @@ class FlowshopSchedule:
         last_stage = self.get_stage_by_name(self._last_stage_name)
         for operation in last_stage.operations:
             job_name = operation.job_name
-            due_date = 0
-            if job_name in job_2_duedate_map:
-                due_date = job_2_duedate_map[job_name]
+            due_date = job_2_duedate_map.get(job_name, 0)
             if operation.end > due_date:
                 job_2_tardiness_map[job_name] = operation.end - due_date
         return job_2_tardiness_map

@@ -232,7 +232,7 @@ class FlowshopTardinessControllerCore(
                 # Always run specific initializer methods when resuming
                 # even if they were already executed before pausing.
                 # e.g., set_random_seed, set_cp_model_as_base_cp_model
-                # Treat their execution as not consuming the global timelimit.
+                # Treat their execution as not consuming the global time limit.
                 if idx < flow_resume_idx:
                     if (
                         subroutine_data.get("method", "")
@@ -463,37 +463,6 @@ class FlowshopTardinessControllerCore(
                     self.check_feasibility(solution)
                 obj_value_by_solution = self.get_obj_value(solution)
                 if obj_value_by_solution != fs_solver_report.obj_value:
-                    # schedule_Tj_map = solution.get_tardiness_map(
-                    #     self.instance.job_2_duedate_map
-                    # )
-                    # solver_Tj_map = self.cp_model.extract_Tj_map()
-                    # # Compute per-job differences (solver Tj - schedule Tj)
-                    # solver_minus_schedule_map = {}
-                    # for j, schedule_val in schedule_Tj_map.items():
-                    #     solver_val = solver_Tj_map.get(j, 0)
-                    #     if solver_val != schedule_val:
-                    #         solver_minus_schedule_map[j] = solver_val - schedule_val
-
-                    # # If there are any differences, raise an error with details
-                    # if solver_minus_schedule_map:
-                    #     raise ValueError(
-                    #         "Per-job tardiness differences (solver Tj - schedule Tj): %s",
-                    #         solver_minus_schedule_map,
-                    #     )
-
-                    # if sum(solver_Tj_map.values()) != obj_value_by_solution:
-                    #     raise ValueError(
-                    #         "Sum of per-job tardiness from solver (%d) does not match "
-                    #         "objective value from solution (%d)."
-                    #         % (sum(solver_Tj_map.values()), obj_value_by_solution)
-                    #     )
-
-                    # if sum(schedule_Tj_map.values()) != solver_report.obj_value:
-                    #     raise ValueError(
-                    #         "Sum of per-job tardiness from schedule (%d) does not match "
-                    #         "objective value from solver (%d)."
-                    #         % (sum(schedule_Tj_map.values()), solver_report.obj_value)
-                    #     )
                     if obj_value_by_solution > fs_solver_report.obj_value:
                         raise ValueError(
                             f"Objective value mismatch: Reported {fs_solver_report.obj_value}, "
