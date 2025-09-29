@@ -407,7 +407,7 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     # methods to add hints
 
     def add_hints_from_schedule(self, schedule: FlowshopSchedule) -> None:
-        self.add_tardiness_hints_from_Tj_map(schedule.get_tardiness_map(self.D))
+        self.add_tardiness_hints_from_Tj_map(schedule.get_job_2_tardiness_map(self.D))
         self.add_start_hints_from_start_time_map(schedule.get_start_time_map())
         self.add_end_hints_from_end_time_map(schedule.get_end_time_map())
         self.add_sequence_hints(schedule.get_last_stage_job_list())
