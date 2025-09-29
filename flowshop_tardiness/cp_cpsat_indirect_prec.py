@@ -269,9 +269,9 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
         self.add_tardiness_hints_from_Tj_map(schedule.get_tardiness_map(self.D))
         self.add_start_hints_from_start_time_map(schedule.get_start_time_map())
         self.add_end_hints_from_end_time_map(schedule.get_end_time_map())
-        self.add_sequence_hints(schedule.get_last_stage_job_list())
+        self.add_indirect_precedence_hints(schedule.get_last_stage_job_list())
 
-    def add_sequence_hints(self, job_sequence: list[str]) -> None:
+    def add_indirect_precedence_hints(self, job_sequence: list[str]) -> None:
         for j1_idx, j1 in enumerate(job_sequence):
             for j2 in job_sequence[j1_idx + 1 :]:
                 self.add_hint(self.prec[(j1, j2)], 1)
