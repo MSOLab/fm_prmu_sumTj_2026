@@ -61,7 +61,7 @@ class FlowshopTardinessControllerCore(
         }
         assert "" not in self.method_names_to_run_before_resume
         self.log_solver_level = logging.INFO  # TODO: make it configurable
-        self.log_search_progress = True  # TODO: make it configurable
+        self.log_search_progress = False  # TODO: make it configurable
 
         # Frequently used parameters
         self.job_2_stage_2_p_dict = self.instance.p_manager.job_2_stage_2_value_map(
