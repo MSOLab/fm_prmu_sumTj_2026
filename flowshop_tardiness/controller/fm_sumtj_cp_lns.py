@@ -85,7 +85,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         # Dispatch
         for j in job_sequence:
             added = schedule.dispatch_job_by_stages(
-                j, self.instance.stage_id_list, self.job_2_stage_2_p_dict[j]
+                j,
+                self.instance.stage_id_list,
+                self.job_2_stage_2_p_dict[j],
+                after_last=True,
             )
             if added is None:
                 raise ValueError(f"Failed to add job {j} to the schedule.")
@@ -254,7 +257,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
             # append the selected job and commit its frontier
             remaining.remove(best_job)
-            schedule.dispatch_job_by_stages(best_job, i_list, pmap[best_job])
+            schedule.dispatch_job_by_stages(
+                best_job, i_list, pmap[best_job], after_last=True
+            )
             frontier = best_f
 
         if error_if_infeasible:
