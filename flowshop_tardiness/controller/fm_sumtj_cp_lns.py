@@ -734,6 +734,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             last_timestamp = sub_timer.elapsed_sec
 
             # ---------- [CP feasible? & CP is better?] ----------
+            # Use sequence-based schedule creation since the starting times by CP model
+            # does not minimize the total completion time (its main goal is to minimize
+            # tardiness).
             cp_sched = (
                 sub_cp_mdl.create_schedule_from_sequence()
                 if iter_report.is_feasible
