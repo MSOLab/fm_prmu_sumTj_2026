@@ -61,7 +61,7 @@ class FlowshopTardinessControllerCore(
         }
         assert "" not in self.method_names_to_run_before_resume
         self.log_solver_level = logging.INFO  # TODO: make it configurable
-        self.log_search_progress = True  # TODO: make it configurable
+        self.log_search_progress = False  # TODO: make it configurable
 
         # Frequently used parameters
         self.job_2_stage_2_p_dict = self.instance.p_manager.job_2_stage_2_value_map(
@@ -458,7 +458,7 @@ class FlowshopTardinessControllerCore(
         else:
             solution: FlowshopSchedule | None = None
             if fs_solver_report.is_feasible:
-                solution = self.cp_model.create_schedule()
+                solution = self.cp_model.create_schedule_from_sequence()
                 if error_if_infeasible:
                     self.check_feasibility(solution)
                 obj_value_by_solution = self.get_obj_value(solution)

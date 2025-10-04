@@ -249,7 +249,7 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
             Tj_map[j] = self.solver.value(var)
         return Tj_map
 
-    def create_schedule(self) -> FlowshopSchedule:
+    def create_schedule_by_start_end_time(self) -> FlowshopSchedule:
         start_time_map, end_time_map = self.extract_start_end_time_map()
         schedule = FlowshopSchedule.from_stage_name_list(self.i_list)
 
@@ -263,15 +263,31 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
 
         return schedule
 
+    def create_schedule_from_sequence(self) -> FlowshopSchedule:
+        i_list = self.i_list
+
+        j_2_rank_map = {
+            j: self.solver.value(sum(self.prec[jp, j] for jp in self.j_list if jp != j))
+            for j in self.j_list
+        }
+        job_sequence = sorted(self.j_list, key=lambda j: j_2_rank_map[j])
+        schedule = FlowshopSchedule.from_stage_name_list(self.i_list)
+
+        for j in job_sequence:
+            i_2_p_map = {i: self.p[j, i] for i in i_list}
+            schedule.dispatch_job_by_stages(j, i_list, i_2_p_map, after_last=True)
+
+        return schedule
+
     # methods to add hints
 
     def add_hints_from_schedule(self, schedule: FlowshopSchedule) -> None:
-        self.add_tardiness_hints_from_Tj_map(schedule.get_tardiness_map(self.D))
+        self.add_tardiness_hints_from_Tj_map(schedule.get_job_2_tardiness_map(self.D))
         self.add_start_hints_from_start_time_map(schedule.get_start_time_map())
         self.add_end_hints_from_end_time_map(schedule.get_end_time_map())
-        self.add_sequence_hints(schedule.get_last_stage_job_list())
+        self.add_indirect_precedence_hints(schedule.get_last_stage_job_list())
 
-    def add_sequence_hints(self, job_sequence: list[str]) -> None:
+    def add_indirect_precedence_hints(self, job_sequence: list[str]) -> None:
         for j1_idx, j1 in enumerate(job_sequence):
             for j2 in job_sequence[j1_idx + 1 :]:
                 self.add_hint(self.prec[(j1, j2)], 1)

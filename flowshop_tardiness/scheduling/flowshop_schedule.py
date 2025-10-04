@@ -131,7 +131,9 @@ class FlowshopSchedule:
                 return_dict[k] = v
         return return_dict
 
-    def get_tardiness_map(self, job_2_duedate_map: dict[str, int]) -> dict[str, int]:
+    def get_job_2_tardiness_map(
+        self, job_2_duedate_map: dict[str, int]
+    ) -> dict[str, int]:
         """Calculate the tardiness for each job based on the due dates provided.
 
         Args:
@@ -164,7 +166,7 @@ class FlowshopSchedule:
         Returns:
             int: The total tardiness across all jobs.
         """
-        return sum(self.get_tardiness_map(job_2_duedate_map).values())
+        return sum(self.get_job_2_tardiness_map(job_2_duedate_map).values())
 
     def get_stage_2_job_list_map(self) -> dict[str, list[str]]:
         """
