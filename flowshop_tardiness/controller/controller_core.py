@@ -458,7 +458,7 @@ class FlowshopTardinessControllerCore(
         else:
             solution: FlowshopSchedule | None = None
             if fs_solver_report.is_feasible:
-                solution = self.cp_model.create_schedule()
+                solution = self.cp_model.create_schedule_from_sequence()
                 if error_if_infeasible:
                     self.check_feasibility(solution)
                 obj_value_by_solution = self.get_obj_value(solution)

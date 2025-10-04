@@ -249,7 +249,7 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
             Tj_map[j] = self.solver.value(var)
         return Tj_map
 
-    def create_schedule(self) -> FlowshopSchedule:
+    def create_schedule_by_start_end_time(self) -> FlowshopSchedule:
         start_time_map, end_time_map = self.extract_start_end_time_map()
         schedule = FlowshopSchedule.from_stage_name_list(self.i_list)
 
@@ -260,6 +260,22 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
                 op = FlowshopOperation(job_name=j, stage_name=i, start=s, end=e)
                 added = schedule.schedule_operation(op)
                 assert added is not None, f"Failed to add operation {j},{i} to schedule"
+
+        return schedule
+
+    def create_schedule_from_sequence(self) -> FlowshopSchedule:
+        i_list = self.i_list
+
+        j_2_rank_map = {
+            j: self.solver.value(sum(self.prec[jp, j] for jp in self.j_list if jp != j))
+            for j in self.j_list
+        }
+        job_sequence = sorted(self.j_list, key=lambda j: j_2_rank_map[j])
+        schedule = FlowshopSchedule.from_stage_name_list(self.i_list)
+
+        for j in job_sequence:
+            i_2_p_map = {i: self.p[j, i] for i in i_list}
+            schedule.dispatch_job_by_stages(j, i_list, i_2_p_map, after_last=True)
 
         return schedule
 

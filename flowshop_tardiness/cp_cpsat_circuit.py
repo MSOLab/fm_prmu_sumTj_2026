@@ -390,7 +390,7 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
             Tj_map[j] = self.solver.value(var)
         return Tj_map
 
-    def create_schedule(self) -> FlowshopSchedule:
+    def create_schedule_by_start_end_time(self) -> FlowshopSchedule:
         start_time_map, end_time_map = self.extract_start_end_time_map()
         schedule = FlowshopSchedule.from_stage_name_list(self.i_list)
 
