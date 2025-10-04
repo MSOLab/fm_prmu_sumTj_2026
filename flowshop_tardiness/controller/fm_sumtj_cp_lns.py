@@ -2,8 +2,9 @@ import logging
 import math
 from typing import Callable
 
-from mbls.cpsat import ObjValueBoundStore
+from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
 from routix import ElapsedTimer
+from routix.util.comparison import float_a_leq_b, float_a_stl_b
 
 from ..report import FsSubroutineReport
 from ..scheduling.flowshop_schedule import FlowshopSchedule
@@ -501,35 +502,157 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         self,
         job_sequence: list[str],
         solver_thread_cnt: int,
-        added_batch_size: int = 1,
+        added_batch_size: int = 2,
         max_time_per_add: float | None = None,
         no_improvement_timelimit: float | None = None,
         is_init: bool = False,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ):
+        """Constructs a solution by incrementally building and solving a CP model.
+
+        This method takes an initial job sequence and iteratively builds a schedule.
+        In each iteration, it adds a batch of jobs from the sequence to the
+        problem, solves the resulting subproblem using a CP model, and then
+        decides whether to keep the CP's solution or a simple dispatch-based
+        solution for that subset of jobs. This process continues until all jobs
+        are scheduled.
+
+        The objective values of partial solutions (bounds) and full solutions
+        (values, obtained by dispatching remaining jobs) are logged throughout
+        the process for detailed analysis.
+
+        Args:
+            job_sequence (list[str]): The initial sequence of jobs to guide the
+                incremental construction.
+            solver_thread_cnt (int): The number of threads for the CP solver.
+            added_batch_size (int, optional): The number of jobs to add in each
+                incremental step. Defaults to 2.
+            max_time_per_add (float | None, optional): The maximum time limit
+                in seconds for each CP solve step. Defaults to None.
+            no_improvement_timelimit (float | None, optional): A time limit for
+                the CP solver to find an improvement. Defaults to None.
+            is_init (bool, optional): Flag indicating if this is an initial
+                solution construction. Defaults to False.
+            error_if_infeasible (bool, optional): If True, raises an error if the
+                final schedule is infeasible. Defaults to False.
+            draw_gantt (bool, optional): If True, draws a Gantt chart if the
+                resulting solution improves the incumbent. Defaults to False.
+        """
         sub_timer = ElapsedTimer()
         last_solution: FlowshopSchedule | None = None
-
         sub_obj_store = ObjValueBoundStore[float]()
-        """Subroutine-specific objective store"""
         sub_obj_store.obj_value_series.name = "ObjVal after dispatch"
         sub_obj_store.obj_bound_series.name = "ObjVal before dispatch"
 
         job_cnt = len(job_sequence)
         sequence_of_job_sublist = [
             job_sequence[i : i + added_batch_size]
-            for i in range(0, len(job_sequence), added_batch_size)
+            for i in range(0, job_cnt, added_batch_size)
         ]
-        all_stage_set = set(self.instance.stage_id_list)
+        job_sublist_cnt = len(sequence_of_job_sublist)
+
+        # ================== helpers (method-internal) ==================
+
+        def _make_all_dispatched(
+            base_sol: FlowshopSchedule, already_scheduled_job_set: set[str]
+        ) -> FlowshopSchedule:
+            """Create a new FlowshopSchedule by dispatching remaining jobs.
+
+            Args:
+                base_sol (FlowshopSchedule): The base solution to modify.
+                already_scheduled_job_set (set[str]): The set of already scheduled jobs.
+
+            Raises:
+                ValueError: If a job cannot be dispatched to all stages.
+
+            Returns:
+                FlowshopSchedule: The modified flow shop schedule.
+            """
+            if len(already_scheduled_job_set) == job_cnt:
+                return base_sol.deepcopy()
+
+            remaining_jobs = [
+                j for j in job_sequence if j not in already_scheduled_job_set
+            ]
+            full_sched = base_sol.deepcopy()
+            for j in remaining_jobs:
+                full_sched.dispatch_job_by_stages(
+                    j,
+                    self.instance.stage_id_list,
+                    self.job_2_stage_2_p_dict[j],
+                    after_last=True,
+                )
+            # Safety check
+            self.check_feasibility(full_sched)
+            return full_sched.deepcopy()
+
+        def _log_snapshot(
+            picked_sol: FlowshopSchedule,
+            already_scheduled_job_set: set[str],
+            note: str,
+            *,
+            iter_report: CpsatSolverReport | None = None,
+            timestamp: float | None = None,
+        ) -> None:
+            """Log a snapshot of the current state.
+
+            Args:
+                picked_sol (FlowshopSchedule): The picked solution to log.
+                already_scheduled_job_set (set[str]): The set of already scheduled jobs.
+                note (str): A note to attach to the log.
+                iter_report (CpsatSolverReport | None, optional): CP solver report for the iteration.
+                    If provided, objective bounds are extracted. Defaults to None.
+                timestamp (float | None, optional): The timestamp for the log entry.
+                    If None, the current subroutine timer's elapsed time is used. Defaults to None.
+            """
+            ts = sub_timer.elapsed_sec if timestamp is None else timestamp
+
+            # value = objective value of the schedule with all jobs
+            full_sched = _make_all_dispatched(picked_sol, already_scheduled_job_set)
+            full_sched_value = self.get_obj_value(full_sched)
+            sub_obj_store.add_obj_value(ts, full_sched_value, is_maximize=None)
+
+            # bounds = objective value of the partial schedule (by CP or by partially dispatched)
+            if iter_report is not None and getattr(iter_report, "is_feasible", False):
+                records = iter_report.obj_value_records
+                seen = set()
+                for elapsed, val in records:
+                    sub_obj_store.add_obj_bound(elapsed, val, is_maximize=None)
+                    seen.add((elapsed, val))
+                # record the final value as a bound if not already recorded
+                final_val = self.get_obj_value(picked_sol)
+                if (ts, final_val) not in seen:
+                    sub_obj_store.add_obj_bound(ts, final_val, is_maximize=None)
+                sub_obj_store.add_last_timestamp_note(
+                    note, obj_value_is_valid=True, obj_bound_is_valid=True
+                )
+            else:
+                # if iter_report is None or infeasible, just log the final value as a bound
+                picked_val = self.get_obj_value(picked_sol)
+                sub_obj_store.add_obj_bound(ts, picked_val, is_maximize=None)
+                sub_obj_store.add_last_timestamp_note(
+                    note, obj_value_is_valid=True, obj_bound_is_valid=True
+                )
+
+        # ================== /helpers ==================
 
         halt_incremental_cp_processing = False
         job_subset: set[str] = set()
-        for job_sublist in sequence_of_job_sublist:
-            job_subset.update(job_sublist)
-            job_subset_cnt = len(job_subset)
-            all_jobs_are_included = job_subset_cnt == job_cnt
 
+        for bidx, job_sublist in enumerate(sequence_of_job_sublist):
+            # ---------- [Time over?] : cutoff before partial dispatch ----------
+            _timelimit = self.get_remaining_time_limit(max_time_per_add)
+            if float_a_leq_b(_timelimit, 0):
+                logging.info(
+                    "(batch %d/%d) Time over before dispatch -> finish by dispatching remaining jobs.",
+                    bidx + 1,
+                    job_sublist_cnt,
+                )
+                halt_incremental_cp_processing = True
+                break  # End loop & go to 'after-loop finishing'
+
+            # ---------- [Partial dispatch] ----------
             partial_sol = (
                 FlowshopSchedule.from_stage_name_list(self.instance.stage_id_list)
                 if last_solution is None
@@ -542,34 +665,56 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     self.job_2_stage_2_p_dict[j],
                     after_last=True,
                 )
+            job_subset.update(job_sublist)
+            dispatch_obj_val = self.get_obj_value(partial_sol)
 
-            if self.get_obj_value(partial_sol) == 0:
-                # If the partial solution already shows no tardiness,
-                # skip CP solving for this subset
-                last_solution = partial_sol
+            # ---------- [sumTj == 0 ?] ----------
+            if dispatch_obj_val == 0:
                 logging.info(
-                    f"All jobs in the current subset of {job_subset_cnt} jobs"
-                    " are completed on time. Skipping CP solving."
+                    "(batch %d/%d) sumTj=0 -> skip CP; keep partial dispatched schedule.",
+                    bidx + 1,
+                    job_sublist_cnt,
+                )
+                last_solution = partial_sol
+                _log_snapshot(
+                    last_solution,
+                    job_subset,
+                    note=f"{len(job_subset)}/{job_cnt} (sumTj=0; skip CP)",
                 )
                 continue
 
+            # ---------- [Sub CP build & solve] ----------
             sub_cp_mdl = self.cp_model.create_problem_of_job_subset(job_subset)
             if last_solution is not None:
                 sub_cp_mdl.add_indirect_precedence_constraints_by_sequence(
                     last_solution.get_last_stage_job_list()
                 )
             sub_cp_mdl.add_hints_from_schedule(partial_sol)
-
-            _timelimit = self.get_remaining_time_limit(max_time_per_add)
+            # set obj lower bound if all jobs are included and we have a valid bound
+            all_jobs_are_included = len(job_subset) == job_cnt
             if (
                 all_jobs_are_included
                 and self.solution_manager.best_obj_bound is not None
                 and not math.isnan(self.solution_manager.best_obj_bound)
             ):
                 sub_cp_mdl.set_obj_lower_bound(self.solution_manager.best_obj_bound)
+
+            # ---------- [Time over?] : cutoff before CP solving ----------
+            _timelimit = self.get_remaining_time_limit(max_time_per_add)
+            if float_a_leq_b(_timelimit, 0):
+                logging.info(
+                    "(batch %d/%d) Time over before CP solving -> finish by dispatching remaining jobs.",
+                )
+                last_solution = partial_sol  # keep the dispatched partial schedule
+                halt_incremental_cp_processing = True
+                break  # End loop & go to 'after-loop finishing'
+
             logging.info(
-                "Starting CP on subproblem with %d jobs at %s",
-                job_subset_cnt,
+                "(batch %d/%d) Starting CP on subproblem with %d jobs (dispatched obj val: %d) at %s",
+                bidx + 1,
+                job_sublist_cnt,
+                len(job_subset),
+                dispatch_obj_val,
                 sub_timer.get_formatted_elapsed_time(),
             )
             iter_report = self.solve_cp_model(
@@ -588,110 +733,62 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             )
             last_timestamp = sub_timer.elapsed_sec
 
-            if iter_report.is_feasible:
-                # Update the last solution
-                last_solution = sub_cp_mdl.create_schedule()
-                if last_solution is None:
-                    # If the new solution is None, raise an error.
-                    raise ValueError("Subproblem returned feasible but no solution.")
-                elif self.get_obj_value(last_solution) >= self.get_obj_value(
-                    partial_sol
-                ):
-                    # If the new solution is not better than the partial solution,
-                    # revert to the dispatched solution.
-                    logging.info(
-                        f"Subproblem with {job_subset_cnt}/{job_cnt} jobs "
-                        "did not improve the partial dispatched solution. "
-                        "Using the partial dispatched solution."
-                    )
-                    last_solution = partial_sol
-                else:
-                    logging.info(
-                        f"Subproblem with {job_subset_cnt}/{job_cnt} jobs found a better solution."
-                    )
-            else:
-                logging.warning(
-                    f"Subproblem with {job_subset_cnt}/{job_cnt} jobs is infeasible. "
-                    "Using the partial dispatched solution."
-                )
-                # Use the partial dispatched solution
-                last_solution = partial_sol
-                halt_incremental_cp_processing = True
-
-            # Dispatch remaining jobs to create a schedule feasible to the original problem
-            all_dispatched_sol = last_solution.deepcopy()
-            remaining_jobs = [j for j in job_sequence if j not in job_subset]
-            for j in remaining_jobs:
-                ops = all_dispatched_sol.dispatch_job_by_stages(
-                    j,
-                    self.instance.stage_id_list,
-                    self.job_2_stage_2_p_dict[j],
-                    after_last=True,
-                )
-                stage_set = set(op.stage_name for op in ops)
-                if stage_set != all_stage_set:
-                    raise ValueError(
-                        f"Failed to dispatch job {j} to stages {all_stage_set - stage_set}"
-                    )
-            all_dispatched_sol.verify_stage_job_sequence()
-
-            # Store the objective value logs
-
-            # Obj. value of dispatched solution as a value
-            sub_obj_store.add_obj_value(
-                last_timestamp, self.get_obj_value(all_dispatched_sol), is_maximize=None
+            # ---------- [CP feasible? & CP is better?] ----------
+            cp_sched = (
+                sub_cp_mdl.create_schedule_from_sequence()
+                if iter_report.is_feasible
+                else None
+            )
+            cp_obj_val = None if cp_sched is None else self.get_obj_value(cp_sched)
+            cp_is_better = cp_obj_val is not None and float_a_stl_b(
+                cp_obj_val, dispatch_obj_val
             )
 
-            # Obj. values of Un-dispatched solution as bounds
-            last_solution_obj_value = self.get_obj_value(last_solution)
-            if iter_report.is_feasible:
-                undispatched_obj_value_records = sub_cp_mdl.get_obj_value_records()
-                for elapsed, value in undispatched_obj_value_records:
-                    sub_obj_store.add_obj_bound(elapsed, value, is_maximize=None)
-                if (
-                    last_timestamp,
-                    last_solution_obj_value,
-                ) not in undispatched_obj_value_records:
-                    sub_obj_store.add_obj_bound(
-                        last_timestamp,
-                        last_solution_obj_value,
-                        is_maximize=None,
-                    )
-                _last_timestamp_note = f"{job_subset_cnt}/{job_cnt}"
-                sub_obj_store.add_last_timestamp_note(
-                    _last_timestamp_note,
-                    obj_value_is_valid=True,
-                    obj_bound_is_valid=True,
+            if cp_is_better:
+                assert cp_obj_val is not None
+                logging.info(
+                    "CP is better (%d < %d) -> adopt CP schedule.",
+                    cp_obj_val,
+                    dispatch_obj_val,
                 )
+                assert cp_sched is not None
+                last_solution = cp_sched
             else:
-                sub_obj_store.add_obj_bound(
-                    last_timestamp,
-                    last_solution_obj_value,
-                    is_maximize=None,
+                reason = (
+                    "infeasible" if not iter_report.is_feasible else "no improvement"
                 )
-                _last_timestamp_note = f"{job_subset_cnt}/{job_cnt} (infeasible)"
-                sub_obj_store.add_last_timestamp_note(
-                    _last_timestamp_note,
-                    obj_value_is_valid=True,
-                    obj_bound_is_valid=True,
-                )
+                logging.info("CP %s -> keep dispatched partial.", reason)
+                last_solution = partial_sol
 
-            if halt_incremental_cp_processing:
+            # ---------- [CP is not better & timeover?] ----------
+            if (not cp_is_better) and float_a_leq_b(
+                _timelimit, iter_report.elapsed_time
+            ):
                 logging.warning(
-                    "Stopping further incremental CP due to previous infeasibility."
+                    "CP timeover at this batch -> halt further incremental CP."
                 )
+                halt_incremental_cp_processing = True
+
+            # ---------- [Log snapshot & halt] ----------
+            _log_snapshot(
+                last_solution,
+                job_subset,
+                note=f"{len(job_subset)}/{job_cnt}",
+                iter_report=iter_report,
+                timestamp=last_timestamp,
+            )
+            if halt_incremental_cp_processing:
                 break
 
-        # Dispatch remaining jobs if any
+        # ---------- [End] : Dispatch remaining jobs ----------
         if last_solution is None:
             last_solution = FlowshopSchedule.from_stage_name_list(
                 self.instance.stage_id_list
             )
+
         remaining_jobs = [j for j in job_sequence if j not in job_subset]
         if remaining_jobs:
-            logging.info(
-                f"Dispatching the remaining {len(remaining_jobs)} jobs after incremental CP."
-            )
+            logging.info("Dispatch remaining %d jobs and finish.", len(remaining_jobs))
             for j in remaining_jobs:
                 last_solution.dispatch_job_by_stages(
                     j,
@@ -699,26 +796,19 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     self.job_2_stage_2_p_dict[j],
                     after_last=True,
                 )
-            last_solution_obj_value = self.get_obj_value(last_solution)
-            sub_obj_store.add_obj_value(
-                sub_timer.elapsed_sec,
-                last_solution_obj_value,
-                is_maximize=None,
-            )
-            sub_obj_store.add_obj_bound(
-                sub_timer.elapsed_sec,
-                last_solution_obj_value,
-                is_maximize=None,
-            )
-            sub_obj_store.add_last_timestamp_note(
-                "Final dispatch after incremental CP",
-                obj_value_is_valid=True,
-                obj_bound_is_valid=True,
+            _log_snapshot(
+                last_solution,
+                set(job_sequence),
+                note="Final dispatch",
+                timestamp=sub_timer.elapsed_sec,
             )
 
         if error_if_infeasible:
             self.check_feasibility(last_solution)
         last_solution_obj_value = self.get_obj_value(last_solution)
+        logging.info(
+            f"Initialized by IC with total tardiness {last_solution_obj_value}"
+        )
         # Create report for the final solution and register it
         final_report = FsSubroutineReport(
             elapsed_time=sub_timer.elapsed_sec,
