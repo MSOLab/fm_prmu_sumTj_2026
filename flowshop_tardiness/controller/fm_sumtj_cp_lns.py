@@ -411,6 +411,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             )
             best_pos = 0
             best_val: int | None = None
+            best_makespan: int | None = None
 
             # try all positions pos \in [0..len]
             for pos in range(len(seq_now) + 1):
@@ -429,10 +430,19 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     frontier, C_tail = _simulate_append(frontier, j_tail)
                     total_tardy += max(C_tail - dmap[j_tail], 0)
 
-                # choose best; tie-breaker: earlier position (stable)
+                makespan = frontier[-1]
+
+                # choose best
                 if best_val is None or total_tardy < best_val:
                     best_val = total_tardy
+                    best_makespan = makespan
                     best_pos = pos
+                elif total_tardy == best_val:
+                    # tie-break by smaller makespan
+                    if best_makespan is None or makespan < best_makespan:
+                        best_makespan = makespan
+                        best_pos = pos
+                    # if still tied, earlier position is preferred (stable)
 
             if best_val is None:
                 raise RuntimeError("Unexpected: best_val is None after evaluation.")
