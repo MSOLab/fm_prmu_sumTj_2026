@@ -9,7 +9,7 @@ from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
 from routix.util.comparison import float_a_leq_b, float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
-from ..cp_cpsat_indirect_prec import CpCpsatIndirectPrec
+from ..cp_cpsat_position_nointerval import CpCpsatPosition
 from ..painter.gantt import GanttPlotter
 from ..report import FsCpsatSolverReport
 from ..scheduling.flowshop_schedule import FlowshopSchedule
@@ -17,9 +17,7 @@ from ..solution_manager import FsSolutionManager
 
 
 class FlowshopTardinessControllerCore(
-    CpSubroutineController[
-        FlowshopDuedateParameters, CpCpsatIndirectPrec, StoppingCriteria
-    ]
+    CpSubroutineController[FlowshopDuedateParameters, CpCpsatPosition, StoppingCriteria]
 ):
     # Start controller states
 
@@ -48,7 +46,7 @@ class FlowshopTardinessControllerCore(
         super().__init__(
             instance,
             shared_param_dict,
-            CpCpsatIndirectPrec,
+            CpCpsatPosition,
             subroutine_flow,
             stopping_criteria,
         )
@@ -77,7 +75,7 @@ class FlowshopTardinessControllerCore(
 
     # Start abstract getters
 
-    def create_base_cp_model(self, **kwargs) -> CpCpsatIndirectPrec:
+    def create_base_cp_model(self, **kwargs) -> CpCpsatPosition:
         return self.cp_model_class.from_instance(self.instance, self.get_horizon())
 
     # End abstract getters

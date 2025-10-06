@@ -750,7 +750,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             if cp_is_better:
                 assert cp_obj_val is not None
                 logging.info(
-                    "CP is better (%d < %d) -> adopt CP schedule.",
+                    "CP is better (%d < %d) -> use CP schedule.",
                     cp_obj_val,
                     dispatch_obj_val,
                 )

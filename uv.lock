@@ -498,11 +498,15 @@ name = "schore"
 version = "0.0.4"
 source = { editable = "../schore" }
 dependencies = [
+    { name = "matplotlib" },
     { name = "pandas" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pandas", specifier = ">=2.2.3" }]
+requires-dist = [
+    { name = "matplotlib", specifier = ">=3.10.6" },
+    { name = "pandas", specifier = ">=2.2.3" },
+]
 
 [package.metadata.requires-dev]
 dev = [
