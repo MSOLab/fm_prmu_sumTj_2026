@@ -5,9 +5,9 @@ from typing import Callable
 from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
 from routix import ElapsedTimer
 from routix.util.comparison import float_a_leq_b, float_a_stl_b
+from schore.schedule_examples.shop.flow import FlowshopSchedule
 
 from ..report import FsSubroutineReport
-from ..scheduling.flowshop_schedule import FlowshopSchedule
 from .controller_core import FlowshopTardinessControllerCore
 
 REL_TOL = 1e-9  # for safe float comparisons

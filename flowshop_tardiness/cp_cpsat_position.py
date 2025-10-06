@@ -8,8 +8,7 @@ from ortools.sat.python.cp_model import IntVar
 from routix import ElapsedTimer
 from routix.util.comparison import float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
-
-from .scheduling.flowshop_schedule import FlowshopOperation, FlowshopSchedule
+from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedule
 
 
 class CpCpsatPosition(CpModelWithFlexibleInterval):

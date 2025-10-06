@@ -1,10 +1,8 @@
 from routix.solution_manager import SolutionManager
 from routix.util.comparison import float_equals
+from schore.schedule_examples.shop.flow import FlowshopSchedule
 
 from .report import FsSubroutineReport
-from .scheduling.flowshop_schedule import (
-    FlowshopSchedule,
-)
 
 
 class FsSolutionManager(SolutionManager[FsSubroutineReport, FlowshopSchedule]):

@@ -8,11 +8,10 @@ from pathlib import Path
 from schore.parameters_examples.shop.flow.flowshop_duedate import (
     FlowshopDuedateParameters,
 )
+from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedule
 
 from flowshop_tardiness.cp_cpsat_circuit import CpCpsatCircuit
 from flowshop_tardiness.painter.gantt import GanttPlotter
-from flowshop_tardiness.scheduling.flowshop_operation import FlowshopOperation
-from flowshop_tardiness.scheduling.flowshop_schedule import FlowshopSchedule
 
 
 def test_cp_cpsat_circuit_runs_and_builds_schedule():

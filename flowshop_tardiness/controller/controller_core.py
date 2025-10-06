@@ -8,11 +8,11 @@ from mbls.cpsat import CpsatSolverReport, CpSubroutineController
 from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
 from routix.util.comparison import float_a_leq_b, float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
+from schore.schedule_examples.shop.flow import FlowshopSchedule
 
 from ..cp_cpsat_position_nointerval import CpCpsatPosition
 from ..painter.gantt import GanttPlotter
 from ..report import FsCpsatSolverReport
-from ..scheduling.flowshop_schedule import FlowshopSchedule
 from ..solution_manager import FsSolutionManager
 
 

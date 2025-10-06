@@ -11,6 +11,7 @@ from routix.type_defs import RunMode
 from schore.parameters_examples.shop.flow import (
     FlowshopDuedateParameters,
 )
+from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedule
 
 from flowshop_tardiness.controller import FlowshopTardinessCpLnsController
 from flowshop_tardiness.fs_input_summary import FsInputSummary
@@ -20,8 +21,6 @@ from flowshop_tardiness.report.fs_subroutine_report import FsSubroutineReport
 from flowshop_tardiness.report.fs_subroutine_report_statistics import (
     FsSubroutineReportStatistics,
 )
-from flowshop_tardiness.scheduling.flowshop_operation import FlowshopOperation
-from flowshop_tardiness.scheduling.flowshop_schedule import FlowshopSchedule
 
 
 class FsSingleInstanceRunner(
