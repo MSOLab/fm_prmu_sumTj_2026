@@ -368,7 +368,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         return_dict: dict[str, int] = {}
         prev = 0
         for i in self.stage_ids:
-            start = stage_2_endtime_map.get(i, 0)  # <-- safe default
+            start = stage_2_endtime_map[i]
             if prev > start:
                 start = prev
             end = start + pmap[i]
