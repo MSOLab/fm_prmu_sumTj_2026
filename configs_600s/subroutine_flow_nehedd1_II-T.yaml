@@ -1,5 +1,5 @@
-- method: initialize_by_nehedd1
+- method: set_0_as_lb
+- method: initialize_by_neht
 - method: improve_by_insertion
   tie_breaker: "NEH-T"
-  max_passes: 2
   error_if_infeasible: true

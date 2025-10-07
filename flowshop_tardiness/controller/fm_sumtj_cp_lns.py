@@ -587,10 +587,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     ) -> None:
         self._run_neh_edd("NEHEDD", "default", error_if_infeasible, draw_gantt)
 
-    def initialize_by_nehedd1(
+    def initialize_by_neht(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEHEDD1", "NEH-T", error_if_infeasible, draw_gantt)
+        self._run_neh_edd("NEH-T", "NEH-T", error_if_infeasible, draw_gantt)
 
     def initialize_by_nehedd2(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
