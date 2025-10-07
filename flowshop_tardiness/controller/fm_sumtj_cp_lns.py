@@ -337,9 +337,29 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     # Subroutine: insertion heuristics
 
-    def _simulate_append(
-        self, frontier: list[int], job_id: str
-    ) -> tuple[list[int], int]:
+    def _simulate_append(self, frontier: list[int], job_id: str) -> list[int]:
+        """
+        Simulate appending `job_id` to a schedule represented by `frontier`.
+
+        The function computes the new per-stage completion times when `job_id`
+        is scheduled after the given `frontier`. It does NOT mutate the input
+        `frontier` — a shallow copy is advanced and returned.
+
+        Args:
+            frontier (list[int]): Current completion times for each stage in the
+                same order as self.instance.stage_id_list. May be shorter than
+                the number of stages; missing entries are treated as 0.
+            job_id (str): Job identifier whose processing times are taken from
+                self.job_2_stage_2_p_dict[job_id].
+
+        Returns:
+            list[int]: list of completion times for each stage after appending the job.
+
+        Notes:
+            - Start time on stage s is max(previous_stage_completion, frontier[s]).
+            - Complexity O(m) where m = number of stages.
+            - Raises KeyError if processing times for the job or a stage are missing.
+        """
         i_list = list(self.instance.stage_id_list)
         pmap = self.job_2_stage_2_p_dict[job_id]
         f = frontier[:]  # copy
@@ -353,77 +373,152 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             else:
                 f.append(end)
             prev = end
-        return f, f[-1]
+        return f
 
-    def _compute_prefix_frontiers_and_tardy(
-        self, seq_now: list[str]
+    def _compute_prefix_frontiers_and_sumTj(
+        self, job_seq: list[str]
     ) -> tuple[list[list[int]], list[int]]:
+        """Compute prefix frontiers and cumulative total tardiness for a job sequence.
+
+        For each prefix of `job_seq` (including the empty prefix) return:
+        - prefix_frontiers: list of frontiers; each frontier is a list[int] of
+          completion times on every stage after scheduling that prefix.
+          The first element is the initial frontier [0, ..., 0].
+        - prefix_sumTj: cumulative total tardiness (sum of T_j) for each prefix;
+          the first element is 0.
+
+        Definitions:
+        - frontier[k][s] is the completion time on stage s after scheduling the
+          first k jobs of `job_seq`.
+        - T_j (tardiness of job j) = max(C_last - due_date[j], 0), where C_last
+          is the job's completion time on the last stage.
+
+        Args:
+            job_seq: ordered list of job ids to evaluate.
+
+        Returns:
+            A tuple (prefix_frontiers, prefix_sumTj) where
+            - prefix_frontiers[k] corresponds to job_seq[:k],
+            - prefix_sumTj[k] is the total tardiness of job_seq[:k].
+
+        Complexity:
+            O(mn) where m = number of stages and n = len(job_seq).
+
+        Notes:
+            - Uses self._simulate_append(frontier, job) to advance a frontier.
+            - Empty sequence -> returns ([[0]*m], [0]).
+        """
         i_list = list(self.instance.stage_id_list)
         dmap = self.instance.job_2_duedate_map
         m = len(i_list)
         prefix_frontiers: list[list[int]] = [[0] * m]
-        prefix_tardy: list[int] = [0]
-        for j in seq_now:
+        prefix_sumTj: list[int] = [0]
+        for j in job_seq:
             f_prev = prefix_frontiers[-1]
-            f_new, C_last = self._simulate_append(f_prev, j)
-            Tj = max(C_last - dmap[j], 0)
+            f_new = self._simulate_append(f_prev, j)
+            C_last = f_new[-1]
+            Tj = C_last - dmap[j]
+            if Tj < 0:
+                Tj = 0
             prefix_frontiers.append(f_new)
-            prefix_tardy.append(prefix_tardy[-1] + Tj)
-        return prefix_frontiers, prefix_tardy
+            prefix_sumTj.append(prefix_sumTj[-1] + Tj)
+        return prefix_frontiers, prefix_sumTj
 
-    def _compute_total_tardiness_from_sequence(self, seq_now: list[str]) -> int:
-        _, prefix_tardy = self._compute_prefix_frontiers_and_tardy(seq_now)
-        return prefix_tardy[-1]
+    def _compute_sumTj_Cmax_from_sequence(self, job_seq: list[str]) -> tuple[int, int]:
+        prefix_frontiers, prefix_sumTj = self._compute_prefix_frontiers_and_sumTj(
+            job_seq
+        )
+        return prefix_sumTj[-1], prefix_frontiers[-1][-1]
 
-    def _eval_insert_total_tardy(
-        self, seq_now: list[str], job_id: str
-    ) -> tuple[int, int]:
+    @staticmethod
+    def _tie_crit_from_tm(sumTj: int, Cmax: int, tie_breaker: str) -> tuple[int, int]:
+        """Calculate tie breaking criteria from tie breaker name.
+
+        Args:
+            sumTj (int): total tardiness
+            Cmax (int): makespan
+            tie_breaker (str): tie breaker name
+
+        Raises:
+            ValueError: if tie_breaker is unknown
+
+        Returns:
+            tuple[int, int]: (crit1, crit2) for comparison
+        """
+        if tie_breaker == "default":
+            return (sumTj, 0)
+        if tie_breaker == "NEH-T":
+            return (sumTj, Cmax)
+        if tie_breaker == "NEH(M)":
+            return (sumTj + Cmax, 0)
+        if tie_breaker == "nehedd3":
+            return (sumTj + Cmax, sumTj)
+        if tie_breaker == "nehedd4":
+            return (sumTj + Cmax, Cmax)
+        raise ValueError(f"Unknown tie_breaker: {tie_breaker}")
+
+    def _eval_insert_with_criteria(
+        self, seq_now: list[str], job_id: str, tie_breaker: str = "default"
+    ) -> tuple[int, int, int]:
         """
         Evaluate all insertion positions of job_id into seq_now.
-        Returns (best_pos, best_total_tardy).
+        Returns (best_pos, best_sumTj, best_Cmax).
         Uses prefix reuse: head tardiness reused; tail recomputed from the chosen frontier.
         """
         dmap = self.instance.job_2_duedate_map
-        i_list = list(self.instance.stage_id_list)
+
         if not seq_now:
             # only one position
-            f0 = [0] * len(i_list)
-            _, Cj = self._simulate_append(f0, job_id)
-            total = max(Cj - dmap[job_id], 0)
-            return 0, total
+            f0 = [0] * len(self.instance.stage_id_list)
+            new_f = self._simulate_append(f0, job_id)
+            Cmax = new_f[-1]
+            sumTj = max(Cmax - dmap[job_id], 0)
+            return 0, sumTj, Cmax
 
-        prefix_frontiers, prefix_tardy = self._compute_prefix_frontiers_and_tardy(
+        prefix_frontiers, prefix_tardy = self._compute_prefix_frontiers_and_sumTj(
             seq_now
         )
         best_pos = 0
-        best_val: int | None = None
+        best_sumTj: int | None = None
+        best_Cmax: int | None = None
+        best_crit1: int | None = None
+        best_crit2: int | None = None
 
         # try all positions pos \in [0..len]
         for pos in range(len(seq_now) + 1):
             # head part tardiness is reused
             head_tardy = prefix_tardy[pos]
             frontier = prefix_frontiers[pos][:]  # start frontier at pos
-            total_tardy = head_tardy
 
             # insert the new job
-            frontier, C_new = self._simulate_append(frontier, job_id)
-            total_tardy += max(C_new - dmap[job_id], 0)
+            frontier = self._simulate_append(frontier, job_id)
+            C_new = frontier[-1]
+            new_sumTj = head_tardy + max(C_new - dmap[job_id], 0)
 
             # simulate tail jobs (pos..end) on this new frontier
             for k in range(pos, len(seq_now)):
                 j_tail = seq_now[k]
-                frontier, C_tail = self._simulate_append(frontier, j_tail)
-                total_tardy += max(C_tail - dmap[j_tail], 0)
+                frontier = self._simulate_append(frontier, j_tail)
+                C_tail = frontier[-1]
+                new_sumTj += max(C_tail - dmap[j_tail], 0)
+
+            new_Cmax = frontier[-1]
+            crit1, crit2 = self._tie_crit_from_tm(new_sumTj, new_Cmax, tie_breaker)
 
             # choose best
-            if best_val is None or total_tardy < best_val:
-                best_val = total_tardy
-                best_pos = pos
+            if (best_crit1 is None) or (crit1 < best_crit1):
+                best_pos, best_sumTj, best_Cmax = pos, new_sumTj, new_Cmax
+                best_crit1, best_crit2 = crit1, crit2
+            elif (crit1 == best_crit1) and (best_crit2 is None or crit2 < best_crit2):
+                best_pos, best_sumTj, best_Cmax = pos, new_sumTj, new_Cmax
+                best_crit1, best_crit2 = crit1, crit2
                 # if still tied, earlier position is preferred (stable)
 
-        if best_val is None:
-            raise RuntimeError("Unexpected: best_val is None after evaluation.")
-        return best_pos, best_val
+        if best_sumTj is None:
+            raise RuntimeError("Unexpected: best_sumTj is None after evaluation.")
+        if best_Cmax is None:
+            raise RuntimeError("Unexpected: best_Cmax is None after evaluation.")
+        return best_pos, best_sumTj, best_Cmax
 
     def apply_insertion_heuristic(
         self,
@@ -447,11 +542,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         current_sequence = list(initial_sequence)
 
         # Calculate initial tardiness efficiently
-        _, initial_tardiness = self._eval_insert_total_tardy(current_sequence, "")
-        # The trick above is to insert an empty job, which doesn't change the sequence
-        # but gives us the total tardiness of the original sequence.
+        initial_sumTj, initial_Cmax = self._compute_sumTj_Cmax_from_sequence(
+            current_sequence
+        )
 
-        best_tardiness = initial_tardiness
+        best_sumTj = initial_sumTj
+        best_Cmax = initial_Cmax
 
         while True:
             best_sequence_in_pass = list(current_sequence)
@@ -464,16 +560,16 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 temp_sequence.pop(i)
 
                 # Find best re-insertion position and tardiness for the removed job
-                _, new_tardiness = self._eval_insert_total_tardy(
+                best_pos, new_sumTj, new_Cmax = self._eval_insert_with_criteria(
                     temp_sequence, job_to_move
                 )
 
-                if new_tardiness < best_tardiness:
-                    best_tardiness = new_tardiness
+                if new_sumTj < best_sumTj or (
+                    new_sumTj == best_sumTj and new_Cmax < best_Cmax
+                ):
+                    best_sumTj = new_sumTj
+                    best_Cmax = new_Cmax
                     # Reconstruct the best sequence found
-                    best_pos, _ = self._eval_insert_total_tardy(
-                        temp_sequence, job_to_move
-                    )
                     best_sequence_in_pass = list(temp_sequence)
                     best_sequence_in_pass.insert(best_pos, job_to_move)
                     improved_in_pass = True
@@ -484,7 +580,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
             current_sequence = best_sequence_in_pass
 
-        return current_sequence, best_tardiness
+        return current_sequence, best_sumTj
 
     def _run_neh_edd(
         self,
@@ -500,83 +596,14 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         """
         sub_timer = ElapsedTimer()
 
-        dmap = self.instance.job_2_duedate_map
-
         # 1) EDD order
         edd_order = self.get_edd_sequence()
 
         seq: list[str] = []
 
-        # ---- helpers ----
-
-        def _eval_insert(seq_now: list[str], job_id: str) -> int:
-            """
-            Evaluate all insertion positions of job_id into seq_now.
-            Returns best_pos.
-            Uses prefix reuse: head tardiness reused; tail recomputed from the chosen frontier.
-            """
-            if not seq_now:
-                return 0
-
-            prefix_frontiers, prefix_tardy = self._compute_prefix_frontiers_and_tardy(
-                seq_now
-            )
-            best_pos = 0
-            best_crit1: int | None = None
-            best_crit2: int | None = None
-
-            # try all positions pos \in [0..len]
-            for pos in range(len(seq_now) + 1):
-                # head part tardiness is reused
-                head_tardy = prefix_tardy[pos]
-                frontier = prefix_frontiers[pos][:]  # start frontier at pos
-                total_tardy = head_tardy
-
-                # insert the new job
-                frontier, C_new = self._simulate_append(frontier, job_id)
-                total_tardy += max(C_new - dmap[job_id], 0)
-
-                # simulate tail jobs (pos..end) on this new frontier
-                for k in range(pos, len(seq_now)):
-                    j_tail = seq_now[k]
-                    frontier, C_tail = self._simulate_append(frontier, j_tail)
-                    total_tardy += max(C_tail - dmap[j_tail], 0)
-
-                makespan = frontier[-1]
-
-                # choose best based on tie_breaker
-                crit1, crit2 = 0, 0
-                if tie_breaker == "default":
-                    crit1, crit2 = total_tardy, 0
-                elif tie_breaker == "nehedd1":
-                    crit1, crit2 = total_tardy, makespan
-                elif tie_breaker == "nehedd2":
-                    crit1, crit2 = total_tardy + makespan, 0
-                elif tie_breaker == "nehedd3":
-                    crit1, crit2 = total_tardy + makespan, total_tardy
-                elif tie_breaker == "nehedd4":
-                    crit1, crit2 = total_tardy + makespan, makespan
-                else:
-                    raise ValueError(f"Unknown tie_breaker: {tie_breaker}")
-
-                if best_crit1 is None or crit1 < best_crit1:
-                    best_crit1 = crit1
-                    best_crit2 = crit2
-                    best_pos = pos
-                elif crit1 == best_crit1:
-                    if best_crit2 is None or crit2 < best_crit2:
-                        best_crit2 = crit2
-                        best_pos = pos
-                    # if still tied, earlier position is preferred (stable)
-
-            if best_crit1 is None:
-                raise RuntimeError("Unexpected: best_val is None after evaluation.")
-
-            return best_pos
-
         # 2) NEH insertion by EDD order with fast evaluation
         for j in edd_order:
-            pos = _eval_insert(seq, j)
+            pos, _, _ = self._eval_insert_with_criteria(seq, j, tie_breaker)
             seq.insert(pos, j)
 
         # 3) Build schedule once and register/log
@@ -613,12 +640,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     def initialize_by_nehedd1(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEHEDD1", "nehedd1", error_if_infeasible, draw_gantt)
+        self._run_neh_edd("NEHEDD1", "NEH-T", error_if_infeasible, draw_gantt)
 
     def initialize_by_nehedd2(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEHEDD2", "nehedd2", error_if_infeasible, draw_gantt)
+        self._run_neh_edd("NEHEDD2", "NEH(M)", error_if_infeasible, draw_gantt)
 
     def initialize_by_nehedd3(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
@@ -629,6 +656,139 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
         self._run_neh_edd("NEHEDD4", "nehedd4", error_if_infeasible, draw_gantt)
+
+    def improve_job_seq_by_insertion_single_pass(
+        self, job_seq: list[str], tie_breaker: str = "default"
+    ) -> list[str]:
+        job_cnt = len(job_seq)
+        if job_cnt <= 1:
+            logging.info("Insertion improvement skipped: only one or zero jobs.")
+            return job_seq
+        seq_before = list(job_seq)
+
+        best_sumTj, best_Cmax = self._compute_sumTj_Cmax_from_sequence(seq_before)
+        best_crit1, best_crit2 = self._tie_crit_from_tm(
+            best_sumTj, best_Cmax, tie_breaker
+        )
+
+        seq_after = list(seq_before)
+
+        for j in seq_before:
+            j_idx = seq_after.index(j)
+            seq_after.remove(j)
+            pos, after_sumTj, after_Cmax = self._eval_insert_with_criteria(
+                seq_after, j, tie_breaker
+            )
+            crit1, crit2 = self._tie_crit_from_tm(after_sumTj, after_Cmax, tie_breaker)
+            after_is_better = (crit1 < best_crit1) or (
+                crit1 == best_crit1 and crit2 < best_crit2
+            )
+            if after_is_better:
+                seq_after.insert(pos, j)
+                best_sumTj = after_sumTj
+                best_Cmax = after_Cmax
+                best_crit1 = crit1
+                best_crit2 = crit2
+            else:
+                seq_after.insert(j_idx, j)  # revert
+            if self.time_is_up():
+                logging.info(
+                    f"Time limit reached during {j_idx + 1} / {job_cnt} insertion improvement."
+                )
+                break
+
+        return seq_after
+
+    def improve_by_insertion(
+        self,
+        tie_breaker: str = "default",
+        max_passes: int = 1,
+        error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
+    ) -> None:
+        if self.solution_manager.incumbent_solution is None:
+            raise RuntimeError("No incumbent solution to improve.")
+
+        sub_timer = ElapsedTimer()
+
+        # Incumbent job sequence
+        seq_before = self.solution_manager.incumbent_solution.get_last_stage_job_list()
+        job_cnt = len(seq_before)
+        if job_cnt <= 1:
+            logging.info("Insertion improvement skipped: only one or zero jobs.")
+            return
+
+        seq_after = list(seq_before)
+        best_sumTj, best_Cmax = self._compute_sumTj_Cmax_from_sequence(seq_before)
+        best_crit1, best_crit2 = self._tie_crit_from_tm(
+            best_sumTj, best_Cmax, tie_breaker
+        )
+
+        improved_globally = False
+        passes = 0
+        # list of (global elapsed time, obj value)
+        obj_value_log: list[tuple[float, float]] = []
+        while passes < max_passes:
+            passes += 1
+
+            seq_after = self.improve_job_seq_by_insertion_single_pass(
+                seq_before, tie_breaker
+            )
+            after_sumTj, after_Cmax = self._compute_sumTj_Cmax_from_sequence(seq_after)
+            crit1, crit2 = self._tie_crit_from_tm(after_sumTj, after_Cmax, tie_breaker)
+            after_is_better = (crit1 < best_crit1) or (
+                crit1 == best_crit1 and crit2 < best_crit2
+            )
+            if after_is_better:
+                seq_before = list(seq_after)
+                best_sumTj = after_sumTj
+                best_Cmax = after_Cmax
+                best_crit1 = crit1
+                best_crit2 = crit2
+                logging.info(
+                    f"Pass {passes}: improved to total tardiness {best_sumTj}."
+                )
+                improved_globally = True
+                obj_value_log.append((self.timer.elapsed_sec, best_sumTj))
+            else:
+                logging.info(f"Pass {passes}: no improvement, stopping.")
+                break
+            if self.time_is_up():
+                logging.info(
+                    f"Time limit reached during {passes} / {max_passes} insertion improvement passes."
+                )
+                break
+
+        schedule = self.get_dispatched_schedule(seq_before)
+        if error_if_infeasible:
+            self.check_feasibility(schedule)
+        obj_value = self.get_obj_value(schedule)
+        logging.info(
+            "Repeated-insertion improvement %s (tie=%s, passes=%d): total tardiness %d",
+            "applied" if improved_globally else "no change",
+            tie_breaker,
+            passes,
+            obj_value,
+        )
+        # Create report for the solution and register it
+        report = FsSubroutineReport(
+            elapsed_time=sub_timer.elapsed_sec,
+            obj_value=obj_value,
+            obj_bound=None,
+            is_init=False,
+        )
+        was_updated = self.solution_manager.register(report, schedule)
+
+        if was_updated:
+            log_time = self.timer.elapsed_sec
+            obj_value_log.append((log_time, obj_value))
+            self.extend_obj_value_log(obj_value_log, is_maximize=False)
+            _last_timestamp_note = self._get_call_context_of_current_method()
+            self.obj_store.add_last_timestamp_note(
+                _last_timestamp_note, obj_value_is_valid=True
+            )
+            if draw_gantt:
+                self.draw_incumbent_gantt()
 
     # Subroutine: incremental CP construction by incumbent solution's sequence
 
