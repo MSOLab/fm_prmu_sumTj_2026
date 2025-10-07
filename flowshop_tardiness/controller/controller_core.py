@@ -62,6 +62,10 @@ class FlowshopTardinessControllerCore(
         self.log_search_progress = False  # TODO: make it configurable
 
         # Frequently used parameters
+        self.job_cnt = len(self.instance.job_id_list)
+        self.stage_ids = tuple(self.instance._stage_id_list)
+        self.stage_cnt = len(self.stage_ids)
+        self.last_stage_id = self.stage_ids[-1]
         self.job_2_stage_2_p_dict = self.instance.get_job_2_stage_2_builtin_int_p_map()
         """Job name -> stage name -> processing time map"""
 

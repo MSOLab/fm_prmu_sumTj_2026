@@ -82,14 +82,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     def get_dispatched_schedule(self, job_sequence: list[str]) -> FlowshopSchedule:
         # Create an empty schedule
-        schedule = FlowshopSchedule.from_stage_name_list(self.instance.stage_id_list)
+        schedule = FlowshopSchedule.from_stage_name_list(self.stage_ids)
         # Dispatch
         for j in job_sequence:
             added = schedule.dispatch_job_by_stages(
-                j,
-                self.instance.stage_id_list,
-                self.job_2_stage_2_p_dict[j],
-                after_last=True,
+                j, self.stage_ids, self.job_2_stage_2_p_dict[j], after_last=True
             )
             if added is None:
                 raise ValueError(f"Failed to add job {j} to the schedule.")
@@ -170,13 +167,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         Returns:
             list[str]: ordered job ids
         """
-        stage_list = self.instance.stage_id_list
         dmap = self.instance.job_2_duedate_map
         pmap = self.job_2_stage_2_p_dict
 
         def total_p(j: str) -> float:
             # Sum processing times across all stages for job j
-            return sum(pmap[j].get(s, 0.0) for s in stage_list)
+            return sum(pmap[j].get(s, 0.0) for s in self.stage_ids)
 
         def key_fn(j: str):
             tp = total_p(j)
@@ -199,7 +195,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     ) -> None:
         sub_timer = ElapsedTimer()
 
-        i_list = self.instance.stage_id_list
+        i_list = self.stage_ids
         dmap = self.instance.job_2_duedate_map
         pmap = self.job_2_stage_2_p_dict
 
@@ -221,7 +217,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             prev = 0
             for i in i_list:
                 p = pmap[job_id][i]
-                start_time = max(f[i], prev)
+                start_time = f[i]
+                if prev > start_time:
+                    start_time = prev
                 end_time = start_time + p
                 f[i] = end_time
                 prev = end_time
@@ -299,7 +297,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         )
 
     def mdd_min_value(self, job_id: str, completion_time: int) -> int:
-        return max(self.instance.job_2_duedate_map[job_id], completion_time)
+        return_val = self.instance.job_2_duedate_map[job_id]
+        if completion_time > return_val:
+            return completion_time
+        return return_val
 
     def initialize_by_slack(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
@@ -326,8 +327,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     def srmwk_min_value(self, job_id: str, completion_time: int) -> float:
         p_total = sum(
-            self.job_2_stage_2_p_dict[job_id].get(s, 0.0)
-            for s in self.instance.stage_id_list
+            self.job_2_stage_2_p_dict[job_id].get(s, 0.0) for s in self.stage_ids
         )
         if p_total <= 0.0:
             return float("inf")  # Handle zero processing time jobs
@@ -337,7 +337,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     # Subroutine: insertion heuristics
 
-    def _simulate_append(self, frontier: list[int], job_id: str) -> list[int]:
+    def _simulate_append(
+        self, stage_2_endtime_map: dict[str, int], job_id: str
+    ) -> dict[str, int]:
         """
         Simulate appending `job_id` to a schedule represented by `frontier`.
 
@@ -347,7 +349,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         Args:
             frontier (list[int]): Current completion times for each stage in the
-                same order as self.instance.stage_id_list. May be shorter than
+                same order as self.stage_ids. May be shorter than
                 the number of stages; missing entries are treated as 0.
             job_id (str): Job identifier whose processing times are taken from
                 self.job_2_stage_2_p_dict[job_id].
@@ -360,24 +362,21 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             - Complexity O(m) where m = number of stages.
             - Raises KeyError if processing times for the job or a stage are missing.
         """
-        i_list = list(self.instance.stage_id_list)
         pmap = self.job_2_stage_2_p_dict[job_id]
-        f = frontier[:]  # copy
+        return_dict: dict[str, int] = {}
         prev = 0
-        for i_idx, i in enumerate(i_list):
-            p = pmap[i]
-            start = max(f[i_idx], prev)
-            end = start + p
-            if i_idx < len(f):
-                f[i_idx] = end
-            else:
-                f.append(end)
+        for i in self.stage_ids:
+            start = stage_2_endtime_map[i]
+            if prev > start:
+                start = prev
+            end = start + pmap[i]
+            return_dict[i] = end
             prev = end
-        return f
+        return return_dict
 
     def _compute_prefix_frontiers_and_sumTj(
         self, job_seq: list[str]
-    ) -> tuple[list[list[int]], list[int]]:
+    ) -> tuple[dict[int, dict[str, int]], dict[int, int]]:
         """Compute prefix frontiers and cumulative total tardiness for a job sequence.
 
         For each prefix of `job_seq` (including the empty prefix) return:
@@ -408,27 +407,28 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             - Uses self._simulate_append(frontier, job) to advance a frontier.
             - Empty sequence -> returns ([[0]*m], [0]).
         """
-        i_list = list(self.instance.stage_id_list)
         dmap = self.instance.job_2_duedate_map
-        m = len(i_list)
-        prefix_frontiers: list[list[int]] = [[0] * m]
-        prefix_sumTj: list[int] = [0]
-        for j in job_seq:
-            f_prev = prefix_frontiers[-1]
+        pos_2_stage_2_endtime_map = {0: {i: 0 for i in self.stage_ids}}
+
+        prefix_sumTj: dict[int, int] = {0: 0}
+        for j_idx, j in enumerate(job_seq):
+            f_prev = pos_2_stage_2_endtime_map[j_idx]
             f_new = self._simulate_append(f_prev, j)
-            C_last = f_new[-1]
+            C_last = f_new[self.last_stage_id]
             Tj = C_last - dmap[j]
             if Tj < 0:
                 Tj = 0
-            prefix_frontiers.append(f_new)
-            prefix_sumTj.append(prefix_sumTj[-1] + Tj)
-        return prefix_frontiers, prefix_sumTj
+            pos_2_stage_2_endtime_map[j_idx + 1] = f_new
+            prefix_sumTj[j_idx + 1] = prefix_sumTj.get(j_idx, 0) + Tj
+        return pos_2_stage_2_endtime_map, prefix_sumTj
 
     def _compute_sumTj_Cmax_from_sequence(self, job_seq: list[str]) -> tuple[int, int]:
         prefix_frontiers, prefix_sumTj = self._compute_prefix_frontiers_and_sumTj(
             job_seq
         )
-        return prefix_sumTj[-1], prefix_frontiers[-1][-1]
+        return prefix_sumTj[self.job_cnt - 1], prefix_frontiers[self.job_cnt - 1][
+            self.last_stage_id
+        ]
 
     @staticmethod
     def _tie_crit_from_tm(sumTj: int, Cmax: int, tie_breaker: str) -> tuple[int, int]:
@@ -469,10 +469,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         if not seq_now:
             # only one position
-            f0 = [0] * len(self.instance.stage_id_list)
+            f0 = {i: 0 for i in self.stage_ids}
             new_f = self._simulate_append(f0, job_id)
-            Cmax = new_f[-1]
-            sumTj = max(Cmax - dmap[job_id], 0)
+            Cmax = new_f[self.last_stage_id]
+            sumTj = Cmax - dmap[job_id]
+            if sumTj < 0:
+                sumTj = 0
             return 0, sumTj, Cmax
 
         prefix_frontiers, prefix_tardy = self._compute_prefix_frontiers_and_sumTj(
@@ -488,21 +490,21 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         for pos in range(len(seq_now) + 1):
             # head part tardiness is reused
             head_tardy = prefix_tardy[pos]
-            frontier = prefix_frontiers[pos][:]  # start frontier at pos
+            frontier = prefix_frontiers[pos]
 
             # insert the new job
-            frontier = self._simulate_append(frontier, job_id)
-            C_new = frontier[-1]
+            new_frontier = self._simulate_append(frontier, job_id)
+            C_new = new_frontier[self.last_stage_id]
             new_sumTj = head_tardy + max(C_new - dmap[job_id], 0)
 
             # simulate tail jobs (pos..end) on this new frontier
             for k in range(pos, len(seq_now)):
                 j_tail = seq_now[k]
-                frontier = self._simulate_append(frontier, j_tail)
-                C_tail = frontier[-1]
+                new_frontier = self._simulate_append(new_frontier, j_tail)
+                C_tail = new_frontier[self.last_stage_id]
                 new_sumTj += max(C_tail - dmap[j_tail], 0)
 
-            new_Cmax = frontier[-1]
+            new_Cmax = new_frontier[self.last_stage_id]
             crit1, crit2 = self._tie_crit_from_tm(new_sumTj, new_Cmax, tie_breaker)
 
             # choose best
@@ -900,7 +902,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             for j in remaining_jobs:
                 full_sched.dispatch_job_by_stages(
                     j,
-                    self.instance.stage_id_list,
+                    self.stage_ids,
                     self.job_2_stage_2_p_dict[j],
                     after_last=True,
                 )
@@ -975,14 +977,14 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
             # ---------- [Partial dispatch] ----------
             partial_sol = (
-                FlowshopSchedule.from_stage_name_list(self.instance.stage_id_list)
+                FlowshopSchedule.from_stage_name_list(self.stage_ids)
                 if last_solution is None
                 else last_solution.deepcopy()
             )
             for j in job_sublist:
                 partial_sol.dispatch_job_by_stages(
                     j,
-                    self.instance.stage_id_list,
+                    self.stage_ids,
                     self.job_2_stage_2_p_dict[j],
                     after_last=True,
                 )
@@ -1106,9 +1108,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         # ---------- [End] : Dispatch remaining jobs ----------
         if last_solution is None:
-            last_solution = FlowshopSchedule.from_stage_name_list(
-                self.instance.stage_id_list
-            )
+            last_solution = FlowshopSchedule.from_stage_name_list(self.stage_ids)
 
         remaining_jobs = [j for j in job_sequence if j not in job_subset]
         if remaining_jobs:
@@ -1116,7 +1116,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             for j in remaining_jobs:
                 last_solution.dispatch_job_by_stages(
                     j,
-                    self.instance.stage_id_list,
+                    self.stage_ids,
                     self.job_2_stage_2_p_dict[j],
                     after_last=True,
                 )
