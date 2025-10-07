@@ -14,8 +14,6 @@ REL_TOL = 1e-9  # for safe float comparisons
 
 
 class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
-    # Subroutine: methods to run before resuming from a paused state.
-
     cp_model_presolve: bool | None = False  # TODO: make it configurable
     """Whether to presolve the CP model before solving."""
 
@@ -24,6 +22,22 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     def set_cp_model_as_base_cp_model(self) -> None:
         return super().set_cp_model_as_base_cp_model()
+
+    def set_0_as_lb(self) -> None:
+        """
+        Set zero as a valid lower bound for the objective (total tardiness).
+        """
+        log_time = self.timer.elapsed_sec
+        report = FsSubroutineReport(
+            elapsed_time=0.0, obj_value=None, obj_bound=0.0, is_init=True
+        )
+        self.solution_manager.register(report, None)
+
+        self.add_obj_bound_log(log_time, 0, is_maximize=False)
+        _last_timestamp_note = self._get_call_context_of_current_method()
+        self.obj_store.add_last_timestamp_note(
+            _last_timestamp_note, obj_value_is_valid=True
+        )
 
     # Subroutine: solve base CP model
 
