@@ -354,33 +354,21 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     def _simulate_append(
         self, stage_2_endtime_map: dict[str, int], job_id: str
     ) -> dict[str, int]:
-        """
-        Simulate appending `job_id` to a schedule represented by `frontier`.
-
-        The function computes the new per-stage completion times when `job_id`
-        is scheduled after the given `frontier`. It does NOT mutate the input
-        `frontier` — a shallow copy is advanced and returned.
+        """Simulate appending a job to the schedule.
 
         Args:
-            frontier (list[int]): Current completion times for each stage in the
-                same order as self.stage_ids. May be shorter than
-                the number of stages; missing entries are treated as 0.
-            job_id (str): Job identifier whose processing times are taken from
-                self.job_2_stage_2_p_dict[job_id].
+            stage_2_endtime_map (dict[str, int]): Current completion times at each stage.
+                Missing stages are assumed to have 0 completion time.
+            job_id (str): Job ID to append.
 
         Returns:
-            list[int]: list of completion times for each stage after appending the job.
-
-        Notes:
-            - Start time on stage s is max(previous_stage_completion, frontier[s]).
-            - Complexity O(m) where m = number of stages.
-            - Raises KeyError if processing times for the job or a stage are missing.
+            dict[str, int]: Updated completion times after appending the job.
         """
         pmap = self.job_2_stage_2_p_dict[job_id]
         return_dict: dict[str, int] = {}
         prev = 0
         for i in self.stage_ids:
-            start = stage_2_endtime_map[i]
+            start = stage_2_endtime_map.get(i, 0)  # <-- safe default
             if prev > start:
                 start = prev
             end = start + pmap[i]
@@ -393,33 +381,34 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     ) -> tuple[dict[int, dict[str, int]], dict[int, int]]:
         """Compute prefix frontiers and cumulative total tardiness for a job sequence.
 
-        For each prefix of `job_seq` (including the empty prefix) return:
-        - prefix_frontiers: list of frontiers; each frontier is a list[int] of
-          completion times on every stage after scheduling that prefix.
-          The first element is the initial frontier [0, ..., 0].
-        - prefix_sumTj: cumulative total tardiness (sum of T_j) for each prefix;
-          the first element is 0.
+        For each prefix length k (0 .. len(job_seq)):
+          - prefix_frontiers[k]: dict[stage_id -> completion_time] after scheduling
+            the first k jobs of job_seq in the given order (flow shop permutation).
+          - prefix_sumTj[k]: cumulative total tardiness sum_{j in first k jobs} T_j,
+            where T_j = max(C_j_last - due_date_j, 0) and C_j_last is the job's
+            completion time on the last stage.
 
-        Definitions:
-        - frontier[k][s] is the completion time on stage s after scheduling the
-          first k jobs of `job_seq`.
-        - T_j (tardiness of job j) = max(C_last - due_date[j], 0), where C_last
-          is the job's completion time on the last stage.
+        Returned dictionaries always contain key 0:
+          prefix_frontiers[0] = {stage_id: 0 for all stages}
+          prefix_sumTj[0] = 0
+
+        This function is used to enable fast reuse of head (prefix) information
+        during insertion evaluations: head tardiness can be looked up directly
+        instead of recomputed.
 
         Args:
-            job_seq: ordered list of job ids to evaluate.
+            job_seq (list[str]): Ordered list of job ids to evaluate.
 
         Returns:
-            A tuple (prefix_frontiers, prefix_sumTj) where
-            - prefix_frontiers[k] corresponds to job_seq[:k],
-            - prefix_sumTj[k] is the total tardiness of job_seq[:k].
-
-        Complexity:
-            O(mn) where m = number of stages and n = len(job_seq).
+            tuple[dict[int, dict[str, int]], dict[int, int]]: A tuple containing:
+            - prefix_frontiers: mapping position -> stage ID -> completion times.
+            - prefix_sumTj: mapping position -> cumulative total tardiness.
 
         Notes:
-            - Uses self._simulate_append(frontier, job) to advance a frontier.
-            - Empty sequence -> returns ([[0]*m], [0]).
+            - Tardiness never negative (clamped at 0).
+            - Uses _simulate_append for each incremental extension.
+            - If job_seq is empty, returns ({0: {stage:0}}, {0:0}).
+            - Assumes every job has defined processing time on every stage.
         """
         dmap = self.instance.job_2_duedate_map
         pos_2_stage_2_endtime_map = {0: {i: 0 for i in self.stage_ids}}
@@ -437,12 +426,19 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         return pos_2_stage_2_endtime_map, prefix_sumTj
 
     def _compute_sumTj_Cmax_from_sequence(self, job_seq: list[str]) -> tuple[int, int]:
+        """Compute total tardiness and makespan from a job sequence.
+
+        Args:
+            job_seq (list[str]): Ordered list of job ids to evaluate.
+
+        Returns:
+            tuple[int, int]: (total_tardiness, makespan) for the given job sequence.
+        """
         prefix_frontiers, prefix_sumTj = self._compute_prefix_frontiers_and_sumTj(
             job_seq
         )
-        return prefix_sumTj[self.job_cnt - 1], prefix_frontiers[self.job_cnt - 1][
-            self.last_stage_id
-        ]
+        n = len(job_seq)
+        return prefix_sumTj[n], prefix_frontiers[n][self.last_stage_id]
 
     @staticmethod
     def _tie_crit_from_tm(sumTj: int, Cmax: int, tie_breaker: str) -> tuple[int, int]:
@@ -536,68 +532,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             raise RuntimeError("Unexpected: best_Cmax is None after evaluation.")
         return best_pos, best_sumTj, best_Cmax
 
-    def apply_insertion_heuristic(
-        self,
-        initial_sequence: list[str],
-    ) -> tuple[list[str], int]:
-        """
-        Applies an insertion heuristic to improve a given job sequence.
-
-        This heuristic iteratively removes each job from the sequence and
-        finds the best position to re-insert it to minimize total tardiness.
-        The process is repeated until no further improvement is made in a
-        full pass. This implements a best-improvement pivoting rule.
-
-        Args:
-            initial_sequence (list[str]): The initial job sequence.
-
-        Returns:
-            tuple[list[str], int]: A tuple containing the improved job
-            sequence and its corresponding total tardiness.
-        """
-        current_sequence = list(initial_sequence)
-
-        # Calculate initial tardiness efficiently
-        initial_sumTj, initial_Cmax = self._compute_sumTj_Cmax_from_sequence(
-            current_sequence
-        )
-
-        best_sumTj = initial_sumTj
-        best_Cmax = initial_Cmax
-
-        while True:
-            best_sequence_in_pass = list(current_sequence)
-            improved_in_pass = False
-
-            for i in range(len(current_sequence)):
-                job_to_move = current_sequence[i]
-
-                temp_sequence = list(current_sequence)
-                temp_sequence.pop(i)
-
-                # Find best re-insertion position and tardiness for the removed job
-                best_pos, new_sumTj, new_Cmax = self._eval_insert_with_criteria(
-                    temp_sequence, job_to_move
-                )
-
-                if new_sumTj < best_sumTj or (
-                    new_sumTj == best_sumTj and new_Cmax < best_Cmax
-                ):
-                    best_sumTj = new_sumTj
-                    best_Cmax = new_Cmax
-                    # Reconstruct the best sequence found
-                    best_sequence_in_pass = list(temp_sequence)
-                    best_sequence_in_pass.insert(best_pos, job_to_move)
-                    improved_in_pass = True
-
-            if not improved_in_pass:
-                # No improvement in a full pass
-                break
-
-            current_sequence = best_sequence_in_pass
-
-        return current_sequence, best_sumTj
-
     def _run_neh_edd(
         self,
         method_name: str,
@@ -680,14 +614,19 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         if job_cnt <= 1:
             logging.info("Insertion improvement skipped: only one or zero jobs.")
             return job_seq
+        # Quick sanity: unique IDs
+        if len(set(job_seq)) != job_cnt:
+            logging.warning(
+                "Duplicate job IDs detected in sequence. Insertion pass may misbehave."
+            )
+
         seq_before = list(job_seq)
+        seq_after = list(seq_before)
 
         best_sumTj, best_Cmax = self._compute_sumTj_Cmax_from_sequence(seq_before)
         best_crit1, best_crit2 = self._tie_crit_from_tm(
             best_sumTj, best_Cmax, tie_breaker
         )
-
-        seq_after = list(seq_before)
 
         for j in seq_before:
             j_idx = seq_after.index(j)
@@ -696,6 +635,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 seq_after, j, tie_breaker
             )
             crit1, crit2 = self._tie_crit_from_tm(after_sumTj, after_Cmax, tie_breaker)
+
             after_is_better = (crit1 < best_crit1) or (
                 crit1 == best_crit1 and crit2 < best_crit2
             )
@@ -706,7 +646,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 best_crit1 = crit1
                 best_crit2 = crit2
             else:
-                seq_after.insert(j_idx, j)  # revert
+                seq_after.insert(j_idx, j)  # revert to original spot for stability
             if self.time_is_up():
                 logging.info(
                     f"Time limit reached during {j_idx + 1} / {job_cnt} insertion improvement."
@@ -718,7 +658,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     def improve_by_insertion(
         self,
         tie_breaker: str = "default",
-        max_passes: int = 1,
+        max_passes: int | None = None,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ) -> None:
@@ -739,12 +679,15 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         best_crit1, best_crit2 = self._tie_crit_from_tm(
             best_sumTj, best_Cmax, tie_breaker
         )
+        logging.info(
+            f"Initial: total tardiness {best_sumTj}, makespan {best_Cmax} (criteria: {best_crit1}, {best_crit2})."
+        )
 
         improved_globally = False
         passes = 0
         # list of (global elapsed time, obj value)
         obj_value_log: list[tuple[float, float]] = []
-        while passes < max_passes:
+        while max_passes is None or passes < max_passes:
             passes += 1
 
             seq_after = self.improve_job_seq_by_insertion_single_pass(
@@ -752,6 +695,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             )
             after_sumTj, after_Cmax = self._compute_sumTj_Cmax_from_sequence(seq_after)
             crit1, crit2 = self._tie_crit_from_tm(after_sumTj, after_Cmax, tie_breaker)
+            logging.info(
+                f"Pass {passes}: total tardiness {after_sumTj}, makespan {after_Cmax} (criteria: {crit1}, {crit2})."
+            )
             after_is_better = (crit1 < best_crit1) or (
                 crit1 == best_crit1 and crit2 < best_crit2
             )
@@ -770,8 +716,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 logging.info(f"Pass {passes}: no improvement, stopping.")
                 break
             if self.time_is_up():
+                max_pass_str = (
+                    str(max_passes) if max_passes is not None else "unlimited"
+                )
                 logging.info(
-                    f"Time limit reached during {passes} / {max_passes} insertion improvement passes."
+                    f"Time limit reached during {passes} / {max_pass_str} insertion improvement passes."
                 )
                 break
 
