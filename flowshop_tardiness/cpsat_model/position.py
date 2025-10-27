@@ -11,7 +11,7 @@ from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedule
 
 
-class CpCpsatPosition(CustomCpModel):
+class PositionModel(CustomCpModel):
     # Indices & Parameters
 
     j_2_job_name_map: dict[int, str]
@@ -81,7 +81,7 @@ class CpCpsatPosition(CustomCpModel):
     @classmethod
     def from_instance(
         cls, instance: FlowshopDuedateParameters, horizon: int
-    ) -> CpCpsatPosition:
+    ) -> PositionModel:
         result = cls(horizon)
         result.name = f"{cls.__name__}_{instance.name}"
         result.define_model(instance)
@@ -441,10 +441,11 @@ class CpCpsatPosition(CustomCpModel):
             j1 = self.job_name_2_j_map[j1_name]
             j2 = self.job_name_2_j_map[j2_name]
             self.add(self.var_pi_inverse[j1] + 1 <= self.var_pi_inverse[j2])
+            logging.info(f"Added precedence: {j1_name} -> {j2_name}")
 
     # Subproblem generation
 
-    def create_problem_of_job_subset(self, job_subset: set[str]) -> CpCpsatPosition:
+    def create_problem_of_job_subset(self, job_subset: set[str]) -> PositionModel:
         if not job_subset.issubset(set(self.job_name_2_j_map.keys())):
             raise ValueError("job_subset contains unknown job names.")
         new_model = self.__class__(0)

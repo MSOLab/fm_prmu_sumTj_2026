@@ -111,8 +111,8 @@ benchmark_idx_list:
   # - 526
   # - 531
   # - 536
-first: 1
-last: 540
+first: 0
+last: 1
 benchmark_filename_format: "{}.txt"
 
 # Scenario configurations
@@ -177,10 +177,14 @@ dicts_of_i_o_data_path:
   #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_NEHt_IIm.yaml"
   #   output_dir: "output_600s/NEHt_IIm"
   #   description: "NEH-T -> II(M) infty passes"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_NEHt_II_baseCp.yaml"
+  #   output_dir: "output_600s/NEHt_II_baseCp"
+  #   description: "NEH-T -> II infty passes -> base CP"
   - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-    subroutine_flow_rel_path: "configs_600s/subroutine_flow_NEHt_II_baseCp.yaml"
-    output_dir: "output_600s/NEHt_II_baseCp"
-    description: "NEH-T -> II infty passes -> base CP"
+    subroutine_flow_rel_path: "configs_600s/subroutine_flow_NEHt_II_jbns.yaml"
+    output_dir: "output_600s/NEHt_II_jbns"
+    description: "NEH-T -> II infty passes -> job block neighbor search"
   # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
   #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_nehedd_ic510.yaml"
   #   output_dir: "output_600s/nehedd_IC510"
@@ -204,7 +208,7 @@ scenario_log_filename: "hfs_multi_scenario_runner.log"
 result_dir_name: "results"
 
 # Execution configuration
-instance_worker_cnt: 4
+instance_worker_cnt: 1
 
 # Analysis and plotting options
 draw_gantt: false
@@ -217,4 +221,4 @@ drop_first_values_percent: 0.0
 # analysis_dir_path: "$HFS_RESULT_DIR/Calop1/20250912T001404_281753"
 # analysis_timestamp: "20250923T185753_526917"
 # resume_dir_path: resources/vrm_prev_calc/20250923T011049_333399/output_600s/nehedd
-resume_dir_path: resources/vrm_prev_calc/20251008T110030_267889/output_600s/NEHt_II
+# resume_dir_path: resources/vrm_prev_calc/20251008T110030_267889/output_600s/NEHt_II

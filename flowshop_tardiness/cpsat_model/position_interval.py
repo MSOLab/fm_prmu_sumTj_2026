@@ -11,7 +11,7 @@ from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedule
 
 
-class CpCpsatPosition(CpModelWithFlexibleInterval):
+class PositionIntervalModel(CpModelWithFlexibleInterval):
     # Indices & Parameters
 
     horizon: int
@@ -75,7 +75,7 @@ class CpCpsatPosition(CpModelWithFlexibleInterval):
     @classmethod
     def from_instance(
         cls, instance: FlowshopDuedateParameters, horizon: int
-    ) -> CpCpsatPosition:
+    ) -> PositionIntervalModel:
         result = cls(horizon)
         result.name = f"{cls.__name__}_{instance.name}"
         result.define_model(instance)

@@ -1,5 +1,6 @@
 import logging
 import math
+import random
 from typing import Callable
 
 from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
@@ -1119,3 +1120,79 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         # TODO: suffix from output_metadata
         if sub_obj_store:
             sub_obj_store.save_yaml(self.get_file_path_for_subroutine("_obj_log.yaml"))
+
+    # Subroutine: job block neighbor search
+
+    def job_block_ns(
+        self,
+        rho: float,
+        computational_time: float,
+        solver_thread_cnt: int,
+        no_improvement_timelimit: float | None = None,
+        error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
+    ) -> None:
+        self.fix_profile_solve_reset(
+            lambda: self.apply_job_block_operator(rho),
+            computational_time,
+            solver_thread_cnt,
+            no_improvement_timelimit=no_improvement_timelimit,
+            obj_value_is_valid=True,
+            obj_bound_is_valid=False,
+            error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
+        )
+
+    def apply_job_block_operator(
+        self, rho: float, randomize_selection: bool = True
+    ) -> None:
+        if rho <= 0:
+            raise ValueError(f"Invalid value for rho {rho}; it must be positive.")
+        if rho > 1:
+            raise ValueError(f"Invalid value for rho {rho}; it must be at most 1.")
+        logging.info(f"Applying job block operator with rho={rho}")
+        if not self.solution_manager.has_incumbent():
+            raise ValueError("No incumbent solution available for job block operator.")
+        incumbent_solution = self.solution_manager.get_incumbent()
+        if incumbent_solution is None:
+            raise ValueError("No incumbent solution to select job block.")
+
+        job_sequence = incumbent_solution.get_last_stage_job_list()
+        sched_job_cnt = len(job_sequence)
+        if sched_job_cnt == 0:
+            raise ValueError("Incumbent solution has no scheduled jobs.")
+        logging.info(f"Current job sequence: {job_sequence}")
+        num_to_select = max(1, int(math.ceil(rho * sched_job_cnt)))
+
+        # Choose an operation
+        if randomize_selection:
+            seed_job = random.choice(job_sequence)
+        else:
+            # if not random, choose center operation
+            seed_job = job_sequence[sched_job_cnt // 2]
+        # Select (num_to_select - 1) more jobs; if reached the end, continue from the first element
+        selected_jobs: list[str] = [seed_job]
+        seed_job_idx = job_sequence.index(seed_job)
+        logging.info(
+            "Seed job for block operator: %s (index %d)", seed_job, seed_job_idx
+        )
+        job_cnt_until_last = len(job_sequence) - seed_job_idx
+        logging.info(
+            "Jobs from seed to end: %d, need to select total %d jobs.",
+            job_cnt_until_last,
+            num_to_select,
+        )
+
+        # Select a contiguous block of num_to_select jobs, wrapping around if needed
+        selected_jobs.extend(
+            job_sequence[(seed_job_idx + 1 + i) % sched_job_cnt]
+            for i in range(num_to_select - 1)
+        )
+        logging.info(
+            f"job block operator selected {len(selected_jobs)} jobs"
+            f" (target={num_to_select})"
+        )
+        logging.info(f"Selected jobs: {selected_jobs}")
+
+        # Profile out-of-block operations
+        self._fix_job_profile_except_selected(set(selected_jobs))
