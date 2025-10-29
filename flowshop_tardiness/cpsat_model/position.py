@@ -205,11 +205,6 @@ class PositionModel(CustomCpModel):
     # Objective
 
     def define_total_tardiness_objective(self) -> None:
-        """
-        Total tardiness objective: minimize \\sum_k{T_k} where T_k := max(end_k - D_k, 0).
-
-        Uses `add_max_equality` for clarity.
-        """
         j_list = self.j_list
         last_i = self.i_list[-1]
 
