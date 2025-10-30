@@ -1196,3 +1196,22 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         # Profile out-of-block operations
         self._fix_job_profile_except_selected(set(selected_jobs))
+
+    # Subroutine: lower bound by preemptive scheduling of the last stage only
+
+    def compute_preemptive_last_stage_lb(self) -> None:
+        from ..pywraplp_model.single_mc_pmtn import SingleMachinePreemptionModel
+
+        last_stage_only_mdl = SingleMachinePreemptionModel.from_instance(self.instance)
+        last_stage_only_mdl.solve()
+
+        if last_stage_only_mdl.is_optimal():
+            lb_value = last_stage_only_mdl.get_obj_value()
+            logging.info(
+                "Preemptive last-stage-only model solved optimally with objective value %d.",
+                lb_value,
+            )
+            sequence = last_stage_only_mdl.get_job_completion_sequence()
+            logging.info(
+                "Preemptive last-stage-only job completion sequence: %s", sequence
+            )
