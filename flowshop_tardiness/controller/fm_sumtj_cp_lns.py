@@ -1215,29 +1215,52 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 obj_bound,
                 sub_timer.get_formatted_elapsed_time(),
             )
-            job_sequence = last_stage_only_mdl.get_job_completion_sequence()
-            schedule = self.get_dispatched_schedule(job_sequence)
-            if error_if_infeasible:
-                self.check_feasibility(schedule)
-            obj_value = self.get_obj_value(schedule)
-            log_msg_format = (
-                "Dispatched schedule by preemptive last-stage-only LB sequence"
-                " has total tardiness {obj_value}"
+            seq_by_start = last_stage_only_mdl.get_job_start_sequence()
+            schedule_by_start = self.get_dispatched_schedule(seq_by_start)
+            obj_value_by_start = self.get_obj_value(schedule_by_start)
+
+            seq_by_end = last_stage_only_mdl.get_job_completion_sequence()
+            schedule_by_end = self.get_dispatched_schedule(seq_by_end)
+            obj_value_by_end = self.get_obj_value(schedule_by_end)
+
+            seq_by_avg = last_stage_only_mdl.get_job_average_sequence()
+            schedule_by_avg = self.get_dispatched_schedule(seq_by_avg)
+            obj_value_by_avg = self.get_obj_value(schedule_by_avg)
+
+            logging.info("Dispatched schedules' total tardiness:")
+            logging.info(" - by start time sequence: %d", obj_value_by_start)
+            logging.info(" - by completion time sequence: %d", obj_value_by_end)
+            logging.info(" - by average time sequence: %d", obj_value_by_avg)
+            # Choose the best among the three dispatched sequences
+            best_obj_value = min(obj_value_by_start, obj_value_by_end, obj_value_by_avg)
+            if best_obj_value == obj_value_by_start:
+                best_schedule = schedule_by_start
+                method_used = "start time"
+            elif best_obj_value == obj_value_by_end:
+                best_schedule = schedule_by_end
+                method_used = "completion time"
+            else:
+                best_schedule = schedule_by_avg
+                method_used = "average time"
+            logging.info(
+                "Among dispatched schedules, best total tardiness is %d by %s sequence.",
+                best_obj_value,
+                method_used,
             )
-            logging.info(log_msg_format.format(obj_value=obj_value))
 
             # Create report and register the new solution
             report = FsSubroutineReport(
                 elapsed_time=sub_timer.elapsed_sec,
-                obj_value=obj_value,
+                obj_value=best_obj_value,
                 obj_bound=obj_bound,
                 is_init=True,
             )
-            was_updated = self.solution_manager.register(report, schedule)
+            was_updated = self.solution_manager.register(report, best_schedule)
 
             # Log
             log_time = self.timer.elapsed_sec
-            self.add_obj_value_log(log_time, obj_value, is_maximize=False)
+            self.add_obj_value_log(log_time, best_obj_value, is_maximize=False)
+            self.add_obj_bound_log(log_time, obj_bound, is_maximize=False)
             _last_timestamp_note = self._get_call_context_of_current_method()
             self.obj_store.add_last_timestamp_note(
                 _last_timestamp_note, obj_value_is_valid=True, obj_bound_is_valid=True

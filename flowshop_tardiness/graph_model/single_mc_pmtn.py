@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
 
-# 1) 사용자가 요청한 import (신규 OR-Tools 버전)
 from ortools.graph.python.min_cost_flow import SimpleMinCostFlow
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
@@ -12,9 +10,9 @@ from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 class McfSolution:
     is_optimal: bool
     objective_value: int
-    x: Dict[str, Dict[int, int]]  # flow on (j,t): 0/1 (정수)
-    job_2_completion_time: Dict[str, int]
-    job_completion_sequence: List[str]
+    x: dict[str, dict[int, int]]  # flow on (j,t): 0/1 (정수)
+    job_2_completion_time: dict[str, int]
+    job_completion_sequence: list[str]
 
 
 class SingleMachinePreemptionMcf:
@@ -33,29 +31,49 @@ class SingleMachinePreemptionMcf:
     이 네트워크는 원래 LP와 동등하며, LP의 최적값 == MCF의 최적값(=LB) 입니다.
     """
 
+    name: str
+    calJ: list[str]
+    p: dict[str, int]
+    r: dict[str, int]
+    d: dict[str, int]
+    t_max: int
+    calT: list[int]
+    c: dict[str, dict[int, int]]
+
+    mcf: SimpleMinCostFlow | None
+    source_id: int
+    sink_id: int
+    job_node_id: dict[str, int]
+    time_node_id: dict[int, int]
+    arc_index_job_time: dict[tuple[str, int], int]
+
+    # Results
+    status_optimal: bool
+    opt_cost: int
+
     def __init__(self):
-        self.name: str = "SingleMachinePreemptionMcf"
-        self.calJ: List[str] = []
-        self.p: Dict[str, int] = {}
-        self.r: Dict[str, int] = {}
-        self.d: Dict[str, int] = {}
-        self.t_max: int = 0
-        self.calT: List[int] = []
-        self.c: Dict[str, Dict[int, int]] = {}
+        self.name = "SingleMachinePreemptionMcf"
+        self.calJ = []
+        self.p = {}
+        self.r = {}
+        self.d = {}
+        self.t_max = 0
+        self.calT = []
+        self.c = {}
 
         # OR-Tools 객체
-        self.mcf: SimpleMinCostFlow | None = None
+        self.mcf = None
 
         # 내부 매핑
-        self.source_id: int = 0
-        self.sink_id: int = 1
-        self.job_node_id: Dict[str, int] = {}
-        self.time_node_id: Dict[int, int] = {}
-        self.arc_index_job_time: Dict[Tuple[str, int], int] = {}
+        self.source_id = 0
+        self.sink_id = 1
+        self.job_node_id = {}
+        self.time_node_id = {}
+        self.arc_index_job_time = {}
 
         # 결과
-        self.status_optimal: bool = False
-        self.opt_cost: int = 0
+        self.status_optimal = False
+        self.opt_cost = 0
 
     @classmethod
     def from_instance(
@@ -156,36 +174,68 @@ class SingleMachinePreemptionMcf:
     def get_obj_value(self) -> int:
         return self.opt_cost
 
-    def get_variable_value_dict(self) -> Dict[str, Dict[int, int]]:
+    def get_variable_value_dict(self) -> dict[str, dict[int, int]]:
         """
         x_{j,t} = job->time 간선의 흐름 값(0/1).
         """
         assert self.mcf is not None
-        x: Dict[str, Dict[int, int]] = {j: {} for j in self.calJ}
+        value_dict: dict[str, dict[int, int]] = {j: {} for j in self.calJ}
         for (j, t), arc_idx in self.arc_index_job_time.items():
             flow = self.mcf.flow(arc_idx)
             if flow:  # 0이면 생략해도 됨
-                x[j][t] = int(flow)
+                value_dict[j][t] = int(flow)
             else:
-                x[j][t] = 0
-        return x
+                value_dict[j][t] = 0
+        return value_dict
 
-    def get_job_2_completion_time_map(self) -> Dict[str, int]:
+    def get_job_2_start_time_map(self) -> dict[str, int]:
+        """
+        각 작업의 시작시점: 흐름이 1인 가장 작은 t 를 start로 채택.
+        (단위시간 슬롯 모델이므로 자연스러운 정의)
+        """
+        x = self.get_variable_value_dict()
+        start: dict[str, int] = {}
+        for j in self.calJ:
+            # flow가 있는 최소 t
+            ts = [t for t, val in x[j].items() if val > 0.5]
+            start[j] = min(ts) if ts else 0
+        return start
+
+    def get_job_start_sequence(self) -> list[str]:
+        start = self.get_job_2_start_time_map()
+        return sorted(self.calJ, key=lambda j: start[j])
+
+    def get_job_2_completion_time_map(self) -> dict[str, int]:
         """
         각 작업의 완료시점: 흐름이 1인 가장 큰 t 를 completion으로 채택.
         (단위시간 슬롯 모델이므로 자연스러운 정의)
         """
         x = self.get_variable_value_dict()
-        comp: Dict[str, int] = {}
+        comp: dict[str, int] = {}
         for j in self.calJ:
             # flow가 있는 최대 t
-            ts = [t for t, val in x[j].items() if val > 0]
+            ts = [t for t, val in x[j].items() if val > 0.5]
             comp[j] = max(ts) if ts else 0
         return comp
 
-    def get_job_completion_sequence(self) -> List[str]:
+    def get_job_completion_sequence(self) -> list[str]:
         comp = self.get_job_2_completion_time_map()
         return sorted(self.calJ, key=lambda j: comp[j])
+
+    def get_job_2_average_time_map(self) -> dict[str, float]:
+        """
+        각 작업의 평균 처리시점: 흐름이 1인 t 값들의 평균.
+        """
+        x = self.get_variable_value_dict()
+        avg: dict[str, float] = {}
+        for j in self.calJ:
+            ts = [t for t, val in x[j].items() if val > 0.5]
+            avg[j] = sum(ts) / len(ts) if ts else 0.0
+        return avg
+
+    def get_job_average_sequence(self) -> list[str]:
+        avg = self.get_job_2_average_time_map()
+        return sorted(self.calJ, key=lambda j: avg[j])
 
     def extract_solution(self) -> McfSolution:
         return McfSolution(
