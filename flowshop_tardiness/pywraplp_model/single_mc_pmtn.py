@@ -75,8 +75,8 @@ class SingleMachinePreemptionModel:
         for j in self.calJ:
             logging.info(f"  Job {j}: p={self.p[j]}, r={self.r[j]}, d={self.d[j]}")
 
-        # t = 1..(\max_{j\in calJ}{d_j} + \sum_{j\in calJ}{p_j})
-        self.t_max = max(self.d.values()) + sum(self.p.values())
+        # t = 1..(\max_{j\in calJ}{r_j} + \sum_{j\in calJ}{p_j})
+        self.t_max = max(self.r.values()) + sum(self.p.values())
         logging.info(f"  t_max: {self.t_max}")
         self.calT = list(range(1, self.t_max + 1))
 
@@ -88,6 +88,10 @@ class SingleMachinePreemptionModel:
             }
             for j in self.calJ
         }
+        # for j in self.calJ:
+        #     for t in self.calT:
+        #         if self.c[j][t] > 0:
+        #             logging.info(f"c_({j},{t})={self.c[j][t]}")
 
     def define_variables(self) -> None:
         self.x = {
@@ -140,7 +144,10 @@ class SingleMachinePreemptionModel:
         for j in self.calJ:
             completion_time = 0
             for t in self.calT:
-                if self.x[j][t].solution_value() > 0.5:
+                x_val = self.x[j][t].solution_value()
+                # if x_val > 1e-4:
+                #     logging.info(f"x_({j},{t})={x_val}")
+                if x_val > 0.5:
                     completion_time = t
             job_2_completion_time_map[j] = completion_time
         return job_2_completion_time_map
@@ -153,6 +160,7 @@ class SingleMachinePreemptionModel:
         return [job for job, _ in sorted_jobs]
 
     def solve(self) -> None:
+        # self.solver.EnableOutput()
         self.status = self.solver.Solve()
 
     def is_optimal(self) -> bool:
