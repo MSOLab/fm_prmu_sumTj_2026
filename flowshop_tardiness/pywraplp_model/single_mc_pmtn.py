@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import logging
-
 from ortools.linear_solver.pywraplp import Objective, Solver, VariableExpr
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
@@ -39,7 +37,7 @@ class SingleMachinePreemptionModel:
     objective: Objective
     """Objective variable representing total tardiness."""
 
-    def __init__(self, solver_id: str = "SCIP"):
+    def __init__(self, solver_id: str = "GLOP") -> None:
         self.solver: Solver = Solver.CreateSolver(solver_id)
 
     # Solver의 메서드를 그대로 쓰고 싶으면 위임자 한 줄로 해결
@@ -48,12 +46,12 @@ class SingleMachinePreemptionModel:
         return getattr(self.solver, name)
 
     @classmethod
-    def create_solver(cls, solver_id: str = "SCIP") -> SingleMachinePreemptionModel:
+    def create_solver(cls, solver_id: str = "GLOP") -> SingleMachinePreemptionModel:
         return cls(solver_id)
 
     @classmethod
     def from_instance(
-        cls, instance: FlowshopDuedateParameters, solver_id: str = "SCIP"
+        cls, instance: FlowshopDuedateParameters, solver_id: str = "GLOP"
     ) -> SingleMachinePreemptionModel:
         result = cls.create_solver(solver_id)
         result.name = f"{cls.__name__}_{instance.name}"
@@ -72,12 +70,12 @@ class SingleMachinePreemptionModel:
         self.r = instance.get_job_2_p_sum_except_last_stage()
         self.d = instance.job_2_duedate_map
 
-        for j in self.calJ:
-            logging.info(f"  Job {j}: p={self.p[j]}, r={self.r[j]}, d={self.d[j]}")
+        # for j in self.calJ:
+        #     logging.info(f"  Job {j}: p={self.p[j]}, r={self.r[j]}, d={self.d[j]}")
 
-        # t = 1..(\max_{j\in calJ}{r_j} + \sum_{j\in calJ}{p_j})
-        self.t_max = max(self.r.values()) + sum(self.p.values())
-        logging.info(f"  t_max: {self.t_max}")
+        # t = 1..(\max_{j\in calJ}{d_j} + \sum_{j\in calJ}{p_j})
+        self.t_max = max(self.d.values()) + sum(self.p.values())
+        # logging.info(f"  t_max: {self.t_max}")
         self.calT = list(range(1, self.t_max + 1))
 
         # c_jt = 0 if t <= d_j, else \ceil{(t - d_j)/p_j}
