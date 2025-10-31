@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from ortools.linear_solver.pywraplp import Objective, Solver, VariableExpr
+from ortools.math_opt.python import mathopt
+from ortools.math_opt.python.variables import Variable
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
 
@@ -29,31 +30,17 @@ class SingleMachinePreemptionModel:
 
     # Variables
 
-    x: dict[str, dict[int, VariableExpr]]
+    x: dict[str, dict[int, Variable]]
     """job -> time index -> 1 if processed preemptively, 0 otherwise."""
 
-    # Objective
-
-    objective: Objective
-    """Objective variable representing total tardiness."""
-
-    def __init__(self, solver_id: str = "GLOP") -> None:
-        self.solver: Solver = Solver.CreateSolver(solver_id)
-
-    # Solver의 메서드를 그대로 쓰고 싶으면 위임자 한 줄로 해결
-    def __getattr__(self, name):
-        # self에 없으면 solver로 위임 (NumVar, Add, Objective, Solve 등)
-        return getattr(self.solver, name)
-
-    @classmethod
-    def create_solver(cls, solver_id: str = "GLOP") -> SingleMachinePreemptionModel:
-        return cls(solver_id)
+    def __init__(self):
+        self.model: mathopt.Model = mathopt.Model()
 
     @classmethod
     def from_instance(
-        cls, instance: FlowshopDuedateParameters, solver_id: str = "GLOP"
+        cls, instance: FlowshopDuedateParameters
     ) -> SingleMachinePreemptionModel:
-        result = cls.create_solver(solver_id)
+        result = cls()
         result.name = f"{cls.__name__}_{instance.name}"
         result.define_model(instance)
         return result
@@ -73,8 +60,8 @@ class SingleMachinePreemptionModel:
         # for j in self.calJ:
         #     logging.info(f"  Job {j}: p={self.p[j]}, r={self.r[j]}, d={self.d[j]}")
 
-        # t = 1..(\max_{j\in calJ}{d_j} + \sum_{j\in calJ}{p_j})
-        self.t_max = max(self.d.values()) + sum(self.p.values())
+        # t = 1..(\max_{j\in calJ}{r_j} + \sum_{j\in calJ}{p_j})
+        self.t_max = max(self.r.values()) + sum(self.p.values())
         # logging.info(f"  t_max: {self.t_max}")
         self.calT = list(range(1, self.t_max + 1))
 
@@ -93,7 +80,12 @@ class SingleMachinePreemptionModel:
 
     def define_variables(self) -> None:
         self.x = {
-            j: {t: self.NumVar(0, 1, f"x_{j}_{t}") for t in self.calT}
+            j: {
+                t: self.model.add_variable(
+                    lb=0.0, ub=1.0, name=f"x_{j}_{t}", is_integer=False
+                )
+                for t in self.calT
+            }
             for j in self.calJ
         }
 
@@ -101,65 +93,66 @@ class SingleMachinePreemptionModel:
         # At most one job can be processed at any time.
         # Supply constraints of a transportation problem.
         for t in self.calT:
-            self.Add(
+            self.model.add_linear_constraint(
                 sum(self.x[j][t] for j in self.calJ) <= 1,
-                f"capacity_time_{t}",
+                name=f"capacity_time_{t}",
             )
-
         # Each job must be processed for its processing time.
         # (Exact) Demand constraints of a transportation problem.
         for j in self.calJ:
-            self.Add(
+            self.model.add_linear_constraint(
                 sum(self.x[j][t] for t in self.calT) == self.p[j],
-                f"proc_time_job_{j}",
+                name=f"proc_time_job_{j}",
             )
-
         # Jobs cannot be processed before their release times.
         for j in self.calJ:
             for t in range(1, self.r[j] + 1):
-                self.Add(
+                self.model.add_linear_constraint(
                     self.x[j][t] == 0,
-                    f"release_time_job_{j}_time_{t}",
+                    name=f"release_time_job_{j}_time_{t}",
                 )
 
     def define_objective(self) -> None:
-        # max_tardiness_sum = 0
-        # for j in self.calJ:
-        #     max_tardiness_sum += self.t_max - self.d[j]
-        self.objective = self.Objective()
-        for j in self.calJ:
-            for t in self.calT:
-                self.objective.SetCoefficient(self.x[j][t], self.c[j][t])
-        self.objective.SetMinimization()
+        # Minimize total tardiness
+        self.model.minimize(
+            sum(self.c[j][t] * self.x[j][t] for j in self.calJ for t in self.calT)
+        )
+
+    def solve(self) -> None:
+        params = mathopt.SolveParameters(enable_output=True)
+        self.result = mathopt.solve(self.model, mathopt.SolverType.HIGHS, params=params)
 
     # Extraction methods
 
+    def is_optimal(self) -> bool:
+        return self.result.termination.reason == mathopt.TerminationReason.OPTIMAL
+
+    def is_feasible(self) -> bool:
+        return self.result.termination.reason in {
+            mathopt.TerminationReason.OPTIMAL,
+            mathopt.TerminationReason.FEASIBLE,
+        }
+
     def get_obj_value(self) -> float:
-        return self.objective.Value()
+        return self.result.objective_value()
+
+    def get_variable_value_dict(self) -> dict[str, dict[int, float]]:
+        var_values = self.result.variable_values()
+        return {j: {t: var_values[self.x[j][t]] for t in self.calT} for j in self.calJ}
 
     def get_job_2_completion_time_map(self) -> dict[str, int]:
         job_2_completion_time_map: dict[str, int] = {}
+        var_values = self.result.variable_values()
         for j in self.calJ:
             completion_time = 0
             for t in self.calT:
-                x_val = self.x[j][t].solution_value()
-                # if x_val > 1e-4:
-                #     logging.info(f"x_({j},{t})={x_val}")
-                if x_val > 0.5:
+                x_jt_value = var_values[self.x[j][t]]
+                if x_jt_value > 0.5:
                     completion_time = t
             job_2_completion_time_map[j] = completion_time
         return job_2_completion_time_map
 
     def get_job_completion_sequence(self) -> list[str]:
+        # Sort jobs by their completion times
         job_2_completion_time_map = self.get_job_2_completion_time_map()
         return sorted(self.calJ, key=lambda j: job_2_completion_time_map[j])
-
-    def solve(self) -> None:
-        # self.solver.EnableOutput()
-        self.status = self.solver.Solve()
-
-    def is_optimal(self) -> bool:
-        return self.status == Solver.OPTIMAL
-
-    def is_feasible(self) -> bool:
-        return self.status in [Solver.OPTIMAL, Solver.FEASIBLE]

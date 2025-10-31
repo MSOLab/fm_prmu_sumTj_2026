@@ -1202,11 +1202,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     def compute_preemptive_last_stage_lb(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        from ..pywraplp_model.single_mc_pmtn import SingleMachinePreemptionModel
+        from ..graph_model.single_mc_pmtn import SingleMachinePreemptionMcf
 
         sub_timer = ElapsedTimer()
-        last_stage_only_mdl = SingleMachinePreemptionModel.from_instance(self.instance)
-        # last_stage_only_mdl.solver.EnableOutput()
+        last_stage_only_mdl = SingleMachinePreemptionMcf.from_instance(self.instance)
         last_stage_only_mdl.solve()
 
         if last_stage_only_mdl.is_optimal():
@@ -1217,9 +1216,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 sub_timer.get_formatted_elapsed_time(),
             )
             job_sequence = last_stage_only_mdl.get_job_completion_sequence()
-            # logging.info(
-            #     "Preemptive last-stage-only job completion sequence: %s", job_sequence
-            # )
             schedule = self.get_dispatched_schedule(job_sequence)
             if error_if_infeasible:
                 self.check_feasibility(schedule)
