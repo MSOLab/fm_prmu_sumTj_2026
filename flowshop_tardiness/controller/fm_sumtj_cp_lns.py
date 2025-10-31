@@ -1199,19 +1199,53 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     # Subroutine: lower bound by preemptive scheduling of the last stage only
 
-    def compute_preemptive_last_stage_lb(self) -> None:
+    def compute_preemptive_last_stage_lb(
+        self, error_if_infeasible: bool = False, draw_gantt: bool = False
+    ) -> None:
         from ..pywraplp_model.single_mc_pmtn import SingleMachinePreemptionModel
 
+        sub_timer = ElapsedTimer()
         last_stage_only_mdl = SingleMachinePreemptionModel.from_instance(self.instance)
+        # last_stage_only_mdl.solver.EnableOutput()
         last_stage_only_mdl.solve()
 
         if last_stage_only_mdl.is_optimal():
-            lb_value = last_stage_only_mdl.get_obj_value()
+            obj_bound = last_stage_only_mdl.get_obj_value()
             logging.info(
-                "Preemptive last-stage-only model solved optimally with objective value %d.",
-                lb_value,
+                "Preemptive last-stage-only model solved optimally with objective value %d; took %s",
+                obj_bound,
+                sub_timer.get_formatted_elapsed_time(),
             )
-            sequence = last_stage_only_mdl.get_job_completion_sequence()
-            logging.info(
-                "Preemptive last-stage-only job completion sequence: %s", sequence
+            job_sequence = last_stage_only_mdl.get_job_completion_sequence()
+            # logging.info(
+            #     "Preemptive last-stage-only job completion sequence: %s", job_sequence
+            # )
+            schedule = self.get_dispatched_schedule(job_sequence)
+            if error_if_infeasible:
+                self.check_feasibility(schedule)
+            obj_value = self.get_obj_value(schedule)
+            log_msg_format = (
+                "Dispatched schedule by preemptive last-stage-only LB sequence"
+                " has total tardiness {obj_value}"
             )
+            logging.info(log_msg_format.format(obj_value=obj_value))
+
+            # Create report and register the new solution
+            report = FsSubroutineReport(
+                elapsed_time=sub_timer.elapsed_sec,
+                obj_value=obj_value,
+                obj_bound=obj_bound,
+                is_init=True,
+            )
+            was_updated = self.solution_manager.register(report, schedule)
+
+            # Log
+            log_time = self.timer.elapsed_sec
+            self.add_obj_value_log(log_time, obj_value, is_maximize=False)
+            _last_timestamp_note = self._get_call_context_of_current_method()
+            self.obj_store.add_last_timestamp_note(
+                _last_timestamp_note, obj_value_is_valid=True, obj_bound_is_valid=True
+            )
+            # Draw Gantt chart if the solution is an improvement
+            if was_updated and draw_gantt:
+                self.draw_incumbent_gantt()
