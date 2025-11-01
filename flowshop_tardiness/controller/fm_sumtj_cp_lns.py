@@ -568,12 +568,16 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         sub_timer = ElapsedTimer()
 
         # 1) EDD order
-        edd_order = self.get_edd_sequence()
+        incumbent_sol = self.solution_manager.get_incumbent()
+        if incumbent_sol is None:
+            job_sequence = self.get_edd_sequence()
+        else:
+            job_sequence = incumbent_sol.get_last_stage_job_list()
 
         seq: list[str] = []
 
         # 2) NEH insertion by EDD order with fast evaluation
-        for j in edd_order:
+        for j in job_sequence:
             pos, _, _ = self._eval_insert_with_criteria(seq, j, tie_breaker)
             seq.insert(pos, j)
 
