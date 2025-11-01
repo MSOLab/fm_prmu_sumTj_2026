@@ -69,7 +69,27 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             raise RuntimeError(
                 "Base CP model is not set. Call set_cp_model_as_base_cp_model() first."
             )
+        # from google.protobuf.json_format import MessageToDict
+        # from routix.io import object_to_yaml
 
+        # model_file_suffix = f"_model_{self.instance.name}"
+        # model_file_path = self.get_file_path_for_subroutine(model_file_suffix + ".yaml")
+
+        # # Export JSON representation as yaml
+        # proto_dict = MessageToDict(
+        #     self.cp_model.Proto(), preserving_proto_field_name=True
+        # )
+        # object_to_yaml(proto_dict, model_file_path)
+
+        # # Export in LP format
+        # self.cp_model.export_to_file(
+        #     self.get_file_path_for_subroutine(model_file_suffix + ".lp").as_posix()
+        # )
+
+        # # Export in MPS format
+        # self.cp_model.export_to_file(
+        #     self.get_file_path_for_subroutine(model_file_suffix + ".mps").as_posix()
+        # )
         if is_initial_solution:
             self.solve_current_cp_remaining_time_limit(
                 computational_time,
