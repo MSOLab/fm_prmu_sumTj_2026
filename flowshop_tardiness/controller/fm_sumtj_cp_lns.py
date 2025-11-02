@@ -896,7 +896,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 )
             # Safety check
             self.check_feasibility(full_sched)
-            return full_sched.deepcopy()
+            return full_sched
 
         def _log_snapshot(
             picked_sol: FlowshopSchedule,
@@ -956,7 +956,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             _timelimit = self.get_remaining_time_limit(max_time_per_add)
             if float_a_leq_b(_timelimit, 0):
                 logging.info(
-                    "(batch %d/%d) Time over before dispatch -> finish by dispatching remaining jobs.",
+                    "(batch %d/%d) Time over before CP solving -> finish by dispatching remaining jobs.",
                     bidx + 1,
                     job_sublist_cnt,
                 )
