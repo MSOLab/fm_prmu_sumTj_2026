@@ -1,0 +1,8 @@
+- method: set_random_seed
+  seed: 42
+- method: compute_preemptive_last_stage_lb
+- method: initialize_by_edd
+- method: initialize_by_nehm
+- method: improve_by_insertion
+  tie_breaker: "default"
+  first_improvement: false

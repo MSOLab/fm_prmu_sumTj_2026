@@ -462,30 +462,30 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         return prefix_sumTj[n], prefix_frontiers[n][self.last_stage_id]
 
     @staticmethod
-    def _tie_crit_from_tm(sumTj: int, Cmax: int, tie_breaker: str) -> tuple[int, int]:
+    def _tie_crit_from_tm(
+        sumTj: int, Cmax: int, tie_breaker: str, Cmax_multiplier: float = 1.0
+    ) -> tuple[float, float]:
         """Calculate tie breaking criteria from tie breaker name.
 
         Args:
             sumTj (int): total tardiness
             Cmax (int): makespan
             tie_breaker (str): tie breaker name
+            Cmax_multiplier (float, optional): multiplier for Cmax in some tie breakers.
+                Defaults to 1.0.
 
         Raises:
             ValueError: if tie_breaker is unknown
 
         Returns:
-            tuple[int, int]: (crit1, crit2) for comparison
+            tuple[float, float]: (crit1, crit2) for comparison
         """
         if tie_breaker == "default":
             return (sumTj, 0)
         if tie_breaker == "NEH-T":
             return (sumTj, Cmax)
-        if tie_breaker == "NEH(M)":
-            return (sumTj + Cmax, 0)
-        if tie_breaker == "nehedd3":
-            return (sumTj + Cmax, sumTj)
-        if tie_breaker == "nehedd4":
-            return (sumTj + Cmax, Cmax)
+        if tie_breaker == "NEH-M":
+            return (sumTj + Cmax * Cmax_multiplier, 0)
         raise ValueError(f"Unknown tie_breaker: {tie_breaker}")
 
     def _eval_insert_with_criteria(
@@ -494,7 +494,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         job_id: str,
         tie_breaker: str = "default",
         first_improvement: bool = False,
-        baseline_crit: tuple[int, int] | None = None,
+        baseline_obj: tuple[int, int] | None = None,
+        Cmax_multiplier: float = 1.0,
     ) -> tuple[int, int, int]:
         """Evaluate insertion of job_id into seq_now.
 
@@ -505,7 +506,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 Defaults to "default".
             first_improvement (bool, optional): If True, stop at first improvement.
                 Defaults to False.
-            baseline_crit (tuple[int, int] | None, optional): Baseline criteria for comparison.
+            baseline_obj (tuple[int, int] | None, optional): Baseline objectives for comparison.
                 Required if first_improvement is True. Defaults to None.
 
         Returns:
@@ -529,15 +530,20 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         best_pos = 0
         best_sumTj: int | None = None
         best_Cmax: int | None = None
-        best_crit1: int | None = None
-        best_crit2: int | None = None
+        best_crit1: float | None = None
+        best_crit2: float | None = None
 
-        baseline_crit1: int | None
-        baseline_crit2: int | None
+        baseline_crit1: float | None
+        baseline_crit2: float | None
         if first_improvement:
-            if baseline_crit is not None:
+            if baseline_obj is not None and (
+                baseline_obj[0] is not None and baseline_obj[1] is not None
+            ):
                 baseline_crit1, baseline_crit2 = self._tie_crit_from_tm(
-                    baseline_crit[0], baseline_crit[1], tie_breaker
+                    baseline_obj[0],
+                    baseline_obj[1],
+                    tie_breaker,
+                    Cmax_multiplier=Cmax_multiplier,
                 )
             else:
                 raise ValueError(
@@ -565,7 +571,15 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 new_sumTj += max(C_tail - dmap[j_tail], 0)
 
             new_Cmax = new_frontier[self.last_stage_id]
-            crit1, crit2 = self._tie_crit_from_tm(new_sumTj, new_Cmax, tie_breaker)
+            logging.info(
+                "New sumTj: {}, New Cmax: {}, CmaxMult: {}".format(
+                    new_sumTj, new_Cmax, Cmax_multiplier
+                )
+            )
+            crit1, crit2 = self._tie_crit_from_tm(
+                new_sumTj, new_Cmax, tie_breaker, Cmax_multiplier
+            )
+            logging.info(f"Position {pos}: {crit1}, {crit2}")
 
             # Early exit for first-improvement policy
             if (
@@ -607,6 +621,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         Complexity: O(n^2 * m) with small constants via prefix reuse.
         """
         sub_timer = ElapsedTimer()
+        job_cnt = self.instance.job_count
 
         # 1) EDD order
         incumbent_sol = self.solution_manager.get_incumbent()
@@ -619,8 +634,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         # 2) NEH insertion by EDD order with fast evaluation
         for j in job_sequence:
+            j_idx = job_sequence.index(j)
+            Cmax_multiplier = (job_cnt - 1 - j_idx) / (job_cnt - 1)
             pos, _, _ = self._eval_insert_with_criteria(
-                seq, j, tie_breaker, first_improvement
+                seq, j, tie_breaker, first_improvement, Cmax_multiplier=Cmax_multiplier
             )
             seq.insert(pos, j)
 
@@ -660,20 +677,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     ) -> None:
         self._run_neh_edd("NEH-T", "NEH-T", error_if_infeasible, draw_gantt)
 
-    def initialize_by_nehedd2(
+    def initialize_by_nehm(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEHEDD2", "NEH(M)", error_if_infeasible, draw_gantt)
-
-    def initialize_by_nehedd3(
-        self, error_if_infeasible: bool = False, draw_gantt: bool = False
-    ) -> None:
-        self._run_neh_edd("NEHEDD3", "nehedd3", error_if_infeasible, draw_gantt)
-
-    def initialize_by_nehedd4(
-        self, error_if_infeasible: bool = False, draw_gantt: bool = False
-    ) -> None:
-        self._run_neh_edd("NEHEDD4", "nehedd4", error_if_infeasible, draw_gantt)
+        self._run_neh_edd("NEH-M", "NEH-M", error_if_infeasible, draw_gantt)
 
     def improve_job_seq_by_insertion_single_pass(
         self,
@@ -707,7 +714,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 j,
                 tie_breaker,
                 first_improvement=first_improvement,
-                baseline_crit=(best_crit1, best_crit2),
+                baseline_obj=(best_sumTj, best_Cmax),
             )
             crit1, crit2 = self._tie_crit_from_tm(after_sumTj, after_Cmax, tie_breaker)
 
