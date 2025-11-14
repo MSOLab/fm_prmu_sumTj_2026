@@ -10,6 +10,7 @@ from schore.schedule_examples.shop.flow import FlowshopSchedule
 
 from ..report import FsSubroutineReport
 from .controller_core import FlowshopTardinessControllerCore
+from .schedule_metric import ScheduleMetric
 
 REL_TOL = 1e-9  # for safe float comparisons
 
@@ -446,32 +447,41 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             prefix_sumTj[j_idx + 1] = prefix_sumTj.get(j_idx, 0) + Tj
         return pos_2_stage_2_endtime_map, prefix_sumTj
 
-    def _compute_sumTj_Cmax_from_sequence(self, job_seq: list[str]) -> tuple[int, int]:
+    def _compute_schedule_metric_from_sequence(
+        self, job_seq: list[str]
+    ) -> ScheduleMetric:
         """Compute total tardiness and makespan from a job sequence.
 
         Args:
             job_seq (list[str]): Ordered list of job ids to evaluate.
 
         Returns:
-            tuple[int, int]: (total_tardiness, makespan) for the given job sequence.
+            ScheduleMetric: computed schedule metrics.
         """
         prefix_frontiers, prefix_sumTj = self._compute_prefix_frontiers_and_sumTj(
             job_seq
         )
         n = len(job_seq)
-        return prefix_sumTj[n], prefix_frontiers[n][self.last_stage_id]
+        return ScheduleMetric(
+            prefix_sumTj[n],
+            [prefix_frontiers[n][i] for i in self.stage_ids],
+            {
+                (i, j): self.stage_job_2_p_dict[i, j]
+                for j in job_seq
+                for i in self.stage_ids
+            },
+        )
 
     @staticmethod
     def _tie_crit_from_tm(
-        sumTj: int, Cmax: int, tie_breaker: str, Cmax_multiplier: float = 1.0
+        metric: ScheduleMetric, tie_breaker: str, makespan_multiplier: float = 1.0
     ) -> tuple[float, float]:
         """Calculate tie breaking criteria from tie breaker name.
 
         Args:
-            sumTj (int): total tardiness
-            Cmax (int): makespan
+            metric (ScheduleMetric): schedule metrics
             tie_breaker (str): tie breaker name
-            Cmax_multiplier (float, optional): multiplier for Cmax in some tie breakers.
+            makespan_multiplier (float, optional): multiplier for Cmax in some tie breakers.
                 Defaults to 1.0.
 
         Raises:
@@ -481,11 +491,13 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             tuple[float, float]: (crit1, crit2) for comparison
         """
         if tie_breaker == "default":
-            return (sumTj, 0)
+            return (metric.sumTj, 0)
         if tie_breaker == "NEH-T":
-            return (sumTj, Cmax)
+            return (metric.sumTj, metric.makespan)
         if tie_breaker == "NEH-M":
-            return (sumTj + Cmax * Cmax_multiplier, 0)
+            return (metric.sumTj + metric.makespan * makespan_multiplier, 0)
+        if tie_breaker == "NEH-IT1":
+            return (metric.sumTj, metric.get_total_idle_time())
         raise ValueError(f"Unknown tie_breaker: {tie_breaker}")
 
     def _eval_insert_with_criteria(
@@ -494,9 +506,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         job_id: str,
         tie_breaker: str = "default",
         first_improvement: bool = False,
-        baseline_obj: tuple[int, int] | None = None,
-        Cmax_multiplier: float = 1.0,
-    ) -> tuple[int, int, int]:
+        baseline_metric: ScheduleMetric | None = None,
+        makespan_multiplier: float = 1.0,
+    ) -> tuple[int, ScheduleMetric]:
         """Evaluate insertion of job_id into seq_now.
 
         Args:
@@ -506,11 +518,13 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 Defaults to "default".
             first_improvement (bool, optional): If True, stop at first improvement.
                 Defaults to False.
-            baseline_obj (tuple[int, int] | None, optional): Baseline objectives for comparison.
+            baseline_metric (ScheduleMetrics | None, optional): Baseline metrics for comparison.
                 Required if first_improvement is True. Defaults to None.
+            makespan_multiplier (float, optional): Multiplier for makespan in some tie breakers.
+                Defaults to 1.0.
 
         Returns:
-            tuple[int, int, int]: (best position, best sumTj, best Cmax).
+            tuple[int, ScheduleMetrics]: (best position, best schedule metrics).
         """
         dmap = self.instance.job_2_duedate_map
 
@@ -522,28 +536,31 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             sumTj = Cmax - dmap[job_id]
             if sumTj < 0:
                 sumTj = 0
-            return 0, sumTj, Cmax
+            return 0, ScheduleMetric(
+                sumTj,
+                [new_f[i] for i in self.stage_ids],
+                {
+                    (i, job_id): self.stage_job_2_p_dict[i, job_id]
+                    for i in self.stage_ids
+                },
+            )
 
         prefix_frontiers, prefix_tardy = self._compute_prefix_frontiers_and_sumTj(
             seq_now
         )
         best_pos = 0
-        best_sumTj: int | None = None
-        best_Cmax: int | None = None
+        best_metric: ScheduleMetric | None = None
         best_crit1: float | None = None
         best_crit2: float | None = None
 
         baseline_crit1: float | None
         baseline_crit2: float | None
         if first_improvement:
-            if baseline_obj is not None and (
-                baseline_obj[0] is not None and baseline_obj[1] is not None
-            ):
+            if baseline_metric is not None:
                 baseline_crit1, baseline_crit2 = self._tie_crit_from_tm(
-                    baseline_obj[0],
-                    baseline_obj[1],
+                    baseline_metric,
                     tie_breaker,
-                    Cmax_multiplier=Cmax_multiplier,
+                    makespan_multiplier=makespan_multiplier,
                 )
             else:
                 raise ValueError(
@@ -570,16 +587,20 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 C_tail = new_frontier[self.last_stage_id]
                 new_sumTj += max(C_tail - dmap[j_tail], 0)
 
-            new_Cmax = new_frontier[self.last_stage_id]
-            logging.info(
-                "New sumTj: {}, New Cmax: {}, CmaxMult: {}".format(
-                    new_sumTj, new_Cmax, Cmax_multiplier
-                )
+            new_Cmax_list = [new_frontier[i] for i in self.stage_ids]
+            new_metric = ScheduleMetric(
+                new_sumTj,
+                new_Cmax_list,
+                {
+                    (i, j): self.stage_job_2_p_dict[i, j]
+                    for j in seq_now + [job_id]
+                    for i in self.stage_ids
+                },
             )
             crit1, crit2 = self._tie_crit_from_tm(
-                new_sumTj, new_Cmax, tie_breaker, Cmax_multiplier
+                new_metric, tie_breaker, makespan_multiplier=makespan_multiplier
             )
-            logging.info(f"Position {pos}: {crit1}, {crit2}")
+            # logging.info(f"Position {pos}: {crit1}, {crit2}")
 
             # Early exit for first-improvement policy
             if (
@@ -590,22 +611,20 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 if (crit1 < baseline_crit1) or (
                     crit1 == baseline_crit1 and crit2 < baseline_crit2
                 ):
-                    return pos, new_sumTj, new_Cmax
+                    return pos, new_metric
 
             # choose best
             if (best_crit1 is None) or (crit1 < best_crit1):
-                best_pos, best_sumTj, best_Cmax = pos, new_sumTj, new_Cmax
+                best_pos, best_metric = pos, new_metric
                 best_crit1, best_crit2 = crit1, crit2
             elif (crit1 == best_crit1) and (best_crit2 is None or crit2 < best_crit2):
-                best_pos, best_sumTj, best_Cmax = pos, new_sumTj, new_Cmax
+                best_pos, best_metric = pos, new_metric
                 best_crit1, best_crit2 = crit1, crit2
                 # if still tied, earlier position is preferred (stable)
 
-        if best_sumTj is None:
-            raise RuntimeError("Unexpected: best_sumTj is None after evaluation.")
-        if best_Cmax is None:
-            raise RuntimeError("Unexpected: best_Cmax is None after evaluation.")
-        return best_pos, best_sumTj, best_Cmax
+        if best_metric is None:
+            raise RuntimeError("Unexpected: best_metric is None after evaluation.")
+        return best_pos, best_metric
 
     def _run_neh_edd(
         self,
@@ -635,9 +654,13 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         # 2) NEH insertion by EDD order with fast evaluation
         for j in job_sequence:
             j_idx = job_sequence.index(j)
-            Cmax_multiplier = (job_cnt - 1 - j_idx) / (job_cnt - 1)
-            pos, _, _ = self._eval_insert_with_criteria(
-                seq, j, tie_breaker, first_improvement, Cmax_multiplier=Cmax_multiplier
+            makespan_multiplier = (job_cnt - 1 - j_idx) / (job_cnt - 1)
+            pos, _ = self._eval_insert_with_criteria(
+                seq,
+                j,
+                tie_breaker,
+                first_improvement=first_improvement,
+                makespan_multiplier=makespan_multiplier,
             )
             seq.insert(pos, j)
 
@@ -670,7 +693,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     def initialize_by_nehedd(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEHEDD", "default", error_if_infeasible, draw_gantt)
+        self._run_neh_edd("NEHedd", "default", error_if_infeasible, draw_gantt)
 
     def initialize_by_neht(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
@@ -681,6 +704,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
         self._run_neh_edd("NEH-M", "NEH-M", error_if_infeasible, draw_gantt)
+
+    def initialize_by_neh_it1(
+        self, error_if_infeasible: bool = False, draw_gantt: bool = False
+    ) -> None:
+        self._run_neh_edd("NEH-IT1", "NEH-IT1", error_if_infeasible, draw_gantt)
 
     def improve_job_seq_by_insertion_single_pass(
         self,
@@ -701,30 +729,27 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         seq_before = list(job_seq)
         seq_after = list(seq_before)
 
-        best_sumTj, best_Cmax = self._compute_sumTj_Cmax_from_sequence(seq_before)
-        best_crit1, best_crit2 = self._tie_crit_from_tm(
-            best_sumTj, best_Cmax, tie_breaker
-        )
+        best_metric = self._compute_schedule_metric_from_sequence(seq_before)
+        best_crit1, best_crit2 = self._tie_crit_from_tm(best_metric, tie_breaker)
 
         for j in seq_before:
             j_idx = seq_after.index(j)
             seq_after.remove(j)
-            pos, after_sumTj, after_Cmax = self._eval_insert_with_criteria(
+            pos, after_metric = self._eval_insert_with_criteria(
                 seq_after,
                 j,
                 tie_breaker,
                 first_improvement=first_improvement,
-                baseline_obj=(best_sumTj, best_Cmax),
+                baseline_metric=best_metric,
             )
-            crit1, crit2 = self._tie_crit_from_tm(after_sumTj, after_Cmax, tie_breaker)
+            crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
 
             after_is_better = (crit1 < best_crit1) or (
                 crit1 == best_crit1 and crit2 < best_crit2
             )
             if after_is_better:
                 seq_after.insert(pos, j)
-                best_sumTj = after_sumTj
-                best_Cmax = after_Cmax
+                best_metric = after_metric
                 best_crit1 = crit1
                 best_crit2 = crit2
             else:
@@ -775,12 +800,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             return
 
         seq_after = list(seq_before)
-        best_sumTj, best_Cmax = self._compute_sumTj_Cmax_from_sequence(seq_before)
-        best_crit1, best_crit2 = self._tie_crit_from_tm(
-            best_sumTj, best_Cmax, tie_breaker
-        )
+        best_metric = self._compute_schedule_metric_from_sequence(seq_before)
+        best_crit1, best_crit2 = self._tie_crit_from_tm(best_metric, tie_breaker)
         logging.info(
-            f"Initial: total tardiness {best_sumTj}, makespan {best_Cmax} (criteria: {best_crit1}, {best_crit2})."
+            f"Initial: total tardiness {best_metric.sumTj}, makespan {best_metric.makespan} (criteria: {best_crit1}, {best_crit2})."
         )
 
         improved_globally = False
@@ -793,25 +816,24 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             seq_after = self.improve_job_seq_by_insertion_single_pass(
                 seq_before, tie_breaker, first_improvement=first_improvement
             )
-            after_sumTj, after_Cmax = self._compute_sumTj_Cmax_from_sequence(seq_after)
-            crit1, crit2 = self._tie_crit_from_tm(after_sumTj, after_Cmax, tie_breaker)
+            after_metric = self._compute_schedule_metric_from_sequence(seq_after)
+            crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
             logging.info(
-                f"Pass {passes}: total tardiness {after_sumTj}, makespan {after_Cmax} (criteria: {crit1}, {crit2})."
+                f"Pass {passes}: total tardiness {after_metric.sumTj}, makespan {after_metric.makespan} (criteria: {crit1}, {crit2})."
             )
             after_is_better = (crit1 < best_crit1) or (
                 crit1 == best_crit1 and crit2 < best_crit2
             )
             if after_is_better:
                 seq_before = list(seq_after)
-                best_sumTj = after_sumTj
-                best_Cmax = after_Cmax
+                best_metric = after_metric
                 best_crit1 = crit1
                 best_crit2 = crit2
                 logging.info(
-                    f"Pass {passes}: improved to total tardiness {best_sumTj}."
+                    f"Pass {passes}: improved to total tardiness {best_metric.sumTj}."
                 )
                 improved_globally = True
-                obj_value_log.append((self.timer.elapsed_sec, best_sumTj))
+                obj_value_log.append((self.timer.elapsed_sec, best_metric.sumTj))
             else:
                 logging.info(f"Pass {passes}: no improvement, stopping.")
                 break

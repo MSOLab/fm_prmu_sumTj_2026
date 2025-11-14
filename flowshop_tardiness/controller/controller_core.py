@@ -69,6 +69,12 @@ class FlowshopTardinessControllerCore(
         self.job_2_stage_2_p_dict = self.instance.get_job_2_stage_2_builtin_int_p_map()
         """Job name -> stage name -> processing time map"""
 
+        self.stage_2_job_2_p_dict = self.instance.get_stage_2_job_2_builtin_int_p_map()
+        """Stage name -> job name -> processing time map"""
+
+        self.stage_job_2_p_dict = self.instance.get_stage_job_2_builtin_int_p_map()
+        """(Stage name, Job name) -> processing time map"""
+
         logging.info(
             f"Controller initialized; took {self.timer.elapsed_sec:.3f} sec. "
             f"Start solving {self.instance.name} using CP model class:"
@@ -382,6 +388,17 @@ class FlowshopTardinessControllerCore(
         return obj_value
 
     # End post-run process
+
+    def get_job_processing_time_sum(self, i: str, j_list: Sequence[str]) -> int:
+        """Get the sum of processing times for a list of jobs at a specific stage.
+
+        Args:
+            i (str): The stage ID.
+            j_list (Sequence[str]): A sequence of job IDs.
+        Returns:
+            int: The sum of processing times for the specified jobs at the given stage.
+        """
+        return sum(self.stage_2_job_2_p_dict[i][j] for j in j_list)
 
     # Start solver call methods
 
