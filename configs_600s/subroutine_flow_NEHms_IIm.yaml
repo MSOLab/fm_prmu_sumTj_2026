@@ -1,5 +1,5 @@
 - method: set_0_as_lb
-- method: initialize_by_neht
+- method: initialize_by_nehms
 - method: improve_by_insertion
-  tie_breaker: "default"
+  tie_breaker: "NEH(M)"
   error_if_infeasible: true

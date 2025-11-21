@@ -492,7 +492,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         """
         if tie_breaker == "default":
             return (metric.sumTj, 0)
-        if tie_breaker == "NEH-T":
+        if tie_breaker == "NEHms":
             return (metric.sumTj, metric.makespan)
         if tie_breaker == "NEH-M":
             return (metric.sumTj + metric.makespan * makespan_multiplier, 0)
@@ -695,10 +695,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     ) -> None:
         self._run_neh_edd("NEHedd", "default", error_if_infeasible, draw_gantt)
 
-    def initialize_by_neht(
+    def initialize_by_nehms(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEH-T", "NEH-T", error_if_infeasible, draw_gantt)
+        self._run_neh_edd("NEHms", "NEHms", error_if_infeasible, draw_gantt)
 
     def initialize_by_nehm(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False

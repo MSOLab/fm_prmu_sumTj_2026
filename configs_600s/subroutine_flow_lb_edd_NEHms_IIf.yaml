@@ -2,7 +2,7 @@
   seed: 42
 - method: compute_preemptive_last_stage_lb
 - method: initialize_by_edd
-- method: initialize_by_neht
+- method: initialize_by_nehms
 - method: improve_by_insertion
   tie_breaker: "default"
   first_improvement: true
