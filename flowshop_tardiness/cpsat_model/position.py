@@ -80,16 +80,23 @@ class PositionModel(CustomCpModel):
 
     @classmethod
     def from_instance(
-        cls, instance: FlowshopDuedateParameters, horizon: int
+        cls,
+        instance: FlowshopDuedateParameters,
+        horizon: int,
+        stage_2_est_map: dict[str, int] | None = None,
     ) -> PositionModel:
         result = cls(horizon)
         result.name = f"{cls.__name__}_{instance.name}"
-        result.define_model(instance)
+        result.define_model(instance, stage_2_est_map=stage_2_est_map)
         return result
 
-    def define_model(self, instance: FlowshopDuedateParameters) -> None:
+    def define_model(
+        self,
+        instance: FlowshopDuedateParameters,
+        stage_2_est_map: dict[str, int] | None = None,
+    ) -> None:
         elapsed = ElapsedTimer()
-        self.define_parameters(instance)
+        self.define_parameters(instance, stage_2_est_map=stage_2_est_map)
         logging.info(f"Defined parameters; took {elapsed.elapsed_sec:.3f} sec.")
 
         elapsed.set_start_time_as_now()
@@ -98,6 +105,8 @@ class PositionModel(CustomCpModel):
 
         elapsed.set_start_time_as_now()
         self.define_constraints()
+        if stage_2_est_map is not None:
+            self.add_stage_earliest_start_time_constraints(stage_2_est_map)
         logging.info(f"Defined constraints; took {elapsed.elapsed_sec:.3f} sec.")
 
         elapsed.set_start_time_as_now()
@@ -106,7 +115,11 @@ class PositionModel(CustomCpModel):
 
     # Parameters
 
-    def define_parameters(self, instance: FlowshopDuedateParameters) -> None:
+    def define_parameters(
+        self,
+        instance: FlowshopDuedateParameters,
+        stage_2_est_map: dict[str, int] | None = None,
+    ) -> None:
         """Define the parameters for the model based on the FlowshopDuedateParameters instance.
 
         Args:
@@ -133,22 +146,30 @@ class PositionModel(CustomCpModel):
             for j, j_name in self.j_2_job_name_map.items()
         }
 
+        logging.info(f"Given stage_2_est_map: {stage_2_est_map}")
         self.stage_start_time_lb = {}
-        cumulative_P_min = 0
         for i in self.i_list:
-            self.stage_start_time_lb[i] = cumulative_P_min
-            cumulative_P_min += min(self.P[i, j] for j in self.j_list)
+            stage_est = (
+                stage_2_est_map.get(self.i_2_stage_name_map[i], 0)
+                if stage_2_est_map
+                else 0
+            )
+            if i > 0:
+                candid1 = self.stage_start_time_lb[i - 1] + min(
+                    self.P[i - 1, j] for j in self.j_list
+                )
+                if stage_est < candid1:
+                    stage_est = candid1
+            self.stage_start_time_lb[i] = stage_est
+            logging.info(f"Stage {i} start time LB: {self.stage_start_time_lb[i]}")
 
         self.stage_end_time_ub = {}
         for i in self.i_list:
-            candid1 = sum(
-                self.P[ip, j] for j in self.j_list for ip in self.i_list[: i + 1]
+            self.stage_end_time_ub[i] = (
+                sum(self.P[ip, j] for j in self.j_list for ip in self.i_list[: i + 1])
+                + self.stage_start_time_lb[i]
             )
-            # max processing time * (job count + stage count - 1)
-            P_max = max(self.P[ip, j] for j in self.j_list for ip in range(0, i + 1))
-            candid2 = P_max * (n + i)
-            self.stage_end_time_ub[i] = min(candid1, candid2)
-
+            logging.info(f"Stage {i} end time UB: {self.stage_end_time_ub[i]}")
         self.D = {
             j: int(round(instance.job_2_duedate_map[j_name]))
             for j, j_name in self.j_2_job_name_map.items()
@@ -373,8 +394,23 @@ class PositionModel(CustomCpModel):
 
         return schedule
 
-    def create_schedule_from_sequence(self) -> FlowshopSchedule:
-        j_sequence = [self.solver.Value(self.var_pi[k]) for k in self.j_list]
+    def create_schedule_from_sequence(
+        self, j_name_sequence: list[str] | None = None
+    ) -> FlowshopSchedule:
+        """Create a schedule from a given job name sequence.
+
+        Args:
+            j_name_sequence (list[str] | None, optional): Sequence of job names.
+                If None, uses the sequence from the model solution.
+                Defaults to None.
+
+        Returns:
+            FlowshopSchedule: The created schedule.
+        """
+        if j_name_sequence is None:
+            j_sequence = [self.solver.Value(self.var_pi[k]) for k in self.j_list]
+        else:
+            j_sequence = [self.job_name_2_j_map[j_name] for j_name in j_name_sequence]
 
         i_name_list = [self.i_2_stage_name_map[i] for i in self.i_list]
         schedule = FlowshopSchedule.from_stage_name_list(i_name_list)
@@ -392,10 +428,13 @@ class PositionModel(CustomCpModel):
 
     # methods to add hints
 
-    def add_hints_from_schedule(self, schedule: FlowshopSchedule) -> None:
+    def add_hints_from_schedule(
+        self, schedule: FlowshopSchedule, job_subset: set[str] | None = None
+    ) -> None:
         last_i = self.i_list[-1]
         last_i_name = self.i_2_stage_name_map[last_i]
         j_sequence = schedule.get_last_stage_job_list()
+        j_sequence = [j for j in j_sequence if (job_subset is None or j in job_subset)]
         start_time_map = schedule.get_start_time_map()
         sum_Tj = 0
 
@@ -504,3 +543,11 @@ class PositionModel(CustomCpModel):
         new_model.define_total_tardiness_objective()
 
         return new_model
+
+    def add_stage_earliest_start_time_constraints(
+        self, stage_2_est_map: dict[str, int]
+    ) -> None:
+        for i, i_name in self.i_2_stage_name_map.items():
+            est = stage_2_est_map.get(i_name, 0)
+            if est > 0:
+                self.add(self.var_op_start[i, self.j_first] >= est)

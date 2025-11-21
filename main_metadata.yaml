@@ -3,7 +3,7 @@ vrm_common_params_rel_path: "resources/vrm_common_params.yaml"
 baseline_csv_path: "resources/vrm_ref/naderi2023CPOCodeResult.csv"
 input_dir: "resources/vrm"
 benchmark_idx_list:
-  # - 1
+  - 1
   # - 6
   # - 11
   # - 16
@@ -111,8 +111,8 @@ benchmark_idx_list:
   # - 526
   # - 531
   # - 536
-first: 1
-last: 540
+# first: 1
+# last: 540
 benchmark_filename_format: "{}.txt"
 
 # Scenario configurations
@@ -241,22 +241,43 @@ dicts_of_i_o_data_path:
   #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_lb_edd_NEHm_II_baseCp.yaml"
   #   output_dir: "output_600s/subroutine_flow_lb_edd_NEHm_II_baseCp"
   #   description: "LB -> EDD -> NEH-M -> II -> base CP"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_edd_NEHit1.yaml"
+  #   output_dir: "output_600s/subroutine_flow_edd_NEHit1"
+  #   description: "EDD -> NEH-IT1"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_lb_edd_NEHit1.yaml"
+  #   output_dir: "output_600s/subroutine_flow_lb_edd_NEHit1"
+  #   description: "LB -> EDD -> NEH-IT1"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_lb_edd_NEHit1_II.yaml"
+  #   output_dir: "output_600s/subroutine_flow_lb_edd_NEHit1_II"
+  #   description: "LB -> EDD -> NEH-IT1 -> II"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_lb_edd_NEHit1_II_baseCp.yaml"
+  #   output_dir: "output_600s/subroutine_flow_lb_edd_NEHit1_II_baseCp"
+  #   description: "LB -> EDD -> NEH-IT1 -> II -> base CP"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251121-1.yaml"
+  #   output_dir : "pra_600s/20251121-1"
+  #   description: "Base-CP only"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251121-2.yaml"
+  #   output_dir : "pra_600s/20251121-2"
+  #   description: "Dispatch-initialized"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251121-3.yaml"
+  #   output_dir : "pra_600s/20251121-3"
+  #   description: "LB-enhanced"
   - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-    subroutine_flow_rel_path: "configs_600s/subroutine_flow_edd_NEHit1.yaml"
-    output_dir: "output_600s/subroutine_flow_edd_NEHit1"
-    description: "EDD -> NEH-IT1"
-  - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-    subroutine_flow_rel_path: "configs_600s/subroutine_flow_lb_edd_NEHit1.yaml"
-    output_dir: "output_600s/subroutine_flow_lb_edd_NEHit1"
-    description: "LB -> EDD -> NEH-IT1"
-  - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-    subroutine_flow_rel_path: "configs_600s/subroutine_flow_lb_edd_NEHit1_II.yaml"
-    output_dir: "output_600s/subroutine_flow_lb_edd_NEHit1_II"
-    description: "LB -> EDD -> NEH-IT1 -> II"
-  - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-    subroutine_flow_rel_path: "configs_600s/subroutine_flow_lb_edd_NEHit1_II_baseCp.yaml"
-    output_dir: "output_600s/subroutine_flow_lb_edd_NEHit1_II_baseCp"
-    description: "LB -> EDD -> NEH-IT1 -> II -> base CP"
+    subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251121-4.yaml"
+    output_dir : "pra_600s/20251121-4"
+    description: "BD-CP-initialized"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251121-5.yaml"
+  #   output_dir : "pra_600s/20251121-5"
+  #   description: "Insertion-improved"
+
 # Output and Logging configuration
 output_dir_scenarios: "Outputs_scenarios"
 scenario_log_filename: "hfs_multi_scenario_runner.log"
