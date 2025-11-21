@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import csv
-import os
 import re
 import sys
 from pathlib import Path
