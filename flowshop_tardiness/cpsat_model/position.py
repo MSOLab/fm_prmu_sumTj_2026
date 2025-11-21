@@ -114,7 +114,7 @@ class PositionModel(CustomCpModel):
         logging.info(f"Defined constraints; took {elapsed.elapsed_sec:.3f} sec.")
 
         elapsed.set_start_time_as_now()
-        self.define_total_tardiness_objective(sumTj_offset=sumTj_offset)
+        self.define_sumTj_objective(sumTj_offset=sumTj_offset)
         logging.info(f"Defined objective; took {elapsed.elapsed_sec:.3f} sec.")
 
     # Parameters
@@ -165,7 +165,7 @@ class PositionModel(CustomCpModel):
                 if stage_est < candid1:
                     stage_est = candid1
             self.stage_start_time_lb[i] = stage_est
-            logging.info(f"Stage {i} start time LB: {self.stage_start_time_lb[i]}")
+            # logging.info(f"Stage {i} start time LB: {self.stage_start_time_lb[i]}")
 
         self.stage_end_time_ub = {}
         for i in self.i_list:
@@ -173,7 +173,7 @@ class PositionModel(CustomCpModel):
                 sum(self.P[ip, j] for j in self.j_list for ip in self.i_list[: i + 1])
                 + self.stage_start_time_lb[i]
             )
-            logging.info(f"Stage {i} end time UB: {self.stage_end_time_ub[i]}")
+            # logging.info(f"Stage {i} end time UB: {self.stage_end_time_ub[i]}")
         self.D = {
             j: int(round(instance.job_2_duedate_map[j_name]))
             for j, j_name in self.j_2_job_name_map.items()
@@ -228,51 +228,6 @@ class PositionModel(CustomCpModel):
             )
             for k in j_list
         }
-
-    # Objective
-
-    def define_total_tardiness_objective(self, sumTj_offset: int | None = None) -> None:
-        """
-        Total tardiness objective: minimize \\sum_k{T_k} where T_k := max(end_k - D_k, 0).
-
-        Uses `add_max_equality` for clarity.
-        """
-        j_list = self.j_list
-        last_i = self.i_list[-1]
-
-        for k in j_list:
-            self.add_max_equality(
-                self.var_T[k], [self.var_op_end[last_i, k] - self.var_d[k], 0]
-            )
-
-        total_ub = sum(
-            max(0, self.stage_end_time_ub[last_i] - self.D[j]) for j in self.j_list
-        )
-        if sumTj_offset is not None:
-            total_ub += sumTj_offset
-        self.obj_var = self.new_int_var(0, total_ub, "sum_Tk")
-        self.add(
-            self.obj_var == sum(self.var_T[k] for k in j_list) + (sumTj_offset or 0)
-        )
-
-        self.minimize(self.obj_var)
-
-    def set_obj_lower_bound(self, bound: float | None) -> None:
-        if bound is None:
-            return
-        if math.isnan(bound):
-            return
-        if self.obj_var is None:
-            raise ValueError("Objective variable is not defined yet.")
-
-        # If the bound is very close to an integer, treat it as such.
-        # Otherwise, use ceiling to ensure we don't cut off valid integer solutions.
-        if float_equals(bound, round(bound)):
-            int_bound = round(bound)
-        else:
-            int_bound = math.ceil(bound)
-
-        self.add(self.obj_var >= int_bound)
 
     # Constraints
 
@@ -333,6 +288,51 @@ class PositionModel(CustomCpModel):
             f"  Precedence (intra-stage) constr. took {timer.elapsed_sec:.3f} sec."
         )
         # timer.set_start_time_as_now()
+
+    # Objective
+
+    def define_sumTj_objective(self, sumTj_offset: int | None = None) -> None:
+        """
+        Total tardiness objective: minimize \\sum_k{T_k} where T_k := max(end_k - D_k, 0).
+
+        Uses `add_max_equality` for clarity.
+        """
+        j_list = self.j_list
+        last_i = self.i_list[-1]
+
+        for k in j_list:
+            self.add_max_equality(
+                self.var_T[k], [self.var_op_end[last_i, k] - self.var_d[k], 0]
+            )
+
+        total_ub = sum(
+            max(0, self.stage_end_time_ub[last_i] - self.D[j]) for j in self.j_list
+        )
+        if sumTj_offset is not None:
+            total_ub += sumTj_offset
+        self.obj_var = self.new_int_var(0, total_ub, "sum_Tk")
+        self.add(
+            self.obj_var == sum(self.var_T[k] for k in j_list) + (sumTj_offset or 0)
+        )
+
+        self.minimize(self.obj_var)
+
+    def set_sumTj_lower_bound(self, bound: float | None) -> None:
+        if bound is None:
+            return
+        if math.isnan(bound):
+            return
+        if self.obj_var is None:
+            raise ValueError("Objective variable is not defined yet.")
+
+        # If the bound is very close to an integer, treat it as such.
+        # Otherwise, use ceiling to ensure we don't cut off valid integer solutions.
+        if float_equals(bound, round(bound)):
+            int_bound = round(bound)
+        else:
+            int_bound = math.ceil(bound)
+
+        self.add(self.obj_var >= int_bound)
 
     # Extraction methods
 
@@ -560,7 +560,7 @@ class PositionModel(CustomCpModel):
         }
         new_model.define_variables()
         new_model.define_constraints()
-        new_model.define_total_tardiness_objective()
+        new_model.define_sumTj_objective()
 
         return new_model
 

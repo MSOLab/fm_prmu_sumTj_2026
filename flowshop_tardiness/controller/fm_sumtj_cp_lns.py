@@ -1108,7 +1108,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 and self.solution_manager.best_obj_bound is not None
                 and not math.isnan(self.solution_manager.best_obj_bound)
             ):
-                sub_cp_mdl.set_obj_lower_bound(self.solution_manager.best_obj_bound)
+                sub_cp_mdl.set_sumTj_lower_bound(self.solution_manager.best_obj_bound)
 
             # ---------- [Time over?] : cutoff before CP solving ----------
             _timelimit = self.get_remaining_time_limit(max_time_per_add)
@@ -1620,7 +1620,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 and self.solution_manager.best_obj_bound is not None
                 and not math.isnan(self.solution_manager.best_obj_bound)
             ):
-                sub_cp_mdl.set_obj_lower_bound(self.solution_manager.best_obj_bound)
+                sub_cp_mdl.set_sumTj_lower_bound(self.solution_manager.best_obj_bound)
 
             # ---------- [Time over?] : cutoff before CP solving ----------
             _timelimit = self.get_remaining_time_limit(max_time_per_add)
