@@ -472,11 +472,20 @@ class PositionModel(CustomCpModel):
     def add_indirect_precedence_constraints_by_sequence(
         self, job_sequence: list[str]
     ) -> None:
+        # Create job sequence (inverse of job index) variables: pi_inv_j = k where pi_k = j
         self.var_pi_inverse = {
             j: self.new_int_var(self.j_first, self.j_last, f"pi_inv_{j}")
             for j in self.j_list
         }
 
+        # Job sequence variable is the inverse of position variable
+        self.add_inverse(
+            [self.var_pi[k] for k in self.j_list],
+            [self.var_pi_inverse[j] for j in self.j_list],
+        )
+        # All-different constraint on sequence variables
+        self.add_all_different([self.var_pi_inverse[j] for j in self.j_list])
+        # Precedence constraints according to the given job sequence
         for j1_name, j2_name in zip(job_sequence[:-1], job_sequence[1:]):
             j1 = self.job_name_2_j_map[j1_name]
             j2 = self.job_name_2_j_map[j2_name]
@@ -537,7 +546,10 @@ class PositionModel(CustomCpModel):
             candid2 = P_max * (n + i)
             new_model.stage_end_time_ub[i] = min(candid1, candid2)
 
-        new_model.D = {j: self.D[j] for j in new_model.j_list}
+        new_model.D = {
+            j: self.D[self.job_name_2_j_map[j_name]]
+            for j, j_name in new_model.j_2_job_name_map.items()
+        }
         new_model.define_variables()
         new_model.define_constraints()
         new_model.define_total_tardiness_objective()
