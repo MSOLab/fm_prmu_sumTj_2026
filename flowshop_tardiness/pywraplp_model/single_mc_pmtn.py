@@ -70,12 +70,8 @@ class SingleMachinePreemptionModel:
         self.r = instance.get_job_2_p_sum_except_last_stage()
         self.d = instance.job_2_duedate_map
 
-        # for j in self.calJ:
-        #     logging.info(f"  Job {j}: p={self.p[j]}, r={self.r[j]}, d={self.d[j]}")
-
         # t = 1..(\max_{j\in calJ}{d_j} + \sum_{j\in calJ}{p_j})
         self.t_max = max(self.d.values()) + sum(self.p.values())
-        # logging.info(f"  t_max: {self.t_max}")
         self.calT = list(range(1, self.t_max + 1))
 
         # c_jt = 0 if t <= d_j, else \ceil{(t - d_j)/p_j}
@@ -86,10 +82,6 @@ class SingleMachinePreemptionModel:
             }
             for j in self.calJ
         }
-        # for j in self.calJ:
-        #     for t in self.calT:
-        #         if self.c[j][t] > 0:
-        #             logging.info(f"c_({j},{t})={self.c[j][t]}")
 
     def define_variables(self) -> None:
         self.x = {
@@ -123,9 +115,6 @@ class SingleMachinePreemptionModel:
                 )
 
     def define_objective(self) -> None:
-        # max_tardiness_sum = 0
-        # for j in self.calJ:
-        #     max_tardiness_sum += self.t_max - self.d[j]
         self.objective = self.Objective()
         for j in self.calJ:
             for t in self.calT:
@@ -143,8 +132,6 @@ class SingleMachinePreemptionModel:
             completion_time = 0
             for t in self.calT:
                 x_val = self.x[j][t].solution_value()
-                # if x_val > 1e-4:
-                #     logging.info(f"x_({j},{t})={x_val}")
                 if x_val > 0.5:
                     completion_time = t
             job_2_completion_time_map[j] = completion_time
