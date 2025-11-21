@@ -9,11 +9,10 @@ from ortools.sat.python.cp_model import IntVar
 from routix import ElapsedTimer
 from routix.util.comparison import float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
+from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedule
 
-from .scheduling.flowshop_schedule import FlowshopOperation, FlowshopSchedule
 
-
-class CpCpsatCircuit(CpModelWithFixedInterval):
+class CircuitModel(CpModelWithFixedInterval):
     """
     Implementation of the CP model for the flowshop problem to minimize total tardiness
     using circuit constraints.
@@ -68,7 +67,7 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     @classmethod
     def from_instance(
         cls, instance: FlowshopDuedateParameters, horizon: int
-    ) -> CpCpsatCircuit:
+    ) -> CircuitModel:
         result = cls(horizon)
         result.name = f"{cls.__name__}_{instance.name}"
         result.define_model(instance)
@@ -149,7 +148,10 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         for j in j_list:
             ub = max(self.horizon - self.D[j], 0)
             self.var_Tj[j] = self.new_int_var(0, ub, f"T_{j}")
-            self.add(self.var_Tj[j] >= self.var_op_end[j, last_i] - self.D[j])
+            self.add(
+                self.var_Tj[j]
+                >= self.var_op_start[j, last_i] + self.p[j, last_i] - self.D[j]
+            )
             total_ub += ub
 
         self.obj_var = self.new_int_var(0, total_ub, "sum_Tj")
@@ -172,7 +174,8 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
             ub = max(self.horizon - self.D[j], 0)
             self.var_Tj[j] = self.new_int_var(0, ub, f"T_{j}")
             self.add_max_equality(
-                self.var_Tj[j], [self.var_op_end[j, last_i] - self.D[j], 0]
+                self.var_Tj[j],
+                [self.var_op_start[j, last_i] + self.p[j, last_i] - self.D[j], 0],
             )
             total_ub += ub
 
@@ -271,7 +274,13 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         consecutive_stage_pairs = list(zip(i_list[:-1], i_list[1:]))
         for j in j_list:
             for i, next_i in consecutive_stage_pairs:
-                self.add(self.var_op_end[j, i] <= self.var_op_start[j, next_i])
+                # self.add(self.var_op_start[j, i] + self.p[j, i] <= self.var_op_start[j, next_i])
+                #  p[j, i] <= start[j, next_i] - start[j, i] <= horizon - p[j, next_i]
+                self.add_linear_constraint_fast(
+                    var_list=[self.var_op_start[j, next_i], self.var_op_start[j, i]],
+                    coeff_list=[1, -1],
+                    domain=(self.p[j, i], self.horizon - self.p[j, next_i]),
+                )
 
         logging.info(f"  Precedence constraints took {timer.elapsed_sec:.3f} sec.")
         timer.set_start_time_as_now()
@@ -339,16 +348,16 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         # Link circuit arcs with start/end times
         # If arc (j, j') is selected, then end_j <= start_j' \forall j\in J, j'\in J, j \neq j'
         # Dummy arcs are not time-linked intentionally
-        domain = (-self.horizon, 0)
         for j1, j2 in permutations(j_list, 2):
             for i in i_list:
                 # self.add(
-                #     self.var_op_end[j1, i] <= self.var_op_start[j2, i]
+                #     self.var_op_start[j1, i] + self.p[j1, i] <= self.var_op_start[j2, i]
                 # ).only_enforce_if(self.prec_ind[j1, j2])
+                #  p[j1, i] <= start[j2, i] - start[j1, i] <= horizon - p[j1, i]
                 self.add_linear_constraint_enforced_fast(
-                    var_list=[self.var_op_end[j1, i], self.var_op_start[j2, i]],
+                    var_list=[self.var_op_start[j2, i], self.var_op_start[j1, i]],
                     coeff_list=[1, -1],
-                    domain=domain,
+                    domain=(self.p[j1, i], self.horizon - self.p[j2, i]),
                     enforcers=[self.prec_ind[j1, j2]],
                 )
 
@@ -373,7 +382,7 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
         for j in self.j_list:
             for i in self.i_list:
                 start = self.solver.value(self.var_op_start[j, i])
-                end = self.solver.value(self.var_op_end[j, i])
+                end = self.solver.value(self.var_op_start[j, i] + self.p[j, i])
                 start_time_map[j, i] = start
                 end_time_map[j, i] = end
 
@@ -390,7 +399,7 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
             Tj_map[j] = self.solver.value(var)
         return Tj_map
 
-    def create_schedule(self) -> FlowshopSchedule:
+    def create_schedule_by_start_end_time(self) -> FlowshopSchedule:
         start_time_map, end_time_map = self.extract_start_end_time_map()
         schedule = FlowshopSchedule.from_stage_name_list(self.i_list)
 
@@ -407,9 +416,8 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
     # methods to add hints
 
     def add_hints_from_schedule(self, schedule: FlowshopSchedule) -> None:
-        self.add_tardiness_hints_from_Tj_map(schedule.get_tardiness_map(self.D))
+        self.add_tardiness_hints_from_Tj_map(schedule.get_job_2_tardiness_map(self.D))
         self.add_start_hints_from_start_time_map(schedule.get_start_time_map())
-        self.add_end_hints_from_end_time_map(schedule.get_end_time_map())
         self.add_sequence_hints(schedule.get_last_stage_job_list())
 
     def add_sequence_hints(self, job_sequence: list[str]) -> None:
@@ -456,14 +464,6 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
                 raise KeyError(f"Invalid job-stage pair: ({j}, {i})")
             self.add_hint(self.var_op_start[j, i], s_time)
 
-    def add_end_hints_from_end_time_map(
-        self, end_time_map: dict[tuple[str, str], int]
-    ) -> None:
-        for (j, i), e_time in end_time_map.items():
-            if (j, i) not in self.var_op_end:
-                raise KeyError(f"Invalid job-stage pair: ({j}, {i})")
-            self.add_hint(self.var_op_end[j, i], e_time)
-
     def add_tardiness_hints_from_Tj_map(self, Tj_map: dict[str, int]) -> None:
         sum_Tj = 0
         for j in self.j_list:
@@ -485,7 +485,7 @@ class CpCpsatCircuit(CpModelWithFixedInterval):
 
     # Subproblem generation
 
-    def create_problem_of_job_subset(self, job_subset: set[str]) -> CpCpsatCircuit:
+    def create_problem_of_job_subset(self, job_subset: set[str]) -> CircuitModel:
         if not job_subset.issubset(set(self.j_list)):
             raise ValueError("job_subset must be a subset of the original job list.")
         new_model = self.__class__(self.horizon)

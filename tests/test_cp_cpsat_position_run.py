@@ -10,18 +10,18 @@ from schore.parameters_examples.shop.flow.flowshop_duedate import (
 )
 from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedule
 
-from flowshop_tardiness.cp_cpsat_circuit import CpCpsatCircuit
+from flowshop_tardiness.cp_cpsat_position import CpCpsatPosition
 from flowshop_tardiness.painter.gantt import GanttPlotter
 
 
-def test_cp_cpsat_circuit_runs_and_builds_schedule():
+def test_cp_cpsat_position_runs_and_builds_schedule():
     # Ensure repository root is on sys.path so imports using package layout work
     repo_root = Path(__file__).resolve().parents[1]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
     # Load VRM instance from resources/vrm/0.txt
-    vrm_path = repo_root / "resources" / "vrm" / "0.txt"
+    vrm_path = repo_root / "resources" / "vrm" / "1.txt"
     assert vrm_path.exists(), f"VRM file not found: {vrm_path}"
 
     with vrm_path.open("r") as f:
@@ -29,7 +29,7 @@ def test_cp_cpsat_circuit_runs_and_builds_schedule():
 
     # Build CP model with a large horizon
     horizon = 100000
-    model = CpCpsatCircuit.from_instance(instance, horizon)
+    model = CpCpsatPosition.from_instance(instance, horizon)
 
     # Solve the model
     timelimit = 60  # seconds

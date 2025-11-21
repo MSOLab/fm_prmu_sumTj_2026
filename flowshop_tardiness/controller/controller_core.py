@@ -2,24 +2,22 @@ import datetime
 import logging
 import math
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from mbls.cpsat import CpsatSolverReport, CpSubroutineController
 from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
 from routix.util.comparison import float_a_leq_b, float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
+from schore.schedule_examples.shop.flow import FlowshopSchedule
 
-from ..cp_cpsat_indirect_prec import CpCpsatIndirectPrec
+from ..cpsat_model.position import PositionModel
 from ..painter.gantt import GanttPlotter
 from ..report import FsCpsatSolverReport
-from ..scheduling.flowshop_schedule import FlowshopSchedule
 from ..solution_manager import FsSolutionManager
 
 
 class FlowshopTardinessControllerCore(
-    CpSubroutineController[
-        FlowshopDuedateParameters, CpCpsatIndirectPrec, StoppingCriteria
-    ]
+    CpSubroutineController[FlowshopDuedateParameters, PositionModel, StoppingCriteria]
 ):
     # Start controller states
 
@@ -48,7 +46,7 @@ class FlowshopTardinessControllerCore(
         super().__init__(
             instance,
             shared_param_dict,
-            CpCpsatIndirectPrec,
+            PositionModel,
             subroutine_flow,
             stopping_criteria,
         )
@@ -61,13 +59,21 @@ class FlowshopTardinessControllerCore(
         }
         assert "" not in self.method_names_to_run_before_resume
         self.log_solver_level = logging.INFO  # TODO: make it configurable
-        self.log_search_progress = True  # TODO: make it configurable
+        self.log_search_progress = False  # TODO: make it configurable
 
         # Frequently used parameters
-        self.job_2_stage_2_p_dict = self.instance.p_manager.job_2_stage_2_value_map(
-            self.instance.job_id_list, self.instance.stage_id_list
-        )
+        self.job_cnt = len(self.instance.job_id_list)
+        self.stage_ids = tuple(self.instance._stage_id_list)
+        self.stage_cnt = len(self.stage_ids)
+        self.last_stage_id = self.stage_ids[-1]
+        self.job_2_stage_2_p_dict = self.instance.get_job_2_stage_2_builtin_int_p_map()
         """Job name -> stage name -> processing time map"""
+
+        self.stage_2_job_2_p_dict = self.instance.get_stage_2_job_2_builtin_int_p_map()
+        """Stage name -> job name -> processing time map"""
+
+        self.stage_job_2_p_dict = self.instance.get_stage_job_2_builtin_int_p_map()
+        """(Stage name, Job name) -> processing time map"""
 
         logging.info(
             f"Controller initialized; took {self.timer.elapsed_sec:.3f} sec. "
@@ -77,7 +83,7 @@ class FlowshopTardinessControllerCore(
 
     # Start abstract getters
 
-    def create_base_cp_model(self, **kwargs) -> CpCpsatIndirectPrec:
+    def create_base_cp_model(self, **kwargs) -> PositionModel:
         return self.cp_model_class.from_instance(self.instance, self.get_horizon())
 
     # End abstract getters
@@ -383,6 +389,17 @@ class FlowshopTardinessControllerCore(
 
     # End post-run process
 
+    def get_job_processing_time_sum(self, i: str, j_list: Sequence[str]) -> int:
+        """Get the sum of processing times for a list of jobs at a specific stage.
+
+        Args:
+            i (str): The stage ID.
+            j_list (Sequence[str]): A sequence of job IDs.
+        Returns:
+            int: The sum of processing times for the specified jobs at the given stage.
+        """
+        return sum(self.stage_2_job_2_p_dict[i][j] for j in j_list)
+
     # Start solver call methods
 
     def solve_current_cp_remaining_time_limit(
@@ -458,7 +475,7 @@ class FlowshopTardinessControllerCore(
         else:
             solution: FlowshopSchedule | None = None
             if fs_solver_report.is_feasible:
-                solution = self.cp_model.create_schedule()
+                solution = self.cp_model.create_schedule_from_sequence()
                 if error_if_infeasible:
                     self.check_feasibility(solution)
                 obj_value_by_solution = self.get_obj_value(solution)
@@ -538,3 +555,74 @@ class FlowshopTardinessControllerCore(
         )
 
     # End solver call methods
+
+    # Helper method for LNS-CP
+
+    def fix_profile_solve_reset(
+        self,
+        profile_fixing_method: Callable,
+        computational_time: float,
+        solver_thread_cnt: int,
+        no_improvement_timelimit: float | None = None,
+        obj_value_is_valid: bool = False,
+        obj_bound_is_valid: bool = False,
+        error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
+    ):
+        """Apply the profile-fixing method, solve, and reset the model.
+
+        Args:
+            profile_fixing_method (Callable): A callable that fixes a profile of the CP model
+                by adding constraints to the current CP model.
+            computational_time (float): The maximum computational time in seconds.
+            solver_thread_cnt (int): The number of parallel workers (i.e. threads) to use during search.
+            no_improvement_timelimit (float | None, optional): If there is no improvement in this
+                amount of time, the search will be stopped. If None, no timeout is set.
+                Defaults to None.
+            obj_value_is_valid (bool, optional): If True, adds the objective value log.
+                Defaults to False.
+            obj_bound_is_valid (bool, optional): If True, adds the objective bound log.
+                Defaults to False.
+            error_if_infeasible (bool, optional): If True, checks the feasibility of the solution.
+                Defaults to False.
+            draw_gantt (bool, optional): If True, draws the Gantt chart of the solution.
+                Defaults to False.
+        """
+        profile_fixing_method()
+        self.solve_with_initial_solution(
+            computational_time,
+            solver_thread_cnt,
+            no_improvement_timelimit=no_improvement_timelimit,
+            obj_value_is_valid=obj_value_is_valid,
+            obj_bound_is_valid=obj_bound_is_valid,
+            error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
+        )
+        self.cp_model.delete_added_constraints()
+
+    def _fix_job_profile_except_selected(
+        self,
+        rescheduled_jobs: set[str],
+    ) -> None:
+        """
+        Helper to add the CP model constraints that enforce precedences
+        for the profile-fixed jobs.
+
+        Args:
+            rescheduled_jobs (set[str]]): set of jobs excluded from profile-fixing
+                (i.e., they will be re-optimized).
+
+        Raises:
+            ValueError: If there is no incumbent solution.
+        """
+        incumbent_solution = self.solution_manager.get_incumbent()
+        if incumbent_solution is None:
+            raise ValueError("No incumbent solution for partial profile-fixing.")
+        current_job_seq = incumbent_solution.get_last_stage_job_list()
+        profile_fixed_job_seq = [
+            j for j in current_job_seq if j not in rescheduled_jobs
+        ]
+
+        self.cp_model.add_indirect_precedence_constraints_by_sequence(
+            profile_fixed_job_seq
+        )

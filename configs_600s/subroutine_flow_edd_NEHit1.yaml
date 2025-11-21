@@ -1,0 +1,4 @@
+- method: set_random_seed
+  seed: 42
+- method: initialize_by_edd
+- method: initialize_by_neh_it1

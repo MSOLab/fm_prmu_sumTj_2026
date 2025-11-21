@@ -1,20 +1,21 @@
 import logging
 import math
+import random
 from typing import Callable
 
-from mbls.cpsat import ObjValueBoundStore
+from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
 from routix import ElapsedTimer
+from routix.util.comparison import float_a_leq_b, float_a_stl_b
+from schore.schedule_examples.shop.flow import FlowshopSchedule
 
 from ..report import FsSubroutineReport
-from ..scheduling.flowshop_schedule import FlowshopSchedule
 from .controller_core import FlowshopTardinessControllerCore
+from .schedule_metric import ScheduleMetric
 
 REL_TOL = 1e-9  # for safe float comparisons
 
 
 class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
-    # Subroutine: methods to run before resuming from a paused state.
-
     cp_model_presolve: bool | None = False  # TODO: make it configurable
     """Whether to presolve the CP model before solving."""
 
@@ -23,6 +24,22 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     def set_cp_model_as_base_cp_model(self) -> None:
         return super().set_cp_model_as_base_cp_model()
+
+    def set_0_as_lb(self) -> None:
+        """
+        Set zero as a valid lower bound for the objective (total tardiness).
+        """
+        log_time = self.timer.elapsed_sec
+        report = FsSubroutineReport(
+            elapsed_time=0.0, obj_value=None, obj_bound=0.0, is_init=True
+        )
+        self.solution_manager.register(report, None)
+
+        self.add_obj_bound_log(log_time, 0, is_maximize=False)
+        _last_timestamp_note = self._get_call_context_of_current_method()
+        self.obj_store.add_last_timestamp_note(
+            _last_timestamp_note, obj_value_is_valid=True
+        )
 
     # Subroutine: solve base CP model
 
@@ -53,7 +70,27 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             raise RuntimeError(
                 "Base CP model is not set. Call set_cp_model_as_base_cp_model() first."
             )
+        # from google.protobuf.json_format import MessageToDict
+        # from routix.io import object_to_yaml
 
+        # model_file_suffix = f"_model_{self.instance.name}"
+        # model_file_path = self.get_file_path_for_subroutine(model_file_suffix + ".yaml")
+
+        # # Export JSON representation as yaml
+        # proto_dict = MessageToDict(
+        #     self.cp_model.Proto(), preserving_proto_field_name=True
+        # )
+        # object_to_yaml(proto_dict, model_file_path)
+
+        # # Export in LP format
+        # self.cp_model.export_to_file(
+        #     self.get_file_path_for_subroutine(model_file_suffix + ".lp").as_posix()
+        # )
+
+        # # Export in MPS format
+        # self.cp_model.export_to_file(
+        #     self.get_file_path_for_subroutine(model_file_suffix + ".mps").as_posix()
+        # )
         if is_initial_solution:
             self.solve_current_cp_remaining_time_limit(
                 computational_time,
@@ -81,11 +118,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     def get_dispatched_schedule(self, job_sequence: list[str]) -> FlowshopSchedule:
         # Create an empty schedule
-        schedule = FlowshopSchedule.from_stage_name_list(self.instance.stage_id_list)
+        schedule = FlowshopSchedule.from_stage_name_list(self.stage_ids)
         # Dispatch
         for j in job_sequence:
             added = schedule.dispatch_job_by_stages(
-                j, self.instance.stage_id_list, self.job_2_stage_2_p_dict[j]
+                j, self.stage_ids, self.job_2_stage_2_p_dict[j], after_last=True
             )
             if added is None:
                 raise ValueError(f"Failed to add job {j} to the schedule.")
@@ -166,13 +203,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         Returns:
             list[str]: ordered job ids
         """
-        stage_list = self.instance.stage_id_list
         dmap = self.instance.job_2_duedate_map
         pmap = self.job_2_stage_2_p_dict
 
         def total_p(j: str) -> float:
             # Sum processing times across all stages for job j
-            return sum(pmap[j].get(s, 0.0) for s in stage_list)
+            return sum(pmap[j].get(s, 0.0) for s in self.stage_ids)
 
         def key_fn(j: str):
             tp = total_p(j)
@@ -195,7 +231,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     ) -> None:
         sub_timer = ElapsedTimer()
 
-        i_list = self.instance.stage_id_list
+        i_list = self.stage_ids
         dmap = self.instance.job_2_duedate_map
         pmap = self.job_2_stage_2_p_dict
 
@@ -217,7 +253,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             prev = 0
             for i in i_list:
                 p = pmap[job_id][i]
-                start_time = max(f[i], prev)
+                start_time = f[i]
+                if prev > start_time:
+                    start_time = prev
                 end_time = start_time + p
                 f[i] = end_time
                 prev = end_time
@@ -254,7 +292,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
             # append the selected job and commit its frontier
             remaining.remove(best_job)
-            schedule.dispatch_job_by_stages(best_job, i_list, pmap[best_job])
+            schedule.dispatch_job_by_stages(
+                best_job, i_list, pmap[best_job], after_last=True
+            )
             frontier = best_f
 
         if error_if_infeasible:
@@ -293,7 +333,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         )
 
     def mdd_min_value(self, job_id: str, completion_time: int) -> int:
-        return max(self.instance.job_2_duedate_map[job_id], completion_time)
+        return_val = self.instance.job_2_duedate_map[job_id]
+        if completion_time > return_val:
+            return completion_time
+        return return_val
 
     def initialize_by_slack(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
@@ -320,8 +363,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     def srmwk_min_value(self, job_id: str, completion_time: int) -> float:
         p_total = sum(
-            self.job_2_stage_2_p_dict[job_id].get(s, 0.0)
-            for s in self.instance.stage_id_list
+            self.job_2_stage_2_p_dict[job_id].get(s, 0.0) for s in self.stage_ids
         )
         if p_total <= 0.0:
             return float("inf")  # Handle zero processing time jobs
@@ -329,112 +371,297 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             float(self.instance.job_2_duedate_map[job_id] - completion_time) / p_total
         )
 
-    def initialize_by_nehedd(
-        self, error_if_infeasible: bool = False, draw_gantt: bool = False
+    # Subroutine: insertion heuristics
+
+    def _simulate_append(
+        self, stage_2_endtime_map: dict[str, int], job_id: str
+    ) -> dict[str, int]:
+        """Simulate appending a job to the schedule.
+
+        Args:
+            stage_2_endtime_map (dict[str, int]): Current completion times at each stage.
+                Missing stages are assumed to have 0 completion time.
+            job_id (str): Job ID to append.
+
+        Returns:
+            dict[str, int]: Updated completion times after appending the job.
+        """
+        pmap = self.job_2_stage_2_p_dict[job_id]
+        return_dict: dict[str, int] = {}
+        prev = 0
+        for i in self.stage_ids:
+            start = stage_2_endtime_map[i]
+            if prev > start:
+                start = prev
+            end = start + pmap[i]
+            return_dict[i] = end
+            prev = end
+        return return_dict
+
+    def _compute_prefix_frontiers_and_sumTj(
+        self, job_seq: list[str]
+    ) -> tuple[dict[int, dict[str, int]], dict[int, int]]:
+        """Compute prefix frontiers and cumulative total tardiness for a job sequence.
+
+        For each prefix length k (0 .. len(job_seq)):
+          - prefix_frontiers[k]: dict[stage_id -> completion_time] after scheduling
+            the first k jobs of job_seq in the given order (flow shop permutation).
+          - prefix_sumTj[k]: cumulative total tardiness sum_{j in first k jobs} T_j,
+            where T_j = max(C_j_last - due_date_j, 0) and C_j_last is the job's
+            completion time on the last stage.
+
+        Returned dictionaries always contain key 0:
+          prefix_frontiers[0] = {stage_id: 0 for all stages}
+          prefix_sumTj[0] = 0
+
+        This function is used to enable fast reuse of head (prefix) information
+        during insertion evaluations: head tardiness can be looked up directly
+        instead of recomputed.
+
+        Args:
+            job_seq (list[str]): Ordered list of job ids to evaluate.
+
+        Returns:
+            tuple[dict[int, dict[str, int]], dict[int, int]]: A tuple containing:
+            - prefix_frontiers: mapping position -> stage ID -> completion times.
+            - prefix_sumTj: mapping position -> cumulative total tardiness.
+
+        Notes:
+            - Tardiness never negative (clamped at 0).
+            - Uses _simulate_append for each incremental extension.
+            - If job_seq is empty, returns ({0: {stage:0}}, {0:0}).
+            - Assumes every job has defined processing time on every stage.
+        """
+        dmap = self.instance.job_2_duedate_map
+        pos_2_stage_2_endtime_map = {0: {i: 0 for i in self.stage_ids}}
+
+        prefix_sumTj: dict[int, int] = {0: 0}
+        for j_idx, j in enumerate(job_seq):
+            f_prev = pos_2_stage_2_endtime_map[j_idx]
+            f_new = self._simulate_append(f_prev, j)
+            C_last = f_new[self.last_stage_id]
+            Tj = C_last - dmap[j]
+            if Tj < 0:
+                Tj = 0
+            pos_2_stage_2_endtime_map[j_idx + 1] = f_new
+            prefix_sumTj[j_idx + 1] = prefix_sumTj.get(j_idx, 0) + Tj
+        return pos_2_stage_2_endtime_map, prefix_sumTj
+
+    def _compute_schedule_metric_from_sequence(
+        self, job_seq: list[str]
+    ) -> ScheduleMetric:
+        """Compute total tardiness and makespan from a job sequence.
+
+        Args:
+            job_seq (list[str]): Ordered list of job ids to evaluate.
+
+        Returns:
+            ScheduleMetric: computed schedule metrics.
+        """
+        prefix_frontiers, prefix_sumTj = self._compute_prefix_frontiers_and_sumTj(
+            job_seq
+        )
+        n = len(job_seq)
+        return ScheduleMetric(
+            prefix_sumTj[n],
+            [prefix_frontiers[n][i] for i in self.stage_ids],
+            {
+                (i, j): self.stage_job_2_p_dict[i, j]
+                for j in job_seq
+                for i in self.stage_ids
+            },
+        )
+
+    @staticmethod
+    def _tie_crit_from_tm(
+        metric: ScheduleMetric, tie_breaker: str, makespan_multiplier: float = 1.0
+    ) -> tuple[float, float]:
+        """Calculate tie breaking criteria from tie breaker name.
+
+        Args:
+            metric (ScheduleMetric): schedule metrics
+            tie_breaker (str): tie breaker name
+            makespan_multiplier (float, optional): multiplier for Cmax in some tie breakers.
+                Defaults to 1.0.
+
+        Raises:
+            ValueError: if tie_breaker is unknown
+
+        Returns:
+            tuple[float, float]: (crit1, crit2) for comparison
+        """
+        if tie_breaker == "default":
+            return (metric.sumTj, 0)
+        if tie_breaker == "NEH-T":
+            return (metric.sumTj, metric.makespan)
+        if tie_breaker == "NEH-M":
+            return (metric.sumTj + metric.makespan * makespan_multiplier, 0)
+        if tie_breaker == "NEH-IT1":
+            return (metric.sumTj, metric.get_total_idle_time())
+        raise ValueError(f"Unknown tie_breaker: {tie_breaker}")
+
+    def _eval_insert_with_criteria(
+        self,
+        seq_now: list[str],
+        job_id: str,
+        tie_breaker: str = "default",
+        first_improvement: bool = False,
+        baseline_metric: ScheduleMetric | None = None,
+        makespan_multiplier: float = 1.0,
+    ) -> tuple[int, ScheduleMetric]:
+        """Evaluate insertion of job_id into seq_now.
+
+        Args:
+            seq_now (list[str]): Current job sequence.
+            job_id (str): Job ID to insert.
+            tie_breaker (str, optional): Tie breaking strategy.
+                Defaults to "default".
+            first_improvement (bool, optional): If True, stop at first improvement.
+                Defaults to False.
+            baseline_metric (ScheduleMetrics | None, optional): Baseline metrics for comparison.
+                Required if first_improvement is True. Defaults to None.
+            makespan_multiplier (float, optional): Multiplier for makespan in some tie breakers.
+                Defaults to 1.0.
+
+        Returns:
+            tuple[int, ScheduleMetrics]: (best position, best schedule metrics).
+        """
+        dmap = self.instance.job_2_duedate_map
+
+        if not seq_now:
+            # only one position
+            f0 = {i: 0 for i in self.stage_ids}
+            new_f = self._simulate_append(f0, job_id)
+            Cmax = new_f[self.last_stage_id]
+            sumTj = Cmax - dmap[job_id]
+            if sumTj < 0:
+                sumTj = 0
+            return 0, ScheduleMetric(
+                sumTj,
+                [new_f[i] for i in self.stage_ids],
+                {
+                    (i, job_id): self.stage_job_2_p_dict[i, job_id]
+                    for i in self.stage_ids
+                },
+            )
+
+        prefix_frontiers, prefix_tardy = self._compute_prefix_frontiers_and_sumTj(
+            seq_now
+        )
+        best_pos = 0
+        best_metric: ScheduleMetric | None = None
+        best_crit1: float | None = None
+        best_crit2: float | None = None
+
+        baseline_crit1: float | None
+        baseline_crit2: float | None
+        if first_improvement:
+            if baseline_metric is not None:
+                baseline_crit1, baseline_crit2 = self._tie_crit_from_tm(
+                    baseline_metric,
+                    tie_breaker,
+                    makespan_multiplier=makespan_multiplier,
+                )
+            else:
+                raise ValueError(
+                    "baseline_crit must be provided when first_improvement is True."
+                )
+        else:
+            baseline_crit1, baseline_crit2 = None, None
+
+        # try all positions pos \in [0..len]
+        for pos in range(len(seq_now) + 1):
+            # head part tardiness is reused
+            head_tardy = prefix_tardy[pos]
+            frontier = prefix_frontiers[pos]
+
+            # insert the new job
+            new_frontier = self._simulate_append(frontier, job_id)
+            C_new = new_frontier[self.last_stage_id]
+            new_sumTj = head_tardy + max(C_new - dmap[job_id], 0)
+
+            # simulate tail jobs (pos..end) on this new frontier
+            for k in range(pos, len(seq_now)):
+                j_tail = seq_now[k]
+                new_frontier = self._simulate_append(new_frontier, j_tail)
+                C_tail = new_frontier[self.last_stage_id]
+                new_sumTj += max(C_tail - dmap[j_tail], 0)
+
+            new_Cmax_list = [new_frontier[i] for i in self.stage_ids]
+            new_metric = ScheduleMetric(
+                new_sumTj,
+                new_Cmax_list,
+                {
+                    (i, j): self.stage_job_2_p_dict[i, j]
+                    for j in seq_now + [job_id]
+                    for i in self.stage_ids
+                },
+            )
+            crit1, crit2 = self._tie_crit_from_tm(
+                new_metric, tie_breaker, makespan_multiplier=makespan_multiplier
+            )
+            # logging.info(f"Position {pos}: {crit1}, {crit2}")
+
+            # Early exit for first-improvement policy
+            if (
+                first_improvement
+                and baseline_crit1 is not None
+                and baseline_crit2 is not None
+            ):
+                if (crit1 < baseline_crit1) or (
+                    crit1 == baseline_crit1 and crit2 < baseline_crit2
+                ):
+                    return pos, new_metric
+
+            # choose best
+            if (best_crit1 is None) or (crit1 < best_crit1):
+                best_pos, best_metric = pos, new_metric
+                best_crit1, best_crit2 = crit1, crit2
+            elif (crit1 == best_crit1) and (best_crit2 is None or crit2 < best_crit2):
+                best_pos, best_metric = pos, new_metric
+                best_crit1, best_crit2 = crit1, crit2
+                # if still tied, earlier position is preferred (stable)
+
+        if best_metric is None:
+            raise RuntimeError("Unexpected: best_metric is None after evaluation.")
+        return best_pos, best_metric
+
+    def _run_neh_edd(
+        self,
+        method_name: str,
+        tie_breaker: str,
+        first_improvement: bool = False,
+        error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
     ) -> None:
         """
-        NEH with EDD ordering (sum of tardiness objective), array-based fast evaluation.
+        Generic NEH with EDD ordering (sum of tardiness objective), array-based fast evaluation.
         - No schedule/deepcopy during insertion trials (only once at the end).
         Complexity: O(n^2 * m) with small constants via prefix reuse.
         """
         sub_timer = ElapsedTimer()
-
-        i_list = list(self.instance.stage_id_list)
-        dmap = self.instance.job_2_duedate_map
-        pmap = self.job_2_stage_2_p_dict
+        job_cnt = self.instance.job_count
 
         # 1) EDD order
-        edd_order = self.get_edd_sequence()
+        incumbent_sol = self.solution_manager.get_incumbent()
+        if incumbent_sol is None:
+            job_sequence = self.get_edd_sequence()
+        else:
+            job_sequence = incumbent_sol.get_last_stage_job_list()
 
         seq: list[str] = []
 
-        # ---- helpers ----
-
-        def _simulate_append(frontier: list[int], job_id: str) -> tuple[list[int], int]:
-            """Simulate appending job_id onto given machine frontier; return (new_frontier, C_last)."""
-            f = frontier[:]  # copy
-            prev = 0
-            for i_idx, i in enumerate(i_list):
-                p = pmap[job_id][i]
-                start = f[i_idx] if i_idx < len(f) else 0  # safety
-                start = max(start, prev)
-                end = start + p
-                if i_idx < len(f):
-                    f[i_idx] = end
-                else:
-                    f.append(end)
-                prev = end
-            return f, f[-1]
-
-        def _compute_prefix_frontiers_and_tardy(
-            seq_now: list[str],
-        ) -> tuple[list[list[int]], list[int]]:
-            """
-            For current seq_now, build:
-            - prefix_frontiers[k]: frontier after first k jobs (k=0..len)
-            - prefix_tardy[k]: sum of tardiness of first k jobs
-            """
-            m = len(i_list)
-            prefix_frontiers: list[list[int]] = [[0] * m]
-            prefix_tardy: list[int] = [0]
-            for j in seq_now:
-                f_prev = prefix_frontiers[-1]
-                f_new, C_last = _simulate_append(f_prev, j)
-                Tj = max(C_last - dmap[j], 0)
-                prefix_frontiers.append(f_new)
-                prefix_tardy.append(prefix_tardy[-1] + Tj)
-            return prefix_frontiers, prefix_tardy
-
-        def _eval_insert_total_tardy(
-            seq_now: list[str], job_id: str
-        ) -> tuple[int, int]:
-            """
-            Evaluate all insertion positions of job_id into seq_now.
-            Returns (best_pos, best_total_tardy).
-            Uses prefix reuse: head tardiness reused; tail recomputed from the chosen frontier.
-            """
-            if not seq_now:
-                # only one position
-                f0 = [0] * len(i_list)
-                _, Cj = _simulate_append(f0, job_id)
-                total = max(Cj - dmap[job_id], 0)
-                return 0, total
-
-            prefix_frontiers, prefix_tardy = _compute_prefix_frontiers_and_tardy(
-                seq_now
-            )
-            best_pos = 0
-            best_val: int | None = None
-
-            # try all positions pos \in [0..len]
-            for pos in range(len(seq_now) + 1):
-                # head part tardiness is reused
-                head_tardy = prefix_tardy[pos]
-                frontier = prefix_frontiers[pos][:]  # start frontier at pos
-                total_tardy = head_tardy
-
-                # insert the new job
-                frontier, C_new = _simulate_append(frontier, job_id)
-                total_tardy += max(C_new - dmap[job_id], 0)
-
-                # simulate tail jobs (pos..end) on this new frontier
-                for k in range(pos, len(seq_now)):
-                    j_tail = seq_now[k]
-                    frontier, C_tail = _simulate_append(frontier, j_tail)
-                    total_tardy += max(C_tail - dmap[j_tail], 0)
-
-                # choose best; tie-breaker: earlier position (stable)
-                if best_val is None or total_tardy < best_val:
-                    best_val = total_tardy
-                    best_pos = pos
-
-            if best_val is None:
-                raise RuntimeError("Unexpected: best_val is None after evaluation.")
-            return best_pos, best_val
-
         # 2) NEH insertion by EDD order with fast evaluation
-        for j in edd_order:
-            pos, _ = _eval_insert_total_tardy(seq, j)
+        for j in job_sequence:
+            j_idx = job_sequence.index(j)
+            makespan_multiplier = (job_cnt - 1 - j_idx) / (job_cnt - 1)
+            pos, _ = self._eval_insert_with_criteria(
+                seq,
+                j,
+                tie_breaker,
+                first_improvement=first_improvement,
+                makespan_multiplier=makespan_multiplier,
+            )
             seq.insert(pos, j)
 
         # 3) Build schedule once and register/log
@@ -443,7 +670,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             self.check_feasibility(schedule)
 
         obj_value = self.get_obj_value(schedule)
-        logging.info(f"Initialized by NEHEDD with total tardiness {obj_value}")
+        logging.info(f"Initialized by {method_name} with total tardiness {obj_value}")
 
         report = FsSubroutineReport(
             elapsed_time=sub_timer.elapsed_sec,
@@ -462,6 +689,193 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         if was_updated and draw_gantt:
             self.draw_incumbent_gantt()
+
+    def initialize_by_nehedd(
+        self, error_if_infeasible: bool = False, draw_gantt: bool = False
+    ) -> None:
+        self._run_neh_edd("NEHedd", "default", error_if_infeasible, draw_gantt)
+
+    def initialize_by_neht(
+        self, error_if_infeasible: bool = False, draw_gantt: bool = False
+    ) -> None:
+        self._run_neh_edd("NEH-T", "NEH-T", error_if_infeasible, draw_gantt)
+
+    def initialize_by_nehm(
+        self, error_if_infeasible: bool = False, draw_gantt: bool = False
+    ) -> None:
+        self._run_neh_edd("NEH-M", "NEH-M", error_if_infeasible, draw_gantt)
+
+    def initialize_by_neh_it1(
+        self, error_if_infeasible: bool = False, draw_gantt: bool = False
+    ) -> None:
+        self._run_neh_edd("NEH-IT1", "NEH-IT1", error_if_infeasible, draw_gantt)
+
+    def improve_job_seq_by_insertion_single_pass(
+        self,
+        job_seq: list[str],
+        tie_breaker: str = "default",
+        first_improvement: bool = False,
+    ) -> list[str]:
+        job_cnt = len(job_seq)
+        if job_cnt <= 1:
+            logging.info("Insertion improvement skipped: only one or zero jobs.")
+            return job_seq
+        # Quick sanity: unique IDs
+        if len(set(job_seq)) != job_cnt:
+            logging.warning(
+                "Duplicate job IDs detected in sequence. Insertion pass may misbehave."
+            )
+
+        seq_before = list(job_seq)
+        seq_after = list(seq_before)
+
+        best_metric = self._compute_schedule_metric_from_sequence(seq_before)
+        best_crit1, best_crit2 = self._tie_crit_from_tm(best_metric, tie_breaker)
+
+        for j in seq_before:
+            j_idx = seq_after.index(j)
+            seq_after.remove(j)
+            pos, after_metric = self._eval_insert_with_criteria(
+                seq_after,
+                j,
+                tie_breaker,
+                first_improvement=first_improvement,
+                baseline_metric=best_metric,
+            )
+            crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
+
+            after_is_better = (crit1 < best_crit1) or (
+                crit1 == best_crit1 and crit2 < best_crit2
+            )
+            if after_is_better:
+                seq_after.insert(pos, j)
+                best_metric = after_metric
+                best_crit1 = crit1
+                best_crit2 = crit2
+            else:
+                seq_after.insert(j_idx, j)  # revert to original spot for stability
+            if self.time_is_up():
+                logging.info(
+                    f"Time limit reached during {j_idx + 1} / {job_cnt} insertion improvement."
+                )
+                break
+
+        return seq_after
+
+    def improve_by_insertion(
+        self,
+        tie_breaker: str = "default",
+        max_passes: int | None = None,
+        first_improvement: bool = False,
+        error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
+    ) -> None:
+        """Repeated insertion-improvement passes on the incumbent sequence.
+
+        Args:
+            tie_breaker (str, optional): tie-breaking rule.
+                Defaults to "default".
+            max_passes (int | None, optional): Maximum number of passes. If None, unlimited passes are allowed.
+                Defaults to None.
+            first_improvement (bool, optional): Whether to use first-improvement strategy.
+                Defaults to False.
+            error_if_infeasible (bool, optional): Whether to raise an error if the solution is infeasible.
+                Defaults to False.
+            draw_gantt (bool, optional): Whether to draw Gantt chart.
+                Defaults to False.
+
+        Raises:
+            RuntimeError: If no incumbent solution is available for improvement.
+        """
+        if self.solution_manager.incumbent_solution is None:
+            raise RuntimeError("No incumbent solution to improve.")
+
+        sub_timer = ElapsedTimer()
+
+        # Incumbent job sequence
+        seq_before = self.solution_manager.incumbent_solution.get_last_stage_job_list()
+        job_cnt = len(seq_before)
+        if job_cnt <= 1:
+            logging.info("Insertion improvement skipped: only one or zero jobs.")
+            return
+
+        seq_after = list(seq_before)
+        best_metric = self._compute_schedule_metric_from_sequence(seq_before)
+        best_crit1, best_crit2 = self._tie_crit_from_tm(best_metric, tie_breaker)
+        logging.info(
+            f"Initial: total tardiness {best_metric.sumTj}, makespan {best_metric.makespan} (criteria: {best_crit1}, {best_crit2})."
+        )
+
+        improved_globally = False
+        passes = 0
+        # list of (global elapsed time, obj value)
+        obj_value_log: list[tuple[float, float]] = []
+        while max_passes is None or passes < max_passes:
+            passes += 1
+
+            seq_after = self.improve_job_seq_by_insertion_single_pass(
+                seq_before, tie_breaker, first_improvement=first_improvement
+            )
+            after_metric = self._compute_schedule_metric_from_sequence(seq_after)
+            crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
+            logging.info(
+                f"Pass {passes}: total tardiness {after_metric.sumTj}, makespan {after_metric.makespan} (criteria: {crit1}, {crit2})."
+            )
+            after_is_better = (crit1 < best_crit1) or (
+                crit1 == best_crit1 and crit2 < best_crit2
+            )
+            if after_is_better:
+                seq_before = list(seq_after)
+                best_metric = after_metric
+                best_crit1 = crit1
+                best_crit2 = crit2
+                logging.info(
+                    f"Pass {passes}: improved to total tardiness {best_metric.sumTj}."
+                )
+                improved_globally = True
+                obj_value_log.append((self.timer.elapsed_sec, best_metric.sumTj))
+            else:
+                logging.info(f"Pass {passes}: no improvement, stopping.")
+                break
+            if self.time_is_up():
+                max_pass_str = (
+                    str(max_passes) if max_passes is not None else "unlimited"
+                )
+                logging.info(
+                    f"Time limit reached during {passes} / {max_pass_str} insertion improvement passes."
+                )
+                break
+
+        schedule = self.get_dispatched_schedule(seq_before)
+        if error_if_infeasible:
+            self.check_feasibility(schedule)
+        obj_value = self.get_obj_value(schedule)
+        logging.info(
+            "Repeated-insertion improvement %s (tie=%s, passes=%d): total tardiness %d",
+            "applied" if improved_globally else "no change",
+            tie_breaker,
+            passes,
+            obj_value,
+        )
+        # Create report for the solution and register it
+        report = FsSubroutineReport(
+            elapsed_time=sub_timer.elapsed_sec,
+            obj_value=obj_value,
+            obj_bound=None,
+            is_init=False,
+        )
+        was_updated = self.solution_manager.register(report, schedule)
+
+        if was_updated:
+            log_time = self.timer.elapsed_sec
+            obj_value_log.append((log_time, obj_value))
+            self.extend_obj_value_log(obj_value_log, is_maximize=False)
+            _last_timestamp_note = self._get_call_context_of_current_method()
+            self.obj_store.add_last_timestamp_note(
+                _last_timestamp_note, obj_value_is_valid=True
+            )
+            if draw_gantt:
+                self.draw_incumbent_gantt()
 
     # Subroutine: incremental CP construction by incumbent solution's sequence
 
@@ -496,75 +910,219 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         self,
         job_sequence: list[str],
         solver_thread_cnt: int,
-        added_batch_size: int = 1,
+        added_batch_size: int = 2,
         max_time_per_add: float | None = None,
         no_improvement_timelimit: float | None = None,
         is_init: bool = False,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ):
+        """Constructs a solution by incrementally building and solving a CP model.
+
+        This method takes an initial job sequence and iteratively builds a schedule.
+        In each iteration, it adds a batch of jobs from the sequence to the
+        problem, solves the resulting subproblem using a CP model, and then
+        decides whether to keep the CP's solution or a simple dispatch-based
+        solution for that subset of jobs. This process continues until all jobs
+        are scheduled.
+
+        The objective values of partial solutions (bounds) and full solutions
+        (values, obtained by dispatching remaining jobs) are logged throughout
+        the process for detailed analysis.
+
+        Args:
+            job_sequence (list[str]): The initial sequence of jobs to guide the
+                incremental construction.
+            solver_thread_cnt (int): The number of threads for the CP solver.
+            added_batch_size (int, optional): The number of jobs to add in each
+                incremental step. Defaults to 2.
+            max_time_per_add (float | None, optional): The maximum time limit
+                in seconds for each CP solve step. Defaults to None.
+            no_improvement_timelimit (float | None, optional): A time limit for
+                the CP solver to find an improvement. Defaults to None.
+            is_init (bool, optional): Flag indicating if this is an initial
+                solution construction. Defaults to False.
+            error_if_infeasible (bool, optional): If True, raises an error if the
+                final schedule is infeasible. Defaults to False.
+            draw_gantt (bool, optional): If True, draws a Gantt chart if the
+                resulting solution improves the incumbent. Defaults to False.
+        """
         sub_timer = ElapsedTimer()
         last_solution: FlowshopSchedule | None = None
-
         sub_obj_store = ObjValueBoundStore[float]()
-        """Subroutine-specific objective store"""
         sub_obj_store.obj_value_series.name = "ObjVal after dispatch"
         sub_obj_store.obj_bound_series.name = "ObjVal before dispatch"
 
         job_cnt = len(job_sequence)
         sequence_of_job_sublist = [
             job_sequence[i : i + added_batch_size]
-            for i in range(0, len(job_sequence), added_batch_size)
+            for i in range(0, job_cnt, added_batch_size)
         ]
-        all_stage_set = set(self.instance.stage_id_list)
+        job_sublist_cnt = len(sequence_of_job_sublist)
+
+        # ================== helpers (method-internal) ==================
+
+        def _make_all_dispatched(
+            base_sol: FlowshopSchedule, already_scheduled_job_set: set[str]
+        ) -> FlowshopSchedule:
+            """Create a new FlowshopSchedule by dispatching remaining jobs.
+
+            Args:
+                base_sol (FlowshopSchedule): The base solution to modify.
+                already_scheduled_job_set (set[str]): The set of already scheduled jobs.
+
+            Raises:
+                ValueError: If a job cannot be dispatched to all stages.
+
+            Returns:
+                FlowshopSchedule: The modified flow shop schedule.
+            """
+            if len(already_scheduled_job_set) == job_cnt:
+                return base_sol.deepcopy()
+
+            remaining_jobs = [
+                j for j in job_sequence if j not in already_scheduled_job_set
+            ]
+            full_sched = base_sol.deepcopy()
+            for j in remaining_jobs:
+                full_sched.dispatch_job_by_stages(
+                    j,
+                    self.stage_ids,
+                    self.job_2_stage_2_p_dict[j],
+                    after_last=True,
+                )
+            # Safety check
+            self.check_feasibility(full_sched)
+            return full_sched
+
+        def _log_snapshot(
+            picked_sol: FlowshopSchedule,
+            already_scheduled_job_set: set[str],
+            note: str,
+            *,
+            iter_report: CpsatSolverReport | None = None,
+            timestamp: float | None = None,
+        ) -> None:
+            """Log a snapshot of the current state.
+
+            Args:
+                picked_sol (FlowshopSchedule): The picked solution to log.
+                already_scheduled_job_set (set[str]): The set of already scheduled jobs.
+                note (str): A note to attach to the log.
+                iter_report (CpsatSolverReport | None, optional): CP solver report for the iteration.
+                    If provided, objective bounds are extracted. Defaults to None.
+                timestamp (float | None, optional): The timestamp for the log entry.
+                    If None, the current subroutine timer's elapsed time is used. Defaults to None.
+            """
+            ts = sub_timer.elapsed_sec if timestamp is None else timestamp
+
+            # value = objective value of the schedule with all jobs
+            full_sched = _make_all_dispatched(picked_sol, already_scheduled_job_set)
+            full_sched_value = self.get_obj_value(full_sched)
+            sub_obj_store.add_obj_value(ts, full_sched_value, is_maximize=None)
+
+            # bounds = objective value of the partial schedule (by CP or by partially dispatched)
+            if iter_report is not None and getattr(iter_report, "is_feasible", False):
+                records = iter_report.obj_value_records
+                seen = set()
+                for elapsed, val in records:
+                    sub_obj_store.add_obj_bound(elapsed, val, is_maximize=None)
+                    seen.add((elapsed, val))
+                # record the final value as a bound if not already recorded
+                final_val = self.get_obj_value(picked_sol)
+                if (ts, final_val) not in seen:
+                    sub_obj_store.add_obj_bound(ts, final_val, is_maximize=None)
+                sub_obj_store.add_last_timestamp_note(
+                    note, obj_value_is_valid=True, obj_bound_is_valid=True
+                )
+            else:
+                # if iter_report is None or infeasible, just log the final value as a bound
+                picked_val = self.get_obj_value(picked_sol)
+                sub_obj_store.add_obj_bound(ts, picked_val, is_maximize=None)
+                sub_obj_store.add_last_timestamp_note(
+                    note, obj_value_is_valid=True, obj_bound_is_valid=True
+                )
+
+        # ================== /helpers ==================
 
         halt_incremental_cp_processing = False
         job_subset: set[str] = set()
-        for job_sublist in sequence_of_job_sublist:
-            job_subset.update(job_sublist)
-            job_subset_cnt = len(job_subset)
-            all_jobs_are_included = job_subset_cnt == job_cnt
 
+        for bidx, job_sublist in enumerate(sequence_of_job_sublist):
+            # ---------- [Time over?] : cutoff before partial dispatch ----------
+            _timelimit = self.get_remaining_time_limit(max_time_per_add)
+            if float_a_leq_b(_timelimit, 0):
+                logging.info(
+                    "(batch %d/%d) Time over before CP solving -> finish by dispatching remaining jobs.",
+                    bidx + 1,
+                    job_sublist_cnt,
+                )
+                halt_incremental_cp_processing = True
+                break  # End loop & go to 'after-loop finishing'
+
+            # ---------- [Partial dispatch] ----------
             partial_sol = (
-                FlowshopSchedule.from_stage_name_list(self.instance.stage_id_list)
+                FlowshopSchedule.from_stage_name_list(self.stage_ids)
                 if last_solution is None
                 else last_solution.deepcopy()
             )
             for j in job_sublist:
                 partial_sol.dispatch_job_by_stages(
                     j,
-                    self.instance.stage_id_list,
+                    self.stage_ids,
                     self.job_2_stage_2_p_dict[j],
                     after_last=True,
                 )
+            job_subset.update(job_sublist)
+            dispatch_obj_val = self.get_obj_value(partial_sol)
 
-            if self.get_obj_value(partial_sol) == 0:
-                # If the partial solution already shows no tardiness,
-                # skip CP solving for this subset
-                last_solution = partial_sol
+            # ---------- [sumTj == 0 ?] ----------
+            if dispatch_obj_val == 0:
                 logging.info(
-                    f"All jobs in the current subset of {job_subset_cnt} jobs"
-                    " are completed on time. Skipping CP solving."
+                    "(batch %d/%d) sumTj=0 -> skip CP; keep partial dispatched schedule.",
+                    bidx + 1,
+                    job_sublist_cnt,
+                )
+                last_solution = partial_sol
+                _log_snapshot(
+                    last_solution,
+                    job_subset,
+                    note=f"{len(job_subset)}/{job_cnt} (sumTj=0; skip CP)",
                 )
                 continue
 
+            # ---------- [Sub CP build & solve] ----------
             sub_cp_mdl = self.cp_model.create_problem_of_job_subset(job_subset)
             if last_solution is not None:
                 sub_cp_mdl.add_indirect_precedence_constraints_by_sequence(
                     last_solution.get_last_stage_job_list()
                 )
             sub_cp_mdl.add_hints_from_schedule(partial_sol)
-
-            _timelimit = self.get_remaining_time_limit(max_time_per_add)
+            # set obj lower bound if all jobs are included and we have a valid bound
+            all_jobs_are_included = len(job_subset) == job_cnt
             if (
                 all_jobs_are_included
                 and self.solution_manager.best_obj_bound is not None
                 and not math.isnan(self.solution_manager.best_obj_bound)
             ):
                 sub_cp_mdl.set_obj_lower_bound(self.solution_manager.best_obj_bound)
+
+            # ---------- [Time over?] : cutoff before CP solving ----------
+            _timelimit = self.get_remaining_time_limit(max_time_per_add)
+            if float_a_leq_b(_timelimit, 0):
+                logging.info(
+                    "(batch %d/%d) Time over before CP solving -> finish by dispatching remaining jobs.",
+                )
+                last_solution = partial_sol  # keep the dispatched partial schedule
+                halt_incremental_cp_processing = True
+                break  # End loop & go to 'after-loop finishing'
+
             logging.info(
-                "Starting CP on subproblem with %d jobs at %s",
-                job_subset_cnt,
+                "(batch %d/%d) Starting CP on subproblem with %d jobs (dispatched obj val: %d) at %s",
+                bidx + 1,
+                job_sublist_cnt,
+                len(job_subset),
+                dispatch_obj_val,
                 sub_timer.get_formatted_elapsed_time(),
             )
             iter_report = self.solve_cp_model(
@@ -583,137 +1141,83 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             )
             last_timestamp = sub_timer.elapsed_sec
 
-            if iter_report.is_feasible:
-                # Update the last solution
-                last_solution = sub_cp_mdl.create_schedule()
-                if last_solution is None:
-                    # If the new solution is None, raise an error.
-                    raise ValueError("Subproblem returned feasible but no solution.")
-                elif self.get_obj_value(last_solution) >= self.get_obj_value(
-                    partial_sol
-                ):
-                    # If the new solution is not better than the partial solution,
-                    # revert to the dispatched solution.
-                    logging.info(
-                        f"Subproblem with {job_subset_cnt}/{job_cnt} jobs "
-                        "did not improve the partial dispatched solution. "
-                        "Using the partial dispatched solution."
-                    )
-                    last_solution = partial_sol
-                else:
-                    logging.info(
-                        f"Subproblem with {job_subset_cnt}/{job_cnt} jobs found a better solution."
-                    )
-            else:
-                logging.warning(
-                    f"Subproblem with {job_subset_cnt}/{job_cnt} jobs is infeasible. "
-                    "Using the partial dispatched solution."
+            # ---------- [CP feasible? & CP is better?] ----------
+            # Use sequence-based schedule creation since the starting times by CP model
+            # does not minimize the total completion time (its main goal is to minimize
+            # tardiness).
+            cp_sched = (
+                sub_cp_mdl.create_schedule_from_sequence()
+                if iter_report.is_feasible
+                else None
+            )
+            cp_obj_val = None if cp_sched is None else self.get_obj_value(cp_sched)
+            cp_is_better = cp_obj_val is not None and float_a_stl_b(
+                cp_obj_val, dispatch_obj_val
+            )
+
+            if cp_is_better:
+                assert cp_obj_val is not None
+                logging.info(
+                    "CP is better (%d < %d) -> use CP schedule.",
+                    cp_obj_val,
+                    dispatch_obj_val,
                 )
-                # Use the partial dispatched solution
+                assert cp_sched is not None
+                last_solution = cp_sched
+            else:
+                reason = (
+                    "infeasible" if not iter_report.is_feasible else "no improvement"
+                )
+                logging.info("CP %s -> keep dispatched partial.", reason)
                 last_solution = partial_sol
+
+            # ---------- [CP is not better & timeover?] ----------
+            if (not cp_is_better) and float_a_leq_b(
+                _timelimit, iter_report.elapsed_time
+            ):
+                logging.warning(
+                    "CP timeover at this batch -> halt further incremental CP."
+                )
                 halt_incremental_cp_processing = True
 
-            # Dispatch remaining jobs to create a schedule feasible to the original problem
-            all_dispatched_sol = last_solution.deepcopy()
-            remaining_jobs = [j for j in job_sequence if j not in job_subset]
-            for j in remaining_jobs:
-                ops = all_dispatched_sol.dispatch_job_by_stages(
-                    j,
-                    self.instance.stage_id_list,
-                    self.job_2_stage_2_p_dict[j],
-                    after_last=True,
-                )
-                stage_set = set(op.stage_name for op in ops)
-                if stage_set != all_stage_set:
-                    raise ValueError(
-                        f"Failed to dispatch job {j} to stages {all_stage_set - stage_set}"
-                    )
-            all_dispatched_sol.verify_stage_job_sequence()
-
-            # Store the objective value logs
-
-            # Obj. value of dispatched solution as a value
-            sub_obj_store.add_obj_value(
-                last_timestamp, self.get_obj_value(all_dispatched_sol), is_maximize=None
+            # ---------- [Log snapshot & halt] ----------
+            _log_snapshot(
+                last_solution,
+                job_subset,
+                note=f"{len(job_subset)}/{job_cnt}",
+                iter_report=iter_report,
+                timestamp=last_timestamp,
             )
-
-            # Obj. values of Un-dispatched solution as bounds
-            last_solution_obj_value = self.get_obj_value(last_solution)
-            if iter_report.is_feasible:
-                undispatched_obj_value_records = sub_cp_mdl.get_obj_value_records()
-                for elapsed, value in undispatched_obj_value_records:
-                    sub_obj_store.add_obj_bound(elapsed, value, is_maximize=None)
-                if (
-                    last_timestamp,
-                    last_solution_obj_value,
-                ) not in undispatched_obj_value_records:
-                    sub_obj_store.add_obj_bound(
-                        last_timestamp,
-                        last_solution_obj_value,
-                        is_maximize=None,
-                    )
-                _last_timestamp_note = f"{job_subset_cnt}/{job_cnt}"
-                sub_obj_store.add_last_timestamp_note(
-                    _last_timestamp_note,
-                    obj_value_is_valid=True,
-                    obj_bound_is_valid=True,
-                )
-            else:
-                sub_obj_store.add_obj_bound(
-                    last_timestamp,
-                    last_solution_obj_value,
-                    is_maximize=None,
-                )
-                _last_timestamp_note = f"{job_subset_cnt}/{job_cnt} (infeasible)"
-                sub_obj_store.add_last_timestamp_note(
-                    _last_timestamp_note,
-                    obj_value_is_valid=True,
-                    obj_bound_is_valid=True,
-                )
-
             if halt_incremental_cp_processing:
-                logging.warning(
-                    "Stopping further incremental CP due to previous infeasibility."
-                )
                 break
 
-        # Dispatch remaining jobs if any
+        # ---------- [End] : Dispatch remaining jobs ----------
         if last_solution is None:
-            last_solution = FlowshopSchedule.from_stage_name_list(
-                self.instance.stage_id_list
-            )
+            last_solution = FlowshopSchedule.from_stage_name_list(self.stage_ids)
+
         remaining_jobs = [j for j in job_sequence if j not in job_subset]
         if remaining_jobs:
-            logging.info(
-                f"Dispatching the remaining {len(remaining_jobs)} jobs after incremental CP."
-            )
+            logging.info("Dispatch remaining %d jobs and finish.", len(remaining_jobs))
             for j in remaining_jobs:
                 last_solution.dispatch_job_by_stages(
                     j,
-                    self.instance.stage_id_list,
+                    self.stage_ids,
                     self.job_2_stage_2_p_dict[j],
                     after_last=True,
                 )
-            last_solution_obj_value = self.get_obj_value(last_solution)
-            sub_obj_store.add_obj_value(
-                sub_timer.elapsed_sec,
-                last_solution_obj_value,
-                is_maximize=None,
-            )
-            sub_obj_store.add_obj_bound(
-                sub_timer.elapsed_sec,
-                last_solution_obj_value,
-                is_maximize=None,
-            )
-            sub_obj_store.add_last_timestamp_note(
-                "Final dispatch after incremental CP",
-                obj_value_is_valid=True,
-                obj_bound_is_valid=True,
+            _log_snapshot(
+                last_solution,
+                set(job_sequence),
+                note="Final dispatch",
+                timestamp=sub_timer.elapsed_sec,
             )
 
         if error_if_infeasible:
             self.check_feasibility(last_solution)
         last_solution_obj_value = self.get_obj_value(last_solution)
+        logging.info(
+            f"Initialized by IC with total tardiness {last_solution_obj_value}"
+        )
         # Create report for the final solution and register it
         final_report = FsSubroutineReport(
             elapsed_time=sub_timer.elapsed_sec,
@@ -737,3 +1241,151 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         # TODO: suffix from output_metadata
         if sub_obj_store:
             sub_obj_store.save_yaml(self.get_file_path_for_subroutine("_obj_log.yaml"))
+
+    # Subroutine: job block neighbor search
+
+    def job_block_ns(
+        self,
+        rho: float,
+        computational_time: float,
+        solver_thread_cnt: int,
+        no_improvement_timelimit: float | None = None,
+        error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
+    ) -> None:
+        self.fix_profile_solve_reset(
+            lambda: self.apply_job_block_operator(rho),
+            computational_time,
+            solver_thread_cnt,
+            no_improvement_timelimit=no_improvement_timelimit,
+            obj_value_is_valid=True,
+            obj_bound_is_valid=False,
+            error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
+        )
+
+    def apply_job_block_operator(
+        self, rho: float, randomize_selection: bool = True
+    ) -> None:
+        if rho <= 0:
+            raise ValueError(f"Invalid value for rho {rho}; it must be positive.")
+        if rho > 1:
+            raise ValueError(f"Invalid value for rho {rho}; it must be at most 1.")
+        logging.info(f"Applying job block operator with rho={rho}")
+        if not self.solution_manager.has_incumbent():
+            raise ValueError("No incumbent solution available for job block operator.")
+        incumbent_solution = self.solution_manager.get_incumbent()
+        if incumbent_solution is None:
+            raise ValueError("No incumbent solution to select job block.")
+
+        job_sequence = incumbent_solution.get_last_stage_job_list()
+        sched_job_cnt = len(job_sequence)
+        if sched_job_cnt == 0:
+            raise ValueError("Incumbent solution has no scheduled jobs.")
+        logging.info(f"Current job sequence: {job_sequence}")
+        num_to_select = max(1, int(math.ceil(rho * sched_job_cnt)))
+
+        # Choose an operation
+        if randomize_selection:
+            seed_job = random.choice(job_sequence)
+        else:
+            # if not random, choose center operation
+            seed_job = job_sequence[sched_job_cnt // 2]
+        # Select (num_to_select - 1) more jobs; if reached the end, continue from the first element
+        selected_jobs: list[str] = [seed_job]
+        seed_job_idx = job_sequence.index(seed_job)
+        logging.info(
+            "Seed job for block operator: %s (index %d)", seed_job, seed_job_idx
+        )
+        job_cnt_until_last = len(job_sequence) - seed_job_idx
+        logging.info(
+            "Jobs from seed to end: %d, need to select total %d jobs.",
+            job_cnt_until_last,
+            num_to_select,
+        )
+
+        # Select a contiguous block of num_to_select jobs, wrapping around if needed
+        selected_jobs.extend(
+            job_sequence[(seed_job_idx + 1 + i) % sched_job_cnt]
+            for i in range(num_to_select - 1)
+        )
+        logging.info(
+            f"job block operator selected {len(selected_jobs)} jobs"
+            f" (target={num_to_select})"
+        )
+        logging.info(f"Selected jobs: {selected_jobs}")
+
+        # Profile out-of-block operations
+        self._fix_job_profile_except_selected(set(selected_jobs))
+
+    # Subroutine: lower bound by preemptive scheduling of the last stage only
+
+    def compute_preemptive_last_stage_lb(
+        self, error_if_infeasible: bool = False, draw_gantt: bool = False
+    ) -> None:
+        from ..graph_model.single_mc_pmtn import SingleMachinePreemptionMcf
+
+        sub_timer = ElapsedTimer()
+        last_stage_only_mdl = SingleMachinePreemptionMcf.from_instance(self.instance)
+        last_stage_only_mdl.solve()
+
+        if last_stage_only_mdl.is_optimal():
+            obj_bound = last_stage_only_mdl.get_obj_value()
+            logging.info(
+                "Preemptive last-stage-only model solved optimally with objective value %d; took %s",
+                obj_bound,
+                sub_timer.get_formatted_elapsed_time(),
+            )
+            seq_by_start = last_stage_only_mdl.get_job_start_sequence()
+            schedule_by_start = self.get_dispatched_schedule(seq_by_start)
+            obj_value_by_start = self.get_obj_value(schedule_by_start)
+
+            seq_by_end = last_stage_only_mdl.get_job_completion_sequence()
+            schedule_by_end = self.get_dispatched_schedule(seq_by_end)
+            obj_value_by_end = self.get_obj_value(schedule_by_end)
+
+            seq_by_avg = last_stage_only_mdl.get_job_average_sequence()
+            schedule_by_avg = self.get_dispatched_schedule(seq_by_avg)
+            obj_value_by_avg = self.get_obj_value(schedule_by_avg)
+
+            logging.info("Dispatched schedules' total tardiness:")
+            logging.info(" - by start time sequence: %d", obj_value_by_start)
+            logging.info(" - by completion time sequence: %d", obj_value_by_end)
+            logging.info(" - by average time sequence: %d", obj_value_by_avg)
+            # Choose the best among the three dispatched sequences
+            best_obj_value = min(obj_value_by_start, obj_value_by_end, obj_value_by_avg)
+            if best_obj_value == obj_value_by_start:
+                best_schedule = schedule_by_start
+                method_used = "start time"
+            elif best_obj_value == obj_value_by_end:
+                best_schedule = schedule_by_end
+                method_used = "completion time"
+            else:
+                best_schedule = schedule_by_avg
+                method_used = "average time"
+            logging.info(
+                "Among dispatched schedules, best total tardiness is %d by %s sequence.",
+                best_obj_value,
+                method_used,
+            )
+
+            # Create report and register the new solution
+            report = FsSubroutineReport(
+                elapsed_time=sub_timer.elapsed_sec,
+                obj_value=best_obj_value,
+                obj_bound=obj_bound,
+                is_init=True,
+            )
+            was_updated = self.solution_manager.register(report, best_schedule)
+
+            # Log
+            log_time = self.timer.elapsed_sec
+            self.add_obj_value_log(log_time, best_obj_value, is_maximize=False)
+            self.add_obj_bound_log(log_time, obj_bound, is_maximize=False)
+            _last_timestamp_note = self._get_call_context_of_current_method()
+            self.obj_store.add_last_timestamp_note(
+                _last_timestamp_note, obj_value_is_valid=True, obj_bound_is_valid=True
+            )
+            # Draw Gantt chart if the solution is an improvement
+            if was_updated and draw_gantt:
+                self.draw_incumbent_gantt()

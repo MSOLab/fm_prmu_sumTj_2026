@@ -1,0 +1,11 @@
+- method: set_0_as_lb
+- method: initialize_by_neht
+- method: improve_by_insertion
+  tie_breaker: "default"
+  error_if_infeasible: true
+- method: set_cp_model_as_base_cp_model
+- method: solve_base_cp_model
+  computational_time: 600
+  solver_thread_cnt: 8
+  is_initial_solution: False
+  draw_gantt: False

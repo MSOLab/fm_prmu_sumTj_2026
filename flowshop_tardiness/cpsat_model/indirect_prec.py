@@ -9,11 +9,10 @@ from ortools.sat.python.cp_model import IntVar
 from routix import ElapsedTimer
 from routix.util.comparison import float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
+from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedule
 
-from .scheduling.flowshop_schedule import FlowshopOperation, FlowshopSchedule
 
-
-class CpCpsatIndirectPrec(CpModelWithFixedInterval):
+class IndirectPrecModel(CpModelWithFixedInterval):
     """
     Implementation of the CP model for the flowshop problem to minimize total tardiness
     using indirect precedence constraints only.
@@ -30,6 +29,12 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
     p: dict[tuple[str, str], int]
     """$P_{ji}$: processing time of job j at stage i"""
 
+    stage_start_time_lb: dict[str, int]
+    """i -> lower bound on the start time of the stage."""
+
+    stage_end_time_ub: dict[str, int]
+    """i -> upper bound on the makespan of the stage."""
+
     D: dict[str, int]
     """$D_j$: due date of job j"""
 
@@ -38,7 +43,7 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
     prec: dict[tuple[str, str], IntVar]
     """$prec_{j1,j2}$: Indirect precedence variables for the circuit constraints"""
 
-    var_Tj: dict[str, IntVar]
+    var_T: dict[str, IntVar]
     """$T_j$: tardiness of job j"""
 
     # Objective
@@ -52,7 +57,7 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
     @classmethod
     def from_instance(
         cls, instance: FlowshopDuedateParameters, horizon: int
-    ) -> CpCpsatIndirectPrec:
+    ) -> IndirectPrecModel:
         result = cls(horizon)
         result.name = f"{cls.__name__}_{instance.name}"
         result.define_model(instance)
@@ -86,10 +91,31 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
         """
         self.j_list = instance.job_id_list
         self.i_list = instance.stage_id_list
+        n = len(self.j_list)
+
         _p = instance.p_manager.job_stage_2_value_map(self.j_list, self.i_list)
         self.p = {
             (j, i): int(round(_p[j, i])) for j in self.j_list for i in self.i_list
         }
+
+        self.stage_start_time_lb = {}
+        cumulative_p_min = 0
+        for i in self.i_list:
+            self.stage_start_time_lb[i] = cumulative_p_min
+            cumulative_p_min += min(self.p[j, i] for j in self.j_list)
+
+        self.stage_end_time_ub = {}
+        for i_idx, i in enumerate(self.i_list):
+            candid1 = 0
+            p_max = 0
+            for ip in self.i_list[: i_idx + 1]:
+                candid1 += sum(self.p[j, ip] for j in self.j_list)
+                p_max = max(p_max, max(self.p[j, ip] for j in self.j_list))
+            # max processing time * (job count + stage count - 1)
+            candid2 = p_max * (n + i_idx)
+            self.stage_end_time_ub[i] = min(candid1, candid2)
+            logging.info(f"  end_time_ub[{i}] := {self.stage_end_time_ub[i]}")
+
         self.D = {j: int(round(instance.job_2_duedate_map[j])) for j in self.j_list}
 
     # Variables
@@ -100,7 +126,11 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
         # Interval variables
         for j in j_list:
             for i in self.i_list:
-                self.define_fixed_interval_var((j, i), self.p[j, i])
+                start_time_lb = self.stage_start_time_lb[i]
+                start_time_ub = self.stage_end_time_ub[i] - self.p[j, i]
+                self.define_fixed_interval_var(
+                    (j, i), self.p[j, i], lb=start_time_lb, ub=start_time_ub
+                )
 
         # Indirect precedence
         self.prec = {}
@@ -121,18 +151,19 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
         j_list = self.j_list
         last_i = self.i_list[-1]
 
-        self.var_Tj = {}
+        self.var_T = {}
         total_ub = 0
         for j in j_list:
-            ub = max(self.horizon - self.D[j], 0)
-            self.var_Tj[j] = self.new_int_var(0, ub, f"T_{j}")
+            ub = max(self.stage_end_time_ub[last_i] - self.D[j], 0)
+            self.var_T[j] = self.new_int_var(0, ub, f"T_{j}")
             self.add_max_equality(
-                self.var_Tj[j], [self.var_op_end[j, last_i] - self.D[j], 0]
+                self.var_T[j],
+                [self.var_op_start[j, last_i] + self.p[j, last_i] - self.D[j], 0],
             )
             total_ub += ub
 
         self.obj_var = self.new_int_var(0, total_ub, "sum_Tj")
-        self.add(self.obj_var == sum(self.var_Tj[j] for j in j_list))
+        self.add(self.obj_var == sum(self.var_T[j] for j in j_list))
 
         self.minimize(self.obj_var)
 
@@ -171,27 +202,28 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
         consecutive_stage_pairs = list(zip(i_list[:-1], i_list[1:]))
         for j in j_list:
             for i, next_i in consecutive_stage_pairs:
-                self.add(self.var_op_end[j, i] <= self.var_op_start[j, next_i])
+                self.add(
+                    self.var_op_start[j, i] + self.p[j, i]
+                    <= self.var_op_start[j, next_i]
+                )
 
-        logging.info(f"  Precedence constraints took {timer.elapsed_sec:.3f} sec.")
+        logging.info(f"  Precedence constr. took {timer.elapsed_sec:.3f} sec.")
         timer.set_start_time_as_now()
 
         # Link precedence and time
-        # prec[j1,j2] is True -> end[j1,i] <= start[j2,i] for all i
-        domain = (-self.horizon, 0)
+        # prec[j1,j2] is True -> start[j1,i] + p[j1,i] <= start[j2,i] for all i
+        # -> -stage_end_time_ub[i] + p[j2,i] <= start[j1,i] - start[j2,i] <= -p[j1,i]
         for j1, j2 in permutations(j_list, 2):
             for i in i_list:
-                # self.add(
-                #     self.var_op_end[j1, i] <= self.var_op_start[j2, i]
-                # ).only_enforce_if(self.prec[j1, j2])
+                domain = (-self.stage_end_time_ub[i] + self.p[j2, i], -self.p[j1, i])
                 self.add_linear_constraint_enforced_fast(
-                    var_list=[self.var_op_end[j1, i], self.var_op_start[j2, i]],
+                    var_list=[self.var_op_start[j1, i], self.var_op_start[j2, i]],
                     coeff_list=[1, -1],
                     domain=domain,
                     enforcers=[self.prec[j1, j2]],
                 )
 
-        logging.info(f"  Time-linking constraints took {timer.elapsed_sec:.3f} sec.")
+        logging.info(f"  Time-linking constr. took {timer.elapsed_sec:.3f} sec.")
 
     #     self.add_rank_constraints()
 
@@ -232,24 +264,23 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
         for j in self.j_list:
             for i in self.i_list:
                 start = self.solver.value(self.var_op_start[j, i])
-                end = self.solver.value(self.var_op_end[j, i])
                 start_time_map[j, i] = start
-                end_time_map[j, i] = end
+                end_time_map[j, i] = start + self.p[j, i]
 
         return start_time_map, end_time_map
 
     def extract_Tj_map(self) -> dict[str, int]:
-        """Extract per-job tardiness T_j values from solved CP model.
+        """Extract per-job tardiness values from solved CP model.
 
         Returns:
             dict[str, int]: job -> T_j
         """
         Tj_map: dict[str, int] = {}
-        for j, var in self.var_Tj.items():
+        for j, var in self.var_T.items():
             Tj_map[j] = self.solver.value(var)
         return Tj_map
 
-    def create_schedule(self) -> FlowshopSchedule:
+    def create_schedule_by_start_end_time(self) -> FlowshopSchedule:
         start_time_map, end_time_map = self.extract_start_end_time_map()
         schedule = FlowshopSchedule.from_stage_name_list(self.i_list)
 
@@ -263,15 +294,30 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
 
         return schedule
 
+    def create_schedule_from_sequence(self) -> FlowshopSchedule:
+        i_list = self.i_list
+
+        j_2_rank_map = {
+            j: self.solver.value(sum(self.prec[jp, j] for jp in self.j_list if jp != j))
+            for j in self.j_list
+        }
+        job_sequence = sorted(self.j_list, key=lambda j: j_2_rank_map[j])
+        schedule = FlowshopSchedule.from_stage_name_list(self.i_list)
+
+        for j in job_sequence:
+            i_2_p_map = {i: self.p[j, i] for i in i_list}
+            schedule.dispatch_job_by_stages(j, i_list, i_2_p_map, after_last=True)
+
+        return schedule
+
     # methods to add hints
 
     def add_hints_from_schedule(self, schedule: FlowshopSchedule) -> None:
-        self.add_tardiness_hints_from_Tj_map(schedule.get_tardiness_map(self.D))
+        self.add_tardiness_hints_from_Tj_map(schedule.get_job_2_tardiness_map(self.D))
         self.add_start_hints_from_start_time_map(schedule.get_start_time_map())
-        self.add_end_hints_from_end_time_map(schedule.get_end_time_map())
-        self.add_sequence_hints(schedule.get_last_stage_job_list())
+        self.add_indirect_precedence_hints(schedule.get_last_stage_job_list())
 
-    def add_sequence_hints(self, job_sequence: list[str]) -> None:
+    def add_indirect_precedence_hints(self, job_sequence: list[str]) -> None:
         for j1_idx, j1 in enumerate(job_sequence):
             for j2 in job_sequence[j1_idx + 1 :]:
                 self.add_hint(self.prec[(j1, j2)], 1)
@@ -285,19 +331,11 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
                 raise KeyError(f"Invalid job-stage pair: ({j}, {i})")
             self.add_hint(self.var_op_start[j, i], s_time)
 
-    def add_end_hints_from_end_time_map(
-        self, end_time_map: dict[tuple[str, str], int]
-    ) -> None:
-        for (j, i), e_time in end_time_map.items():
-            if (j, i) not in self.var_op_end:
-                raise KeyError(f"Invalid job-stage pair: ({j}, {i})")
-            self.add_hint(self.var_op_end[j, i], e_time)
-
     def add_tardiness_hints_from_Tj_map(self, Tj_map: dict[str, int]) -> None:
         sum_Tj = 0
         for j in self.j_list:
             Tj = Tj_map.get(j, 0)
-            self.add_hint(self.var_Tj[j], Tj)
+            self.add_hint(self.var_T[j], Tj)
             sum_Tj += Tj
         self.add_hint(self.obj_var, sum_Tj)
 
@@ -313,7 +351,7 @@ class CpCpsatIndirectPrec(CpModelWithFixedInterval):
 
     # Subproblem generation
 
-    def create_problem_of_job_subset(self, job_subset: set[str]) -> CpCpsatIndirectPrec:
+    def create_problem_of_job_subset(self, job_subset: set[str]) -> IndirectPrecModel:
         if not job_subset.issubset(set(self.j_list)):
             raise ValueError("job_subset must be a subset of the original job list.")
         new_model = self.__class__(self.horizon)
