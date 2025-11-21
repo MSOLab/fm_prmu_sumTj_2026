@@ -16,8 +16,11 @@ REL_TOL = 1e-9  # for safe float comparisons
 
 
 class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
-    cp_model_presolve: bool | None = False  # TODO: make it configurable
-    """Whether to presolve the CP model before solving."""
+    cp_model_presolve: bool | None = None  # TODO: make it configurable
+    """
+    Whether to presolve the CP model before solving.
+    If None, use the default behavior of the CP solver.
+    """
 
     def set_random_seed(self, seed: int):
         return super().set_random_seed(seed)
@@ -950,6 +953,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         sub_timer = ElapsedTimer()
         last_solution: FlowshopSchedule | None = None
         sub_obj_store = ObjValueBoundStore[float]()
+        """Subroutine-specific objective store"""
         sub_obj_store.obj_value_series.name = "ObjVal after dispatch"
         sub_obj_store.obj_bound_series.name = "ObjVal before dispatch"
 
@@ -999,7 +1003,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             picked_sol: FlowshopSchedule,
             already_scheduled_job_set: set[str],
             note: str,
-            *,
             iter_report: CpsatSolverReport | None = None,
             timestamp: float | None = None,
         ) -> None:
@@ -1046,9 +1049,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         # ================== /helpers ==================
 
         halt_incremental_cp_processing = False
-        job_subset: set[str] = set()
+        target_job_subset: set[str] = set()
 
-        for bidx, job_sublist in enumerate(sequence_of_job_sublist):
+        for bidx, added_job_sublist in enumerate(sequence_of_job_sublist):
             # ---------- [Time over?] : cutoff before partial dispatch ----------
             _timelimit = self.get_remaining_time_limit(max_time_per_add)
             if float_a_leq_b(_timelimit, 0):
@@ -1066,14 +1069,14 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 if last_solution is None
                 else last_solution.deepcopy()
             )
-            for j in job_sublist:
+            for j in added_job_sublist:
                 partial_sol.dispatch_job_by_stages(
                     j,
                     self.stage_ids,
                     self.job_2_stage_2_p_dict[j],
                     after_last=True,
                 )
-            job_subset.update(job_sublist)
+            target_job_subset.update(added_job_sublist)
             dispatch_obj_val = self.get_obj_value(partial_sol)
 
             # ---------- [sumTj == 0 ?] ----------
@@ -1086,20 +1089,20 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 last_solution = partial_sol
                 _log_snapshot(
                     last_solution,
-                    job_subset,
-                    note=f"{len(job_subset)}/{job_cnt} (sumTj=0; skip CP)",
+                    target_job_subset,
+                    note=f"{len(target_job_subset)}/{job_cnt} (sumTj=0; skip CP)",
                 )
                 continue
 
             # ---------- [Sub CP build & solve] ----------
-            sub_cp_mdl = self.cp_model.create_problem_of_job_subset(job_subset)
+            sub_cp_mdl = self.cp_model.create_problem_of_job_subset(target_job_subset)
             if last_solution is not None:
                 sub_cp_mdl.add_indirect_precedence_constraints_by_sequence(
                     last_solution.get_last_stage_job_list()
                 )
             sub_cp_mdl.add_hints_from_schedule(partial_sol)
             # set obj lower bound if all jobs are included and we have a valid bound
-            all_jobs_are_included = len(job_subset) == job_cnt
+            all_jobs_are_included = len(target_job_subset) == job_cnt
             if (
                 all_jobs_are_included
                 and self.solution_manager.best_obj_bound is not None
@@ -1121,7 +1124,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 "(batch %d/%d) Starting CP on subproblem with %d jobs (dispatched obj val: %d) at %s",
                 bidx + 1,
                 job_sublist_cnt,
-                len(job_subset),
+                len(target_job_subset),
                 dispatch_obj_val,
                 sub_timer.get_formatted_elapsed_time(),
             )
@@ -1183,8 +1186,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             # ---------- [Log snapshot & halt] ----------
             _log_snapshot(
                 last_solution,
-                job_subset,
-                note=f"{len(job_subset)}/{job_cnt}",
+                target_job_subset,
+                note=f"{len(target_job_subset)}/{job_cnt}",
                 iter_report=iter_report,
                 timestamp=last_timestamp,
             )
@@ -1195,7 +1198,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         if last_solution is None:
             last_solution = FlowshopSchedule.from_stage_name_list(self.stage_ids)
 
-        remaining_jobs = [j for j in job_sequence if j not in job_subset]
+        remaining_jobs = [j for j in job_sequence if j not in target_job_subset]
         if remaining_jobs:
             logging.info("Dispatch remaining %d jobs and finish.", len(remaining_jobs))
             for j in remaining_jobs:
