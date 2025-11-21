@@ -84,16 +84,20 @@ class PositionModel(CustomCpModel):
         instance: FlowshopDuedateParameters,
         horizon: int,
         stage_2_est_map: dict[str, int] | None = None,
+        sumTj_offset: int | None = None,
     ) -> PositionModel:
         result = cls(horizon)
         result.name = f"{cls.__name__}_{instance.name}"
-        result.define_model(instance, stage_2_est_map=stage_2_est_map)
+        result.define_model(
+            instance, stage_2_est_map=stage_2_est_map, sumTj_offset=sumTj_offset
+        )
         return result
 
     def define_model(
         self,
         instance: FlowshopDuedateParameters,
         stage_2_est_map: dict[str, int] | None = None,
+        sumTj_offset: int | None = None,
     ) -> None:
         elapsed = ElapsedTimer()
         self.define_parameters(instance, stage_2_est_map=stage_2_est_map)
@@ -110,7 +114,7 @@ class PositionModel(CustomCpModel):
         logging.info(f"Defined constraints; took {elapsed.elapsed_sec:.3f} sec.")
 
         elapsed.set_start_time_as_now()
-        self.define_total_tardiness_objective()
+        self.define_total_tardiness_objective(sumTj_offset=sumTj_offset)
         logging.info(f"Defined objective; took {elapsed.elapsed_sec:.3f} sec.")
 
     # Parameters
@@ -227,7 +231,7 @@ class PositionModel(CustomCpModel):
 
     # Objective
 
-    def define_total_tardiness_objective(self) -> None:
+    def define_total_tardiness_objective(self, sumTj_offset: int | None = None) -> None:
         """
         Total tardiness objective: minimize \\sum_k{T_k} where T_k := max(end_k - D_k, 0).
 
@@ -244,8 +248,12 @@ class PositionModel(CustomCpModel):
         total_ub = sum(
             max(0, self.stage_end_time_ub[last_i] - self.D[j]) for j in self.j_list
         )
+        if sumTj_offset is not None:
+            total_ub += sumTj_offset
         self.obj_var = self.new_int_var(0, total_ub, "sum_Tk")
-        self.add(self.obj_var == sum(self.var_T[k] for k in j_list))
+        self.add(
+            self.obj_var == sum(self.var_T[k] for k in j_list) + (sumTj_offset or 0)
+        )
 
         self.minimize(self.obj_var)
 

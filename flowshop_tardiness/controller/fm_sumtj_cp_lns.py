@@ -1545,6 +1545,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         halt_incremental_cp_processing = False
         target_job_subset: set[str] = set()
         incumbent_job_seq = []
+        incumbent_obj_val = 0
 
         for bidx, added_job_sublist in enumerate(sequence_of_job_sublist):
             # ---------- [Time over?] : cutoff before partial dispatch ----------
@@ -1583,6 +1584,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 )
                 last_solution = partial_sol
                 incumbent_job_seq = last_solution.get_last_stage_job_list()
+                incumbent_obj_val = 0
                 _log_snapshot(
                     last_solution,
                     target_job_subset,
@@ -1598,7 +1600,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 # Add earliest start time constraints for each stages from the last solution
                 stage_2_est_map = last_solution.get_stage_2_makespan_map()
                 sub_cp_mdl = self.cp_model.from_instance(
-                    sub_instance, self.get_horizon(), stage_2_est_map=stage_2_est_map
+                    sub_instance,
+                    self.get_horizon(),
+                    stage_2_est_map=stage_2_est_map,
+                    sumTj_offset=int(incumbent_obj_val),
                 )
                 # Apply hint
                 sub_cp_mdl.add_hints_from_schedule(
@@ -1625,6 +1630,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 )
                 last_solution = partial_sol  # keep the dispatched partial schedule
                 incumbent_job_seq = last_solution.get_last_stage_job_list()
+                incumbent_obj_val = int(dispatch_obj_val)
                 halt_incremental_cp_processing = True
                 break  # End loop & go to 'after-loop finishing'
 
@@ -1671,25 +1677,23 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
             if cp_is_better:
                 assert cp_obj_val is not None
-                last_sol_obj_val = (
-                    0 if last_solution is None else self.get_obj_value(last_solution)
-                )
                 logging.info(
-                    "CP is better (%d + %d = %d < %d) -> use CP schedule.",
-                    last_sol_obj_val,
-                    iter_report.obj_value,
+                    "CP is better (%d < %d) -> use CP schedule.",
                     cp_obj_val,
                     dispatch_obj_val,
                 )
                 assert cp_sched is not None
                 last_solution = cp_sched
+                incumbent_job_seq = last_solution.get_last_stage_job_list()
+                incumbent_obj_val = int(cp_obj_val)
             else:
                 reason = (
                     "infeasible" if not iter_report.is_feasible else "no improvement"
                 )
                 logging.info("CP %s -> keep dispatched partial.", reason)
                 last_solution = partial_sol
-            incumbent_job_seq = last_solution.get_last_stage_job_list()
+                incumbent_job_seq = last_solution.get_last_stage_job_list()
+                incumbent_obj_val = int(dispatch_obj_val)
 
             # ---------- [CP is not better & timeover?] ----------
             if (not cp_is_better) and float_a_leq_b(
