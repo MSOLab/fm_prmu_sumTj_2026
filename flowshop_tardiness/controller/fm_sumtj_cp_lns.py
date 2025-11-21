@@ -4,7 +4,7 @@ import random
 from typing import Callable
 
 from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
-from routix import ElapsedTimer
+from routix import DynamicDataObject, ElapsedTimer
 from routix.util.comparison import float_a_leq_b, float_a_stl_b
 from schore.schedule_examples.shop.flow import FlowshopSchedule
 
@@ -1649,10 +1649,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 random_seed=self.random_seed,
                 cp_model_presolve=self.cp_model_presolve,
                 e_timer=sub_timer,
-                log_level_obj_value=logging.INFO,
-                log_level_obj_bound=logging.INFO,
-                log_level_solver=self.log_solver_level,
-                log_search_progress=self.log_search_progress,
                 obj_value_is_valid=all_jobs_are_included,
             )
             last_timestamp = sub_timer.elapsed_sec
@@ -1765,3 +1761,47 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         # TODO: suffix from output_metadata
         if sub_obj_store:
             sub_obj_store.save_yaml(self.get_file_path_for_subroutine("_obj_log.yaml"))
+
+    def repeat_while_improvement(self, n_repeats: int, routine_data: DynamicDataObject):
+        """
+        Repeats the execution of a routine a specified number of times.
+
+        Args:
+            n_repeats (int): Number of times to repeat the routine.
+            routine_data (DynamicDataObject): The routine data to be executed.
+        """
+
+        subroutine_name = "reps"  # TODO: define how to manage this
+        incumbent_sol = self.solution_manager.get_incumbent()
+        if incumbent_sol is None:
+            obj_before = math.inf
+        else:
+            obj_before = self.get_obj_value(incumbent_sol)
+
+        for i in range(n_repeats):
+            if self.is_stopping_condition():
+                logging.info(
+                    f"[Repeat] Stopping condition met at iteration {i + 1}/{n_repeats}."
+                )
+                break
+            logging.info(f"[Repeat] Starting repeat {i + 1}/{n_repeats}")
+
+            with self.temporarily_extended_context(subroutine_name):
+                self._run_flow(DynamicDataObject.from_obj(routine_data))
+
+            incumbent_sol = self.solution_manager.get_incumbent()
+            if incumbent_sol is None:
+                obj_after = math.inf
+            else:
+                obj_after = self.get_obj_value(incumbent_sol)
+
+            if float_a_stl_b(obj_after, obj_before):
+                logging.info(
+                    f"[Repeat] Improvement observed ({obj_before} -> {obj_after}). Continuing."
+                )
+                obj_before = obj_after
+            else:
+                logging.info(
+                    f"[Repeat] No improvement observed ({obj_before} -> {obj_after}). Stopping repeats."
+                )
+                break
