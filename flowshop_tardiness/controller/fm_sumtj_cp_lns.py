@@ -1732,12 +1732,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 timestamp=sub_timer.elapsed_sec,
             )
 
-        # if error_if_infeasible:
-        self.check_feasibility(last_solution)
+        if error_if_infeasible:
+            self.check_feasibility(last_solution)
         last_solution_obj_value = self.get_obj_value(last_solution)
-        logging.info(
-            f"Initialized by IC with total tardiness {last_solution_obj_value}"
-        )
+        logging.info(f"BD-CP done with total tardiness {last_solution_obj_value}")
         # Create report for the final solution and register it
         final_report = FsSubroutineReport(
             elapsed_time=sub_timer.elapsed_sec,
