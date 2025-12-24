@@ -3,6 +3,7 @@ from pathlib import Path
 
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
+from matplotlib import rc_context
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
@@ -49,16 +50,24 @@ class GanttPlotter:
         stage_list: list[str] | None = None,
         all_job_list: list[str] | None = None,
     ):
-        self.plot_flowshop(
-            start_time_map,
-            end_time_map,
-            job_list=job_list,
-            stage_list=stage_list,
-            all_job_list=all_job_list,
-        )
-        plt.savefig(file_path, bbox_inches="tight", dpi=300)
-        logging.info(f"Gantt chart saved to {file_path}")
-        plt.close()
+        with rc_context(
+            {
+                "svg.fonttype": "none",  # text as a text, not as a path
+                "font.family": "sans-serif",
+                "font.sans-serif": ["Arial"],
+                "text.usetex": False,
+            }
+        ):
+            self.plot_flowshop(
+                start_time_map,
+                end_time_map,
+                job_list=job_list,
+                stage_list=stage_list,
+                all_job_list=all_job_list,
+            )
+            plt.savefig(file_path, bbox_inches="tight", dpi=300)
+            logging.info(f"Gantt chart saved to {file_path}")
+            plt.close()
 
     def plot_flowshop(
         self,

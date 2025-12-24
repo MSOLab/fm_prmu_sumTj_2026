@@ -427,7 +427,7 @@ class FlowshopTardinessControllerCore(
             and self.solution_manager.best_obj_bound is not None
             and not math.isnan(self.solution_manager.best_obj_bound)
         ):
-            self.cp_model.set_obj_lower_bound(self.solution_manager.best_obj_bound)
+            self.cp_model.set_sumTj_lower_bound(self.solution_manager.best_obj_bound)
 
         # mdl_txt_path = self.get_file_path_for_subroutine("_cp_sat_model.txt")
         # self.cp_model.export_to_file(str(mdl_txt_path))

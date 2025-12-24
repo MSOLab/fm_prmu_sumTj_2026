@@ -35,8 +35,8 @@ class PositionModel(CustomCpModel):
     i_list: list[int]
     """$I$: stage index (i) list; 0..(m-1)"""
 
-    p: dict[tuple[int, int], int]
-    """$p_{ji}$: processing time of job j at stage i"""
+    P: dict[tuple[int, int], int]
+    """$P_{ij}$: processing time at stage i for job j (P[i, j])"""
 
     stage_start_time_lb: dict[int, int]
     """i -> lower bound on the start time of the stage."""
@@ -80,16 +80,27 @@ class PositionModel(CustomCpModel):
 
     @classmethod
     def from_instance(
-        cls, instance: FlowshopDuedateParameters, horizon: int
+        cls,
+        instance: FlowshopDuedateParameters,
+        horizon: int,
+        stage_2_est_map: dict[str, int] | None = None,
+        sumTj_offset: int | None = None,
     ) -> PositionModel:
         result = cls(horizon)
         result.name = f"{cls.__name__}_{instance.name}"
-        result.define_model(instance)
+        result.define_model(
+            instance, stage_2_est_map=stage_2_est_map, sumTj_offset=sumTj_offset
+        )
         return result
 
-    def define_model(self, instance: FlowshopDuedateParameters) -> None:
+    def define_model(
+        self,
+        instance: FlowshopDuedateParameters,
+        stage_2_est_map: dict[str, int] | None = None,
+        sumTj_offset: int | None = None,
+    ) -> None:
         elapsed = ElapsedTimer()
-        self.define_parameters(instance)
+        self.define_parameters(instance, stage_2_est_map=stage_2_est_map)
         logging.info(f"Defined parameters; took {elapsed.elapsed_sec:.3f} sec.")
 
         elapsed.set_start_time_as_now()
@@ -98,15 +109,21 @@ class PositionModel(CustomCpModel):
 
         elapsed.set_start_time_as_now()
         self.define_constraints()
+        if stage_2_est_map is not None:
+            self.add_stage_earliest_start_time_constraints(stage_2_est_map)
         logging.info(f"Defined constraints; took {elapsed.elapsed_sec:.3f} sec.")
 
         elapsed.set_start_time_as_now()
-        self.define_total_tardiness_objective()
+        self.define_sumTj_objective(sumTj_offset=sumTj_offset)
         logging.info(f"Defined objective; took {elapsed.elapsed_sec:.3f} sec.")
 
     # Parameters
 
-    def define_parameters(self, instance: FlowshopDuedateParameters) -> None:
+    def define_parameters(
+        self,
+        instance: FlowshopDuedateParameters,
+        stage_2_est_map: dict[str, int] | None = None,
+    ) -> None:
         """Define the parameters for the model based on the FlowshopDuedateParameters instance.
 
         Args:
@@ -124,31 +141,39 @@ class PositionModel(CustomCpModel):
         }
         self.i_list = list(range(len(instance.stage_id_list)))
 
-        _p = instance.p_manager.job_stage_2_value_map(
-            instance.job_id_list, instance.stage_id_list
+        P_dict = instance.p_manager.stage_job_2_value_map(
+            instance.stage_id_list, instance.job_id_list
         )
-        self.p = {
-            (j, i): int(round(_p[j_name, i_name]))
-            for j, j_name in self.j_2_job_name_map.items()
+        self.P = {
+            (i, j): int(round(P_dict[i_name, j_name]))
             for i, i_name in self.i_2_stage_name_map.items()
+            for j, j_name in self.j_2_job_name_map.items()
         }
 
+        logging.info(f"Given stage_2_est_map: {stage_2_est_map}")
         self.stage_start_time_lb = {}
-        cumulative_p_min = 0
         for i in self.i_list:
-            self.stage_start_time_lb[i] = cumulative_p_min
-            cumulative_p_min += min(self.p[j, i] for j in self.j_list)
+            stage_est = (
+                stage_2_est_map.get(self.i_2_stage_name_map[i], 0)
+                if stage_2_est_map
+                else 0
+            )
+            if i > 0:
+                candid1 = self.stage_start_time_lb[i - 1] + min(
+                    self.P[i - 1, j] for j in self.j_list
+                )
+                if stage_est < candid1:
+                    stage_est = candid1
+            self.stage_start_time_lb[i] = stage_est
+            # logging.info(f"Stage {i} start time LB: {self.stage_start_time_lb[i]}")
 
         self.stage_end_time_ub = {}
         for i in self.i_list:
-            candid1 = sum(
-                self.p[j, ip] for j in self.j_list for ip in self.i_list[: i + 1]
+            self.stage_end_time_ub[i] = (
+                sum(self.P[ip, j] for j in self.j_list for ip in self.i_list[: i + 1])
+                + self.stage_start_time_lb[i]
             )
-            # max processing time * (job count + stage count - 1)
-            p_max = max(self.p[j, ip] for j in self.j_list for ip in range(0, i + 1))
-            candid2 = p_max * (n + i)
-            self.stage_end_time_ub[i] = min(candid1, candid2)
-
+            # logging.info(f"Stage {i} end time UB: {self.stage_end_time_ub[i]}")
         self.D = {
             j: int(round(instance.job_2_duedate_map[j_name]))
             for j, j_name in self.j_2_job_name_map.items()
@@ -166,21 +191,21 @@ class PositionModel(CustomCpModel):
         self.var_op_end = {}
 
         for i in i_list:
-            p_set = {self.p[j, i] for j in j_list}
-            p_min_i = min(p_set)
-            p_max_i = max(p_set)
+            P_set = {self.P[i, j] for j in j_list}
+            P_min_i = min(P_set)
+            P_max_i = max(P_set)
             for k in j_list:
                 suffix = f"{i}_{k}"
                 self.var_op_start[i, k] = self.new_int_var(
                     self.stage_start_time_lb[i],
-                    self.stage_end_time_ub[i] - p_min_i,
+                    self.stage_end_time_ub[i] - P_min_i,
                     f"start_{suffix}",
                 )
                 self.var_op_lth[i, k] = self.new_int_var(
-                    p_min_i, p_max_i, f"lth_{suffix}"
+                    P_min_i, P_max_i, f"lth_{suffix}"
                 )
                 self.var_op_end[i, k] = self.new_int_var(
-                    self.stage_start_time_lb[i] + p_min_i,
+                    self.stage_start_time_lb[i] + P_min_i,
                     self.stage_end_time_ub[i],
                     f"end_{suffix}",
                 )
@@ -191,58 +216,18 @@ class PositionModel(CustomCpModel):
         }
 
         D_set = {self.D[j] for j in j_list}
-        d_min = min(D_set)
-        d_max = max(D_set)
-        self.var_d = {k: self.new_int_var(d_min, d_max, f"d_{k}") for k in j_list}
+        D_min = min(D_set)
+        D_max = max(D_set)
+        self.var_d = {k: self.new_int_var(D_min, D_max, f"d_{k}") for k in j_list}
 
         # Tardiness of k-th job
         last_i = self.i_list[-1]
         self.var_T = {
-            k: self.new_int_var(0, self.stage_end_time_ub[last_i] - d_min, f"T_{k}")
+            k: self.new_int_var(
+                0, max(self.stage_end_time_ub[last_i] - D_min, 0), f"T_{k}"
+            )
             for k in j_list
         }
-
-    # Objective
-
-    def define_total_tardiness_objective(self) -> None:
-        """
-        Total tardiness objective: minimize \\sum_k{T_k} where T_k := max(end_k - D_k, 0).
-
-        Uses `add_max_equality` for clarity.
-        """
-        j_list = self.j_list
-        last_i = self.i_list[-1]
-
-        for k in j_list:
-            # self.add_max_equality(
-            #     self.var_T[k], [self.var_op_end[last_i, k] - self.var_d[k], 0]
-            # )
-            self.add(self.var_T[k] >= self.var_op_end[last_i, k] - self.var_d[k])
-
-        total_ub = sum(
-            max(0, self.stage_end_time_ub[last_i] - self.D[j]) for j in self.j_list
-        )
-        self.obj_var = self.new_int_var(0, total_ub, "sum_Tk")
-        self.add(self.obj_var == sum(self.var_T[k] for k in j_list))
-
-        self.minimize(self.obj_var)
-
-    def set_obj_lower_bound(self, bound: float | None) -> None:
-        if bound is None:
-            return
-        if math.isnan(bound):
-            return
-        if self.obj_var is None:
-            raise ValueError("Objective variable is not defined yet.")
-
-        # If the bound is very close to an integer, treat it as such.
-        # Otherwise, use ceiling to ensure we don't cut off valid integer solutions.
-        if float_equals(bound, round(bound)):
-            int_bound = round(bound)
-        else:
-            int_bound = math.ceil(bound)
-
-        self.add(self.obj_var >= int_bound)
 
     # Constraints
 
@@ -260,21 +245,21 @@ class PositionModel(CustomCpModel):
         timer.set_start_time_as_now()
 
         # Processing time of each operation
-        # lth_{i,k} = sum_j{P_{j,i} * (pi_k == j_index)} \forall i\in I, k\in K
+        # lth_{i,k} = sum_j{P_{ij} * (pi_k == j_index)} \forall i\in I, k\in K
         # This uses the element constraint.
         for i in i_list:
-            p_vals_i = [self.p[j, i] for j in j_list]
+            P_vals_i = [self.P[i, j] for j in j_list]
             for k in j_list:
-                self.add_element(self.var_pi[k], p_vals_i, self.var_op_lth[i, k])
+                self.add_element(self.var_pi[k], P_vals_i, self.var_op_lth[i, k])
 
         logging.info(f"  Processing time constr. took {timer.elapsed_sec:.3f} sec.")
         timer.set_start_time_as_now()
 
         # Due date of each job
         # d_k = sum_j{D_j * (pi_k == j_index)}
-        d_vals = [self.D[j] for j in j_list]
+        D_vals = [self.D[j] for j in j_list]
         for k in j_list:
-            self.add_element(self.var_pi[k], d_vals, self.var_d[k])
+            self.add_element(self.var_pi[k], D_vals, self.var_d[k])
 
         logging.info(f"  Due date constr. took {timer.elapsed_sec:.3f} sec.")
         timer.set_start_time_as_now()
@@ -303,6 +288,51 @@ class PositionModel(CustomCpModel):
             f"  Precedence (intra-stage) constr. took {timer.elapsed_sec:.3f} sec."
         )
         # timer.set_start_time_as_now()
+
+    # Objective
+
+    def define_sumTj_objective(self, sumTj_offset: int | None = None) -> None:
+        """
+        Total tardiness objective: minimize \\sum_k{T_k} where T_k := max(end_k - D_k, 0).
+
+        Uses `add_max_equality` for clarity.
+        """
+        j_list = self.j_list
+        last_i = self.i_list[-1]
+
+        for k in j_list:
+            self.add_max_equality(
+                self.var_T[k], [self.var_op_end[last_i, k] - self.var_d[k], 0]
+            )
+
+        total_ub = sum(
+            max(0, self.stage_end_time_ub[last_i] - self.D[j]) for j in self.j_list
+        )
+        if sumTj_offset is not None:
+            total_ub += sumTj_offset
+        self.obj_var = self.new_int_var(0, total_ub, "sum_Tk")
+        self.add(
+            self.obj_var == sum(self.var_T[k] for k in j_list) + (sumTj_offset or 0)
+        )
+
+        self.minimize(self.obj_var)
+
+    def set_sumTj_lower_bound(self, bound: float | None) -> None:
+        if bound is None:
+            return
+        if math.isnan(bound):
+            return
+        if self.obj_var is None:
+            raise ValueError("Objective variable is not defined yet.")
+
+        # If the bound is very close to an integer, treat it as such.
+        # Otherwise, use ceiling to ensure we don't cut off valid integer solutions.
+        if float_equals(bound, round(bound)):
+            int_bound = round(bound)
+        else:
+            int_bound = math.ceil(bound)
+
+        self.add(self.obj_var >= int_bound)
 
     # Extraction methods
 
@@ -372,8 +402,23 @@ class PositionModel(CustomCpModel):
 
         return schedule
 
-    def create_schedule_from_sequence(self) -> FlowshopSchedule:
-        j_sequence = [self.solver.Value(self.var_pi[k]) for k in self.j_list]
+    def create_schedule_from_sequence(
+        self, j_name_sequence: list[str] | None = None
+    ) -> FlowshopSchedule:
+        """Create a schedule from a given job name sequence.
+
+        Args:
+            j_name_sequence (list[str] | None, optional): Sequence of job names.
+                If None, uses the sequence from the model solution.
+                Defaults to None.
+
+        Returns:
+            FlowshopSchedule: The created schedule.
+        """
+        if j_name_sequence is None:
+            j_sequence = [self.solver.Value(self.var_pi[k]) for k in self.j_list]
+        else:
+            j_sequence = [self.job_name_2_j_map[j_name] for j_name in j_name_sequence]
 
         i_name_list = [self.i_2_stage_name_map[i] for i in self.i_list]
         schedule = FlowshopSchedule.from_stage_name_list(i_name_list)
@@ -381,7 +426,7 @@ class PositionModel(CustomCpModel):
         for j in j_sequence:
             j_name = self.j_2_job_name_map[j]
             i_2_p_map = {
-                i_name: self.p[j, i] for i, i_name in self.i_2_stage_name_map.items()
+                i_name: self.P[i, j] for i, i_name in self.i_2_stage_name_map.items()
             }
             schedule.dispatch_job_by_stages(
                 j_name, i_name_list, i_2_p_map, after_last=True
@@ -391,10 +436,13 @@ class PositionModel(CustomCpModel):
 
     # methods to add hints
 
-    def add_hints_from_schedule(self, schedule: FlowshopSchedule) -> None:
+    def add_hints_from_schedule(
+        self, schedule: FlowshopSchedule, job_subset: set[str] | None = None
+    ) -> None:
         last_i = self.i_list[-1]
         last_i_name = self.i_2_stage_name_map[last_i]
         j_sequence = schedule.get_last_stage_job_list()
+        j_sequence = [j for j in j_sequence if (job_subset is None or j in job_subset)]
         start_time_map = schedule.get_start_time_map()
         sum_Tj = 0
 
@@ -405,10 +453,10 @@ class PositionModel(CustomCpModel):
             for i, i_name in self.i_2_stage_name_map.items():
                 if (j_name, i_name) in start_time_map:
                     start_hint = start_time_map[j_name, i_name]
-                    p = self.p[j, i]
+                    P_ij = self.P[i, j]
                     self.add_hint(self.var_op_start[i, k], start_hint)
-                    self.add_hint(self.var_op_lth[i, k], p)
-                    self.add_hint(self.var_op_end[i, k], start_hint + p)
+                    self.add_hint(self.var_op_lth[i, k], P_ij)
+                    self.add_hint(self.var_op_end[i, k], start_hint + P_ij)
                 else:
                     all_ops_in_schedule = False
                     all_ops_of_j_in_schedule = False
@@ -420,7 +468,7 @@ class PositionModel(CustomCpModel):
                 )
                 Tj = max(
                     0,
-                    start_time_map[j_name, last_i_name] + self.p[j, last_i] - self.D[j],
+                    start_time_map[j_name, last_i_name] + self.P[last_i, j] - self.D[j],
                 )
                 self.add_hint(self.var_T[k], Tj)
                 sum_Tj += Tj
@@ -432,11 +480,20 @@ class PositionModel(CustomCpModel):
     def add_indirect_precedence_constraints_by_sequence(
         self, job_sequence: list[str]
     ) -> None:
+        # Create job sequence (inverse of job index) variables: pi_inv_j = k where pi_k = j
         self.var_pi_inverse = {
             j: self.new_int_var(self.j_first, self.j_last, f"pi_inv_{j}")
             for j in self.j_list
         }
 
+        # Job sequence variable is the inverse of position variable
+        self.add_inverse(
+            [self.var_pi[k] for k in self.j_list],
+            [self.var_pi_inverse[j] for j in self.j_list],
+        )
+        # All-different constraint on sequence variables
+        self.add_all_different([self.var_pi_inverse[j] for j in self.j_list])
+        # Precedence constraints according to the given job sequence
         for j1_name, j2_name in zip(job_sequence[:-1], job_sequence[1:]):
             j1 = self.job_name_2_j_map[j1_name]
             j2 = self.job_name_2_j_map[j2_name]
@@ -465,41 +522,52 @@ class PositionModel(CustomCpModel):
         new_model.i_list = list(self.i_list)
         new_model.i_2_stage_name_map = dict(self.i_2_stage_name_map)
 
-        _p = {
-            (j_name, i): self.p[self.job_name_2_j_map[j_name], i]
+        P_dict = {
+            (i, j_name): self.P[i, self.job_name_2_j_map[j_name]]
             for j_name in job_subset
             for i in self.i_list
         }
 
-        new_model.p = {
-            (j, i): _p[j_name, i]
+        new_model.P = {
+            (i, j): P_dict[i, j_name]
             for j, j_name in new_model.j_2_job_name_map.items()
             for i in new_model.i_list
         }
 
         new_model.stage_start_time_lb = {}
-        cumulative_p_min = 0
+        cumulative_P_min = 0
         for i in self.i_list:
-            new_model.stage_start_time_lb[i] = cumulative_p_min
-            cumulative_p_min += min(new_model.p[j, i] for j in new_model.j_list)
+            new_model.stage_start_time_lb[i] = cumulative_P_min
+            cumulative_P_min += min(new_model.P[i, j] for j in new_model.j_list)
 
         new_model.stage_end_time_ub = {}
         for i in self.i_list:
             candid1 = sum(
-                new_model.p[j, ip]
+                new_model.P[ip, j]
                 for j in new_model.j_list
                 for ip in new_model.i_list[: i + 1]
             )
             # max processing time * (job count + stage count - 1)
-            p_max = max(
-                new_model.p[j, ip] for j in new_model.j_list for ip in range(0, i + 1)
+            P_max = max(
+                new_model.P[ip, j] for j in new_model.j_list for ip in range(0, i + 1)
             )
-            candid2 = p_max * (n + i)
+            candid2 = P_max * (n + i)
             new_model.stage_end_time_ub[i] = min(candid1, candid2)
 
-        new_model.D = {j: self.D[j] for j in new_model.j_list}
+        new_model.D = {
+            j: self.D[self.job_name_2_j_map[j_name]]
+            for j, j_name in new_model.j_2_job_name_map.items()
+        }
         new_model.define_variables()
         new_model.define_constraints()
-        new_model.define_total_tardiness_objective()
+        new_model.define_sumTj_objective()
 
         return new_model
+
+    def add_stage_earliest_start_time_constraints(
+        self, stage_2_est_map: dict[str, int]
+    ) -> None:
+        for i, i_name in self.i_2_stage_name_map.items():
+            est = stage_2_est_map.get(i_name, 0)
+            if est > 0:
+                self.add(self.var_op_start[i, self.j_first] >= est)
