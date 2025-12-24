@@ -5,6 +5,7 @@ from typing import Callable
 
 from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
 from routix import DynamicDataObject, ElapsedTimer
+from routix.io import tuple_to_pyyaml_key, object_to_yaml
 from routix.util.comparison import float_a_leq_b, float_a_stl_b
 from schore.schedule_examples.shop.flow import FlowshopSchedule
 
@@ -1584,6 +1585,20 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 )
                 last_solution = partial_sol
                 incumbent_job_seq = last_solution.get_last_stage_job_list()
+                # TODO: uncomment only for debug purpose
+                # job_subset_cnt = len(target_job_subset)
+                # output_path = self.get_file_path_for_subroutine(
+                #     f"_gantt_n{job_subset_cnt}_solution.yaml"
+                # )
+                # solution_dict = {
+                #     "start_time_map": tuple_to_pyyaml_key(
+                #         last_solution.get_start_time_map()
+                #     ),
+                #     "end_time_map": tuple_to_pyyaml_key(
+                #         last_solution.get_end_time_map()
+                #     ),
+                # }
+                # object_to_yaml(solution_dict, output_path)
                 incumbent_obj_val = 0
                 _log_snapshot(
                     last_solution,
@@ -1632,6 +1647,20 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 incumbent_job_seq = last_solution.get_last_stage_job_list()
                 incumbent_obj_val = int(dispatch_obj_val)
                 halt_incremental_cp_processing = True
+                # TODO: uncomment only for debug purpose
+                # job_subset_cnt = len(target_job_subset)
+                # output_path = self.get_file_path_for_subroutine(
+                #     f"_gantt_n{job_subset_cnt}_solution.yaml"
+                # )
+                # solution_dict = {
+                #     "start_time_map": tuple_to_pyyaml_key(
+                #         last_solution.get_start_time_map()
+                #     ),
+                #     "end_time_map": tuple_to_pyyaml_key(
+                #         last_solution.get_end_time_map()
+                #     ),
+                # }
+                # object_to_yaml(solution_dict, output_path)
                 break  # End loop & go to 'after-loop finishing'
 
             logging.info(
@@ -1682,6 +1711,20 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 last_solution = cp_sched
                 incumbent_job_seq = last_solution.get_last_stage_job_list()
                 incumbent_obj_val = int(cp_obj_val)
+                # TODO: uncomment only for debug purpose
+                # job_subset_cnt = len(target_job_subset)
+                # output_path = self.get_file_path_for_subroutine(
+                #     f"_gantt_n{job_subset_cnt}_solution.yaml"
+                # )
+                # solution_dict = {
+                #     "start_time_map": tuple_to_pyyaml_key(
+                #         last_solution.get_start_time_map()
+                #     ),
+                #     "end_time_map": tuple_to_pyyaml_key(
+                #         last_solution.get_end_time_map()
+                #     ),
+                # }
+                # object_to_yaml(solution_dict, output_path)
             else:
                 reason = (
                     "infeasible" if not iter_report.is_feasible else "no improvement"
@@ -1690,6 +1733,20 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 last_solution = partial_sol
                 incumbent_job_seq = last_solution.get_last_stage_job_list()
                 incumbent_obj_val = int(dispatch_obj_val)
+                # TODO: uncomment only for debug purpose
+                # job_subset_cnt = len(target_job_subset)
+                # output_path = self.get_file_path_for_subroutine(
+                #     f"_gantt_n{job_subset_cnt}_solution.yaml"
+                # )
+                # solution_dict = {
+                #     "start_time_map": tuple_to_pyyaml_key(
+                #         last_solution.get_start_time_map()
+                #     ),
+                #     "end_time_map": tuple_to_pyyaml_key(
+                #         last_solution.get_end_time_map()
+                #     ),
+                # }
+                # object_to_yaml(solution_dict, output_path)
 
             # ---------- [CP is not better & timeover?] ----------
             if (not cp_is_better) and float_a_leq_b(
