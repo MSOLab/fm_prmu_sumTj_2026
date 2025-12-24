@@ -5,7 +5,6 @@ from typing import Callable
 
 from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
 from routix import DynamicDataObject, ElapsedTimer
-from routix.io import tuple_to_pyyaml_key, object_to_yaml
 from routix.util.comparison import float_a_leq_b, float_a_stl_b
 from schore.schedule_examples.shop.flow import FlowshopSchedule
 
@@ -1642,6 +1641,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             if float_a_leq_b(_timelimit, 0):
                 logging.info(
                     "(batch %d/%d) Time over before CP solving -> finish by dispatching remaining jobs.",
+                    bidx + 1,
+                    job_sublist_cnt,
                 )
                 last_solution = partial_sol  # keep the dispatched partial schedule
                 incumbent_job_seq = last_solution.get_last_stage_job_list()

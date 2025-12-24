@@ -36,7 +36,7 @@ class PositionModel(CustomCpModel):
     """$I$: stage index (i) list; 0..(m-1)"""
 
     P: dict[tuple[int, int], int]
-    """$P_{ij}$: processing time of job j at stage i"""
+    """$P_{ij}$: processing time at stage i for job j (P[i, j])"""
 
     stage_start_time_lb: dict[int, int]
     """i -> lower bound on the start time of the stage."""
