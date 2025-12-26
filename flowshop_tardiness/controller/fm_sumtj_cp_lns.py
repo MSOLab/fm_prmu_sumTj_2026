@@ -495,7 +495,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         """
         if tie_breaker == "default":
             return (metric.sumTj, 0)
-        if tie_breaker == "NEHms":
+        if tie_breaker == "makespan":
             return (metric.sumTj, metric.makespan)
         if tie_breaker == "NEH-M":
             return (metric.sumTj + metric.makespan * makespan_multiplier, 0)
@@ -629,6 +629,82 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             raise RuntimeError("Unexpected: best_metric is None after evaluation.")
         return best_pos, best_metric
 
+    # -----------------------------
+    # NEW acceleration helper: build evaluator with index-mapped p, due
+    # -----------------------------
+    def _get_new_acc_evaluator(self):
+        """
+        Build (and cache) a PermutationFlowshopEvaluator that uses 0-based
+        integer job indices internally.
+
+        Returns:
+            (evaluator, job_id_to_idx, idx_to_job_id)
+        """
+        # cache on controller instance to avoid rebuilding on every call
+        if hasattr(self, "_new_acc_cache") and self._new_acc_cache is not None:
+            return self._new_acc_cache
+
+        from .flowshop_new_acc import PermutationFlowshopEvaluator
+
+        job_ids = list(self.instance.job_id_list)
+        stage_ids = list(self.stage_ids)
+
+        job_id_to_idx = {jid: k for k, jid in enumerate(job_ids)}
+        idx_to_job_id = {k: jid for jid, k in job_id_to_idx.items()}
+
+        m = len(stage_ids)
+        n = len(job_ids)
+
+        # Build p[m][n] aligned with (stage_idx, job_idx)
+        p = [[0] * n for _ in range(m)]
+        for i, stage_id in enumerate(stage_ids):
+            for jid in job_ids:
+                j = job_id_to_idx[jid]
+                p[i][j] = int(self.stage_2_job_2_p_dict[stage_id][jid])
+
+        # Build due[n]
+        due = [0] * n
+        for jid in job_ids:
+            j = job_id_to_idx[jid]
+            due[j] = int(self.instance.job_2_duedate_map[jid])
+
+        evaluator = PermutationFlowshopEvaluator(p, due)
+
+        self._new_acc_cache = (evaluator, job_id_to_idx, idx_to_job_id)
+        return self._new_acc_cache
+
+    def _get_best_pos_and_metric_new_acc(
+        self, seq_now: list[str], job_id: str, tie_breaker: str = "default"
+    ) -> tuple[int, ScheduleMetric]:
+        """
+        Evaluate insertion of job_id into seq_now using NEW acceleration
+        (Fernandez-Viagas et al., 2020) evaluator.
+
+        Args:
+            seq_now: current sequence of job IDs (strings)
+            job_id: job ID (string) to insert
+            tie_breaker: tie breaking strategy (currently unused)
+
+        Returns:
+            (best_pos, ScheduleMetric) for the best insertion position.
+        """
+        evaluator, job_id_to_idx, _ = self._get_new_acc_evaluator()
+
+        # convert current sequence to index sequence
+        pi_idx = [job_id_to_idx[j] for j in seq_now]
+        sigma_idx = job_id_to_idx[job_id]
+
+        # NEW evaluator returns best position and best objective1 value (sumTj)
+        best_pos, _ = evaluator.get_best_position(
+            pi_idx, sigma_idx, tie_breaker=tie_breaker
+        )
+
+        # Build resulting sequence and compute ScheduleMetric using existing method
+        new_seq = seq_now[:best_pos] + [job_id] + seq_now[best_pos:]
+        metric = self._compute_schedule_metric_from_sequence(new_seq)
+
+        return best_pos, metric
+
     def _run_neh_edd(
         self,
         method_name: str,
@@ -643,7 +719,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         Complexity: O(n^2 * m) with small constants via prefix reuse.
         """
         sub_timer = ElapsedTimer()
-        job_cnt = self.instance.job_count
 
         # 1) EDD order
         incumbent_sol = self.solution_manager.get_incumbent()
@@ -654,16 +729,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         seq: list[str] = []
 
-        # 2) NEH insertion by EDD order with fast evaluation
+        # 2) NEH insertion by EDD order with NEW acceleration evaluation
         for j in job_sequence:
-            j_idx = job_sequence.index(j)
-            makespan_multiplier = (job_cnt - 1 - j_idx) / (job_cnt - 1)
-            pos, _ = self._eval_insert_with_criteria(
-                seq,
-                j,
-                tie_breaker,
-                first_improvement=first_improvement,
-                makespan_multiplier=makespan_multiplier,
+            pos, _ = self._get_best_pos_and_metric_new_acc(
+                seq, j, tie_breaker=tie_breaker
             )
             seq.insert(pos, j)
 
@@ -696,22 +765,42 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     def initialize_by_nehedd(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEHedd", "default", error_if_infeasible, draw_gantt)
+        self._run_neh_edd(
+            "NEHedd",
+            "default",
+            error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
+        )
 
     def initialize_by_nehms(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEHms", "NEHms", error_if_infeasible, draw_gantt)
+        self._run_neh_edd(
+            "makespan",
+            "makespan",
+            error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
+        )
 
     def initialize_by_nehm(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEH-M", "NEH-M", error_if_infeasible, draw_gantt)
+        self._run_neh_edd(
+            "NEH-M",
+            "NEH-M",
+            error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
+        )
 
     def initialize_by_neh_it1(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEH-IT1", "NEH-IT1", error_if_infeasible, draw_gantt)
+        self._run_neh_edd(
+            "NEH-IT1",
+            "NEH-IT1",
+            error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
+        )
 
     def improve_job_seq_by_insertion_single_pass(
         self,
@@ -738,12 +827,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         for j in seq_before:
             j_idx = seq_after.index(j)
             seq_after.remove(j)
-            pos, after_metric = self._eval_insert_with_criteria(
-                seq_after,
-                j,
-                tie_breaker,
-                first_improvement=first_improvement,
-                baseline_metric=best_metric,
+            pos, after_metric = self._get_best_pos_and_metric_new_acc(
+                seq_after, j, tie_breaker=tie_breaker
             )
             crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
 

@@ -4,5 +4,5 @@
 - method: initialize_by_edd
 - method: initialize_by_nehms
 - method: improve_by_insertion
-  tie_breaker: "default"
+  tie_breaker: "makespan"
   first_improvement: false
