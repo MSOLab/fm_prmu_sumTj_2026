@@ -124,24 +124,16 @@ def test_fig10_matches_naive_one_instance(p, due, pi, sigma):
             cp=pre.cp,
             csigma=pre.csigma,
             j1=pos,
-            AOF1=pre.prefix_obj1,
-            AOF2=None,  # idle objective not tracked in this regression
+            AOF=pre.prefix_tardy,
         )
 
         # NAIVE evaluation
         seq2 = insert_job(pi, sigma, pos)
         naive_tardy = naive_sum_tardiness(p, due, seq2)
-        naive_idle = naive_sum_idle(p, seq2)
 
-        assert new_val.obj1_val == naive_tardy, (
-            f"[Mismatch tardy] pos={pos} NEW={new_val.obj1_val} NAIVE={naive_tardy} seq2={seq2}"
+        assert new_val == naive_tardy, (
+            f"[Mismatch tardy] pos={pos} NEW={new_val} NAIVE={naive_tardy} seq2={seq2}"
         )
-
-        # if your ObjValVector stores idle (obj2) then also compare
-        if new_val.obj2_val is not None:
-            assert new_val.obj2_val == naive_idle, (
-                f"[Mismatch idle] pos={pos} NEW={new_val.obj2_val} NAIVE={naive_idle} seq2={seq2}"
-            )
 
 
 # ---------------------------
@@ -151,7 +143,7 @@ def test_best_insertion_matches_naive_one_instance(p, due, pi, sigma):
     solver = PermutationFlowshopEvaluator(p, due)
 
     # NEW best
-    best_pos_new, best_val_new = solver.best_insertion_sumTj(pi, sigma)
+    best_pos_new, best_val_new = solver.get_best_position(pi, sigma)
 
     # naive best
     best_pos_naive = None
@@ -194,7 +186,10 @@ def run_random_tests(
         # rough: sum of average processing times
         avg_p = sum(sum(row) for row in p) / (m * n_jobs)
         # make due a bit tight to generate tardiness
-        due = [random.randint(int(avg_p * m * 0.5), int(avg_p * m * 2.0)) for _ in range(n_jobs)]
+        due = [
+            random.randint(int(avg_p * m * 0.5), int(avg_p * m * 2.0))
+            for _ in range(n_jobs)
+        ]
 
         # choose pi and sigma (sigma not in pi)
         jobs = list(range(n_jobs))
@@ -210,7 +205,7 @@ def run_random_tests(
         test_best_insertion_matches_naive_one_instance(p, due, pi, sigma)
 
         if (t + 1) % 10 == 0:
-            print(f"[OK] {t+1}/{n_trials} trials passed")
+            print(f"[OK] {t + 1}/{n_trials} trials passed")
 
     print(f"All {n_trials} randomized trials passed ✅")
 

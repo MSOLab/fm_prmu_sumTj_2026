@@ -1,22 +1,6 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 
-
-class ObjValVector:
-    obj1_val: int
-    obj2_val: int | None = None
-
-    def __init__(self, obj1_val: int, obj2_val: int | None = None):
-        self.obj1_val = obj1_val
-        self.obj2_val = obj2_val
-
-    def __lt__(self, other: ObjValVector) -> bool:
-        if self.obj1_val != other.obj1_val:
-            return self.obj1_val < other.obj1_val
-        if self.obj2_val is not None and other.obj2_val is not None:
-            return self.obj2_val < other.obj2_val
-        return False
+from .obj_val_vector import ObjValVector
 
 
 @dataclass
@@ -43,14 +27,9 @@ class Precomp:
     (pos in [0..k-1])
     """
 
-    prefix_obj1: list[int]
+    prefix_tardy: list[int]
     """
     AOF[pos]: prefix objective 1 (example: total tardiness sumTj) up to position pos (0..k-1)
-    """
-
-    prefix_obj2: list[int] | None = None
-    """
-    AOF[pos]: prefix objective 2 (example: total idle time) up to position pos (0..k-1)
     """
 
 
@@ -76,30 +55,6 @@ class PermutationFlowshopEvaluator:
         Return tardiness of job given its completion time.
         """
         return completion_time - self.due[job] if completion_time > self.due[job] else 0
-
-    # def get_idle_time(self, job: int, c_i_prev: list[int], c_i_curr: list[int]) -> int:
-    #     """Return the sum of idle time before starting the current job.
-
-    #     Args:
-    #         job (int): The job index.
-    #         c_i_prev (list[int]): Completion time of the previous job at each machine.
-    #             If the current job is the first job, all are given as zero.
-    #         c_i_curr (list[int]): Completion time of the current job at each machine.
-
-    #     Returns:
-    #         int: The sum of (current job start - previous job completion).
-    #     """
-    #     job_idle = 0
-    #     for i in range(self.m):
-    #         start_time = c_i_curr[i] - self.p[i][job]
-    #         idle_time = start_time - c_i_prev[i]
-    #         if idle_time > 0:
-    #             job_idle += idle_time
-    #         elif idle_time < 0:
-    #             raise ValueError(
-    #                 "Invalid completion times: current job starts before previous job ends."
-    #             )
-    #     return job_idle
 
     def precompute(self, pi: list[int], sigma: int) -> Precomp:
         """
@@ -219,25 +174,12 @@ class PermutationFlowshopEvaluator:
             job = pi[t - 1]
             prefix_tardy[t] = prefix_tardy[t - 1] + self.get_tardiness(job, C_last)
 
-        # ============================================================
-        # 5) Calculate idle times prefix (optional second objective)
-        # ============================================================
-        # prefix_idle = [0] * (k_minus_1 + 1)
-        # for t in range(1, k_minus_1 + 1):
-        #     j = t - 1
-        #     job = pi[j]
-        #     # TODO: optimize by reusing previous computations
-        #     c_i_prev = [c[i][j - 1] if j > 0 else 0 for i in range(m)]
-        #     c_i_curr = [c[i][j] for i in range(m)]
-        #     idle_sum_this_job = self.get_idle_time(job, c_i_prev, c_i_curr)
-        #     prefix_idle[t] = prefix_idle[t - 1] + idle_sum_this_job
-
         return Precomp(
             c=c,
             cbar=cbar,
             cp=cp,
             csigma=csigma,
-            prefix_obj1=prefix_tardy,
+            prefix_tardy=prefix_tardy,
         )
 
     def find_i_star(self, pre: Precomp, pos: int) -> tuple[int, int]:
@@ -285,9 +227,8 @@ class PermutationFlowshopEvaluator:
         cp: list[list[int]],
         csigma: list[list[int]],
         j1: int,
-        AOF1: list[int],
-        AOF2: list[int] | None = None,
-    ) -> ObjValVector:
+        AOF: list[int],
+    ) -> int:
         """(As faithful as possible) Implementation of the algorithm in Fig.10.
 
         Args:
@@ -297,11 +238,10 @@ class PermutationFlowshopEvaluator:
             cp (list[list[int]]): direction table computed in Fig.9 while building cbar
             csigma (list[list[int]]): completion time of sigma if inserted at each position j (Fig.9)
             j1 (int): insertion position (0-based). sigma is placed before pi[j1] (if j1 < L), else at end.
-            AOF1 (list[int]): prefix primary objective for Π (Fig.9)
-            AOF2 (list[int] | None): prefix secondary objective for Π
+            AOF (list[int]): prefix objective for Π (Fig.9)
 
         Returns:
-            ObjValVector: primary and secondary objective values for Π' = insert(sigma at j1) computed using Fig.10 logic.
+            int: objective value for Π' = insert(sigma at j1) computed using Fig.10 logic.
         """
 
         m = self.m
@@ -458,34 +398,13 @@ class PermutationFlowshopEvaluator:
             total_tardiness += self.get_tardiness(job, C[m - 1][j + 1])
 
         # add unchanged prefix objective before insertion point
-        total_tardiness += AOF1[j1]
+        total_tardiness += AOF[j1]
 
-        total_idle = None
-        # if AOF2 is not None:
-        #     # If there is a second objective (e.g., idle time), compute it similarly.
-        #     total_idle = 0
+        return total_tardiness
 
-        #     # σ idle time: previous job in Π' is at position (j1-1) if j1>0
-        #     c_i_prev = [C[i][j1 - 1] for i in range(m)] if j1 > 0 else [0] * m
-        #     c_i_curr = [C[i][j1] for i in range(m)]
-        #     total_idle += self.get_idle_time(sigma, c_i_prev, c_i_curr)
-
-        #     # suffix jobs idle time
-        #     for j in range(j1, L):
-        #         job = pi[j]
-        #         if j == 0:
-        #             c_i_prev = [0] * m
-        #         else:
-        #             c_i_prev = [C[i][j] for i in range(m)]
-        #         c_i_curr = [C[i][j + 1] for i in range(m)]
-        #         total_idle += self.get_idle_time(job, c_i_prev, c_i_curr)
-
-        #     # add unchanged prefix idle time before insertion point
-        #     total_idle += AOF2[j1]
-
-        return ObjValVector(total_tardiness, total_idle)
-
-    def get_best_position(self, pi: list[int], sigma: int, tie_breaker: str = "default") -> tuple[int, int]:
+    def get_best_position(
+        self, pi: list[int], sigma: int, tie_breaker: str = "default"
+    ) -> tuple[int, int]:
         """Return (best_pos, best_OF) for inserting sigma into pi.
 
         This is the top-level driver:
@@ -509,22 +428,21 @@ class PermutationFlowshopEvaluator:
 
         # Try all insertion positions pos in [0..len(pi)]
         for pos in range(len(pi) + 1):
-            i_star, makespan = self.find_i_star(
-                pre, pos
-            )
+            i_star, makespan = self.find_i_star(pre, pos)
 
-            obj_vals = self.calculate_OF_fig10(
+            sum_Tj = self.calculate_OF_fig10(
                 pi=pi,
                 sigma=sigma,
                 i_star=i_star,
                 cp=pre.cp,
                 csigma=pre.csigma,
                 j1=pos,
-                AOF1=pre.prefix_obj1,
-                AOF2=None,  # second objective (idle) is currently unsupported in this driver
+                AOF=pre.prefix_tardy,
             )
             if tie_breaker == "makespan":
-                obj_vals.obj2_val = makespan # optionally store makespan as obj2
+                obj_vals = ObjValVector(sum_Tj, makespan)
+            else:
+                obj_vals = ObjValVector(sum_Tj)
 
             if best_obj_vals is None or obj_vals < best_obj_vals:
                 best_obj_vals = obj_vals
