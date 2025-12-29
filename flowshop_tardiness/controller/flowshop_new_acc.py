@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Sequence
 
 from .obj_val_vector import ObjValVector
 
@@ -29,7 +30,7 @@ class Precomp:
 
     prefix_tardy: list[int]
     """
-    AOF[pos]: prefix objective 1 (example: total tardiness sumTj) up to position pos (0..k-1)
+    AOF[pos]: sum of tardiness of prefix up to position pos (0..k-1)
     """
 
 
@@ -40,7 +41,7 @@ class PermutationFlowshopEvaluator:
     Here we implement total tardiness sumTj.
     """
 
-    def __init__(self, p: list[list[int]], due: list[int]):
+    def __init__(self, p: Sequence[Sequence[int]], due: Sequence[int]):
         """
         p: processing times [m][n_jobs]
         due: due dates [n_jobs]
@@ -56,7 +57,7 @@ class PermutationFlowshopEvaluator:
         """
         return completion_time - self.due[job] if completion_time > self.due[job] else 0
 
-    def precompute(self, pi: list[int], sigma: int) -> Precomp:
+    def precompute(self, pi: Sequence[int], sigma: int) -> Precomp:
         """
         (As faithful as possible) Implementation of the algorithm in Fig.9.
         """
@@ -222,23 +223,23 @@ class PermutationFlowshopEvaluator:
     def calculate_OF_fig10(
         self,
         sigma: int,
-        pi: list[int],
+        pi: Sequence[int],
         i_star: int,
-        cp: list[list[int]],
-        csigma: list[list[int]],
+        cp: Sequence[Sequence[int]],
+        csigma: Sequence[Sequence[int]],
         j1: int,
-        AOF: list[int],
+        AOF: Sequence[int],
     ) -> int:
         """(As faithful as possible) Implementation of the algorithm in Fig.10.
 
         Args:
             sigma (int): new job σ to insert
-            pi (list[int]): original sequence Π of length L (paper "Length")
+            pi (Sequence[int]): original sequence Π of length L (paper "Length")
             i_star (int): critical machine where the new critical path connects sigma to Π (from Cor.3.2)
-            cp (list[list[int]]): direction table computed in Fig.9 while building cbar
-            csigma (list[list[int]]): completion time of sigma if inserted at each position j (Fig.9)
+            cp (Sequence[Sequence[int]]): direction table computed in Fig.9 while building cbar
+            csigma (Sequence[Sequence[int]]): completion time of sigma if inserted at each position j (Fig.9)
             j1 (int): insertion position (0-based). sigma is placed before pi[j1] (if j1 < L), else at end.
-            AOF (list[int]): prefix objective for Π (Fig.9)
+            AOF (Sequence[int]): prefix objective for Π (Fig.9)
 
         Returns:
             int: objective value for Π' = insert(sigma at j1) computed using Fig.10 logic.
@@ -403,7 +404,7 @@ class PermutationFlowshopEvaluator:
         return total_tardiness
 
     def get_best_position(
-        self, pi: list[int], sigma: int, tie_breaker: str = "default"
+        self, pi: Sequence[int], sigma: int, tie_breaker: str = "default"
     ) -> tuple[int, int]:
         """Return (best_pos, best_OF) for inserting sigma into pi.
 
@@ -423,8 +424,8 @@ class PermutationFlowshopEvaluator:
         """
         pre = self.precompute(pi, sigma)
 
-        best_obj_vals = None
         best_pos = 0
+        best_obj_vals: ObjValVector | None = None
 
         # Try all insertion positions pos in [0..len(pi)]
         for pos in range(len(pi) + 1):
@@ -445,8 +446,8 @@ class PermutationFlowshopEvaluator:
                 obj_vals = ObjValVector(sum_Tj)
 
             if best_obj_vals is None or obj_vals < best_obj_vals:
-                best_obj_vals = obj_vals
                 best_pos = pos
+                best_obj_vals = obj_vals
 
         if best_obj_vals is None:
             raise ValueError("No insertion positions evaluated.")

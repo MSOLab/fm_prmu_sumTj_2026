@@ -1,7 +1,7 @@
 import logging
 import math
 import random
-from typing import Callable
+from typing import Callable, Sequence
 
 from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
 from routix import DynamicDataObject, ElapsedTimer
@@ -10,6 +10,8 @@ from schore.schedule_examples.shop.flow import FlowshopSchedule
 
 from ..report import FsSubroutineReport
 from .controller_core import FlowshopTardinessControllerCore
+from .flowshop_batch_eval import PermutationFlowshopSubseqEvaluator
+from .list_window_slider import window_slide_over_list
 from .schedule_metric import ScheduleMetric
 
 REL_TOL = 1e-9  # for safe float comparisons
@@ -644,8 +646,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         if hasattr(self, "_new_acc_cache") and self._new_acc_cache is not None:
             return self._new_acc_cache
 
-        from .flowshop_new_acc import PermutationFlowshopEvaluator
-
         job_ids = list(self.instance.job_id_list)
         stage_ids = list(self.stage_ids)
 
@@ -668,13 +668,16 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             j = job_id_to_idx[jid]
             due[j] = int(self.instance.job_2_duedate_map[jid])
 
-        evaluator = PermutationFlowshopEvaluator(p, due)
+        evaluator = PermutationFlowshopSubseqEvaluator(p, due)
 
         self._new_acc_cache = (evaluator, job_id_to_idx, idx_to_job_id)
         return self._new_acc_cache
 
     def _get_best_pos_and_metric_new_acc(
-        self, seq_now: list[str], job_id: str, tie_breaker: str = "default"
+        self,
+        seq_now: list[str],
+        job_id_seq: Sequence[str] | str,
+        tie_breaker: str = "default",
     ) -> tuple[int, ScheduleMetric]:
         """
         Evaluate insertion of job_id into seq_now using NEW acceleration
@@ -682,25 +685,31 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         Args:
             seq_now: current sequence of job IDs (strings)
-            job_id: job ID (string) to insert
+            job_id_seq: job ID (string) or sequence of job IDs to insert
             tie_breaker: tie breaking strategy (currently unused)
 
         Returns:
             (best_pos, ScheduleMetric) for the best insertion position.
         """
+        _job_id_seq: Sequence[str]
+        if isinstance(job_id_seq, str):
+            _job_id_seq = [job_id_seq]
+        else:
+            _job_id_seq = job_id_seq
+
         evaluator, job_id_to_idx, _ = self._get_new_acc_evaluator()
 
         # convert current sequence to index sequence
         pi_idx = [job_id_to_idx[j] for j in seq_now]
-        sigma_idx = job_id_to_idx[job_id]
+        sigma_idx_seq = [job_id_to_idx[job_id] for job_id in _job_id_seq]
 
         # NEW evaluator returns best position and best objective1 value (sumTj)
         best_pos, _ = evaluator.get_best_position(
-            pi_idx, sigma_idx, tie_breaker=tie_breaker
+            pi_idx, sigma_idx_seq, tie_breaker=tie_breaker
         )
 
         # Build resulting sequence and compute ScheduleMetric using existing method
-        new_seq = seq_now[:best_pos] + [job_id] + seq_now[best_pos:]
+        new_seq = seq_now[:best_pos] + list(_job_id_seq) + seq_now[best_pos:]
         metric = self._compute_schedule_metric_from_sequence(new_seq)
 
         return best_pos, metric
@@ -805,6 +814,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     def improve_job_seq_by_insertion_single_pass(
         self,
         job_seq: list[str],
+        subseq_size: int | None = None,
         tie_breaker: str = "default",
         first_improvement: bool = False,
     ) -> list[str]:
@@ -814,21 +824,36 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             return job_seq
         # Quick sanity: unique IDs
         if len(set(job_seq)) != job_cnt:
-            logging.warning(
-                "Duplicate job IDs detected in sequence. Insertion pass may misbehave."
-            )
+            raise ValueError("job_seq contains duplicate job IDs.")
+
+        _first_improvement = first_improvement
+
+        if subseq_size is None or subseq_size == 1:
+            _subseq_size = 1
+        elif subseq_size < 1:
+            raise ValueError("subseq_size must be at least 1.")
+        else:
+            _subseq_size = subseq_size
+            _first_improvement = True  # always first-improvement for subsequences > 1
 
         seq_before = list(job_seq)
-        seq_after = list(seq_before)
+        incumbent_seq = list(seq_before)
 
         best_metric = self._compute_schedule_metric_from_sequence(seq_before)
         best_crit1, best_crit2 = self._tie_crit_from_tm(best_metric, tie_breaker)
 
-        for j in seq_before:
-            j_idx = seq_after.index(j)
-            seq_after.remove(j)
+        max_iter_cnt = job_cnt - _subseq_size + 1
+        logging.info(
+            f"Starting insertion improvement pass (subseq_size={_subseq_size}, max iterations={max_iter_cnt})."
+        )
+        iter_cnt = 0
+        for j_subseq in window_slide_over_list(job_seq, _subseq_size):
+            iter_cnt += 1
+            profile_fixed = [
+                j for j in incumbent_seq if j not in j_subseq
+            ]  # remove subseq
             pos, after_metric = self._get_best_pos_and_metric_new_acc(
-                seq_after, j, tie_breaker=tie_breaker
+                profile_fixed, j_subseq, tie_breaker=tie_breaker
             )
             crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
 
@@ -836,22 +861,28 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 crit1 == best_crit1 and crit2 < best_crit2
             )
             if after_is_better:
-                seq_after.insert(pos, j)
+                incumbent_seq = (
+                    profile_fixed[:pos] + list(j_subseq) + profile_fixed[pos:]
+                )
                 best_metric = after_metric
                 best_crit1 = crit1
                 best_crit2 = crit2
-            else:
-                seq_after.insert(j_idx, j)  # revert to original spot for stability
+                if _first_improvement:
+                    logging.info(
+                        f"Insertion improvement pass: iteration {iter_cnt} / {max_iter_cnt}, found improvement to total tardiness {best_metric.sumTj}."
+                    )
+                    break  # exit after 1st improvement
             if self.time_is_up():
                 logging.info(
-                    f"Time limit reached during {j_idx + 1} / {job_cnt} insertion improvement."
+                    f"Time limit reached during {iter_cnt} / {max_iter_cnt} insertion improvement."
                 )
                 break
 
-        return seq_after
+        return incumbent_seq
 
     def improve_by_insertion(
         self,
+        subseq_size: int | None = None,
         tie_breaker: str = "default",
         max_passes: int | None = None,
         first_improvement: bool = False,
@@ -902,7 +933,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             passes += 1
 
             seq_after = self.improve_job_seq_by_insertion_single_pass(
-                seq_before, tie_breaker, first_improvement=first_improvement
+                seq_before,
+                subseq_size=subseq_size,
+                tie_breaker=tie_breaker,
+                first_improvement=first_improvement,
             )
             after_metric = self._compute_schedule_metric_from_sequence(seq_after)
             crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)

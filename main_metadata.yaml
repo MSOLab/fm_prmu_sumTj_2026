@@ -217,10 +217,10 @@ dicts_of_i_o_data_path:
   #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_lb_edd_NEHms.yaml"
   #   output_dir: "output_600s/subroutine_flow_lb_edd_NEHms"
   #   description: "LB -> EDD -> NEHms"
-  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_lb_edd_NEHms_IIb.yaml"
-  #   output_dir: "output_600s/subroutine_flow_lb_edd_NEHms_IIb"
-  #   description: "LB -> EDD -> NEHms -> II best improvement"
+  - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+    subroutine_flow_rel_path: "configs_600s/subroutine_flow_lb_edd_NEHms_IIb.yaml"
+    output_dir: "output_600s/subroutine_flow_lb_edd_NEHms_IIb"
+    description: "LB -> EDD -> NEHms -> II best improvement"
   # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
   #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_lb_edd_NEHms_IIf.yaml"
   #   output_dir: "output_600s/subroutine_flow_lb_edd_NEHms_IIf"
@@ -273,10 +273,10 @@ dicts_of_i_o_data_path:
   #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251121-4.yaml"
   #   output_dir : "pra_600s/20251121-4"
   #   description: "BD-CP-initialized"
-  - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-    subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251121-5.yaml"
-    output_dir : "pra_600s/20251121-5"
-    description: "Insertion-improved"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251121-5.yaml"
+  #   output_dir : "pra_600s/20251121-5"
+  #   description: "Insertion-improved"
   # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
   #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251121-6.yaml"
   #   output_dir : "pra_600s/20251121-6"
@@ -293,7 +293,7 @@ instance_worker_cnt: 4
 # Analysis and plotting options
 draw_gantt: false
 painter_thread_cnt: 8
-result_gantt_filename_format: "{}_result_gantt.png"
+result_gantt_filename_format: "{}_result_gantt.svg"
 draw_progress_plot: true
 progress_plot_filename_format: "{}_progress_plot.png"
 drop_first_values_percent: 0.0

@@ -1,52 +1,65 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import Sequence
+
+from .obj_val_vector import ObjValVector
 
 
 @dataclass
-class PrecompBatch:
-    # forward DP completion time of pi (size m x L)
-    c: List[List[int]]
-
-    # reverse DP completion time of pi (size m x L)
-    cbar: List[List[int]]
-
-    # direction chosen while computing cbar (size m x L)
-    # cp=0 means we chose "down" (i+1,j), cp=1 means we chose "right" (i,j+1)
-    cp: List[List[int]]
-
-    # batch_end[i][pos]: completion time on machine i AFTER processing the whole batch
-    # when the batch is inserted at position pos (pos in [0..L])
-    # size m x (L+1)
-    batch_end: List[List[int]]
-
-    # batch_last[t][pos]: completion time on LAST machine after t-th job of batch
-    # (t in [0..b-1]) when inserted at pos (pos in [0..L])
-    # size b x (L+1)
-    batch_last: List[List[int]]
-
-    # prefix_tardy[pos]: total tardiness of prefix pi[0..pos-1] (pos in [0..L])
-    prefix_tardy: List[int]
-
-
-class PermutationFlowshopBatchEvaluator:
+class PrecompSubseq:
+    c: list[list[int]]
     """
-    Evaluate insertion of a fixed-order contiguous serial batch of jobs into a permutation flow shop.
+    forward DP completion time of pi (paper's c_{ij}; size m x L)
+    """
 
-    - pi excludes the batch jobs (length L = n-b).
-    - batch = [s0, s1, ..., s(b-1)] stays contiguous and in this order.
+    cbar: list[list[int]]
+    """
+    reverse DP completion time of pi (paper's \\bar{c}_{ij}; size m x L)
+    """
+
+    cp: list[list[int]]
+    """
+    direction chosen while computing cbar (paper's cp_{ij})
+    cp=0 means we chose "down" (i+1,j), cp=1 means we chose "right" (i,j+1)
+    """
+
+    subseq_end: list[list[int]]
+    """
+    subseq_end[i][pos]: completion time on machine i AFTER processing the whole subseq
+    when the subseq is inserted at position pos (pos in [0..L])
+    size m x (L+1)
+    """
+
+    subseq_last: list[list[int]]
+    """
+    subseq_last[t][pos]: completion time on LAST machine after t-th job of subseq
+    (t in [0..b-1]) when inserted at pos (pos in [0..L])
+    size b x (L+1)
+    """
+
+    # prefix_tardy[pos]: sum of tardiness of prefix pi[0..pos-1] (pos in [0..L])
+    prefix_tardy: list[int]
+    """
+    AOF[pos]: sum of tardiness of prefix pi[0..pos-1] (pos in [0..L])
+    """
+
+
+class PermutationFlowshopSubseqEvaluator:
+    """
+    Evaluate insertion of a fixed-order contiguous serial subseq of jobs into a permutation flow shop.
+
+    - pi excludes the subseq jobs (length L = n-b).
+    - subseq = [s0, s1, ..., s(b-1)] stays contiguous and in this order.
     - Try all positions pos in [0..L] => (n-b+1) positions.
 
     Objective: total tardiness (sum of max(0, Cj - dj)).
 
     Acceleration:
       - Fig.9-style precompute on pi: c, cbar, cp, prefix tardiness.
-      - Batch DP per pos: O(m*b) to get boundary Load after batch (batch_end) and batch_last (for tardiness).
-      - Suffix evaluation: generalized Fig.10 boundary-walk using cp and i* starting from Load=batch_end[:,pos].
+      - Subseq DP per pos: O(m*b) to get boundary Load after subseq (subseq_end) and subseq_last (for tardiness).
+      - Suffix evaluation: generalized Fig.10 boundary-walk using cp and i* starting from Load=subseq_end[:,pos].
     """
 
-    def __init__(self, p: List[List[int]], due: List[int]):
+    def __init__(self, p: Sequence[Sequence[int]], due: Sequence[int]):
         self.p = p
         self.due = due
         self.m = len(p)
@@ -58,10 +71,10 @@ class PermutationFlowshopBatchEvaluator:
     # ----------------------------
     # Fig.9-style precompute for pi
     # ----------------------------
-    def precompute(self, pi: Sequence[int], batch: Sequence[int]) -> PrecompBatch:
+    def precompute(self, pi: Sequence[int], subseq: Sequence[int]) -> PrecompSubseq:
         m = self.m
         L = len(pi)
-        b = len(batch)
+        b = len(subseq)
 
         # 1) forward DP c: m x L
         c = [[0] * L for _ in range(m)]
@@ -110,40 +123,40 @@ class PermutationFlowshopBatchEvaluator:
             C_last = c[m - 1][t - 1]
             prefix_tardy[t] = prefix_tardy[t - 1] + self.get_tardiness(job, C_last)
 
-        # 4) batch completion DP for each pos in [0..L]
-        batch_end = [[0] * (L + 1) for _ in range(m)]
-        batch_last = [[0] * (L + 1) for _ in range(b)]
+        # 4) subseq completion DP for each pos in [0..L]
+        subseq_end = [[0] * (L + 1) for _ in range(m)]
+        subseq_last = [[0] * (L + 1) for _ in range(b)]
 
         for pos in range(L + 1):
             left_boundary = [c[i][pos - 1] if pos > 0 else 0 for i in range(m)]
             F_prev_job = [0] * m
 
-            for t, job in enumerate(batch):
+            for t, job in enumerate(subseq):
                 F_curr_job = [0] * m
                 for i in range(m):
                     left = left_boundary[i] if t == 0 else F_prev_job[i]
                     up = F_curr_job[i - 1] if i > 0 else 0
                     start = left if left > up else up
                     F_curr_job[i] = start + self.p[i][job]
-                batch_last[t][pos] = F_curr_job[m - 1]
+                subseq_last[t][pos] = F_curr_job[m - 1]
                 F_prev_job = F_curr_job
 
             for i in range(m):
-                batch_end[i][pos] = F_prev_job[i]
+                subseq_end[i][pos] = F_prev_job[i]
 
-        return PrecompBatch(
+        return PrecompSubseq(
             c=c,
             cbar=cbar,
             cp=cp,
-            batch_end=batch_end,
-            batch_last=batch_last,
+            subseq_end=subseq_end,
+            subseq_last=subseq_last,
             prefix_tardy=prefix_tardy,
         )
 
     # ----------------------------
-    # i* for batch (batch_end + cbar)
+    # i* for subseq (subseq_end + cbar)
     # ----------------------------
-    def find_i_star_batch(self, pre: PrecompBatch, pos: int) -> Tuple[int, int]:
+    def find_i_star_subseq(self, pre: PrecompSubseq, pos: int) -> tuple[int, int]:
         m = self.m
         L = len(pre.c[0]) if m > 0 else 0
 
@@ -151,7 +164,7 @@ class PermutationFlowshopBatchEvaluator:
         i_star = 0
         for i in range(m):
             suffix = pre.cbar[i][pos] if pos < L else 0
-            cand = pre.batch_end[i][pos] + suffix
+            cand = pre.subseq_end[i][pos] + suffix
             if cand > best_val or (cand == best_val and i > i_star):
                 best_val = cand
                 i_star = i
@@ -164,14 +177,14 @@ class PermutationFlowshopBatchEvaluator:
         self,
         pi: Sequence[int],
         start_pos: int,
-        Load_init: List[int],
+        Load_init: Sequence[int],
         i_star: int,
-        cp: List[List[int]],
+        cp: Sequence[Sequence[int]],
     ) -> int:
         """
         Compute tardiness of suffix pi[start_pos..] given:
-          - Load_init[i]: completion time on machine i right BEFORE starting suffix (after batch).
-          - i_star: critical machine at the start boundary (from batch_end + cbar).
+          - Load_init[i]: completion time on machine i right BEFORE starting suffix (after subseq).
+          - i_star: critical machine at the start boundary (from subseq_end + cbar).
           - cp: direction table for pi (size m x L).
 
         This is the single-σ Fig.10 logic, generalized to "start from arbitrary boundary state"
@@ -187,10 +200,10 @@ class PermutationFlowshopBatchEvaluator:
             return 0
 
         # Load is updated in-place; copy for safety
-        Load = Load_init[:]  # size m
+        Load = list(Load_init)  # size m
 
         # We will store only what Fig.10 writes, on columns t=start_pos..L
-        # C[:, start_pos] is the boundary state (after batch).
+        # C[:, start_pos] is the boundary state (after subseq).
         C = [[0] * (L + 1) for _ in range(m)]
         for i in range(m):
             C[i][start_pos] = Load[i]
@@ -251,32 +264,32 @@ class PermutationFlowshopBatchEvaluator:
         return total
 
     # ----------------------------
-    # Full evaluation: prefix + batch + accelerated suffix
+    # Full evaluation: prefix + subseq + accelerated suffix
     # ----------------------------
     def evaluate_position_total_tardiness(
         self,
         pi: Sequence[int],
-        batch: Sequence[int],
-        pre: PrecompBatch,
+        subseq: Sequence[int],
+        pre: PrecompSubseq,
         pos: int,
         i_star: int,
     ) -> int:
         """
         Total tardiness for:
-            pi[0..pos-1] + batch + pi[pos..]
+            pi[0..pos-1] + subseq + pi[pos..]
         computed as:
           - prefix: pre.prefix_tardy[pos]
-          - batch: sum tardiness using pre.batch_last[:,pos]
-          - suffix: generalized Fig.10 boundary-walk from Load=pre.batch_end[:,pos]
+          - subseq: sum tardiness using pre.subseq_last[:,pos]
+          - suffix: generalized Fig.10 boundary-walk from Load=pre.subseq_end[:,pos]
         """
         total = pre.prefix_tardy[pos]
 
-        # batch tardiness
-        for t, job in enumerate(batch):
-            total += self.get_tardiness(job, pre.batch_last[t][pos])
+        # subseq tardiness
+        for t, job in enumerate(subseq):
+            total += self.get_tardiness(job, pre.subseq_last[t][pos])
 
         # suffix tardiness (accelerated)
-        Load_init = [pre.batch_end[i][pos] for i in range(self.m)]
+        Load_init = [pre.subseq_end[i][pos] for i in range(self.m)]
         total += self._suffix_tardiness_fig10_like(
             pi=pi,
             start_pos=pos,
@@ -289,39 +302,50 @@ class PermutationFlowshopBatchEvaluator:
     def get_best_position(
         self,
         pi: Sequence[int],
-        batch: Sequence[int],
+        subseq: Sequence[int] | int,
         tie_breaker: str = "default",
-    ) -> Tuple[int, int]:
-        """
-        Return (best_pos, best_total_tardiness) for inserting batch into pi.
+    ) -> tuple[int, int]:
+        """Return (best_pos, best_total_tardiness) for inserting subseq into pi.
 
-        tie_breaker:
-          - "default": minimize total tardiness only
-          - "makespan": if tardiness ties, choose smaller makespan
+        Args:
+            pi (Sequence[int]): permutation without the subseq jobs
+            subseq (Sequence[int] | int): subseq of jobs to insert
+            tie_breaker (str, optional): Defaults to "default".
+                - "default": minimize total tardiness only
+                - "makespan": if tardiness ties, choose smaller makespan
+
+        Raises:
+            ValueError: no insertion positions evaluated
+
+        Returns:
+            tuple[int, int]: (best_pos, best_total_tardiness)
         """
-        pre = self.precompute(pi, batch)
+        _subseq: Sequence[int]
+        if isinstance(subseq, int):
+            _subseq = [subseq]
+        else:
+            _subseq = subseq
+        pre = self.precompute(pi, _subseq)
         L = len(pi)
 
         best_pos = 0
-        best_tardy = None
-        best_makespan = None
+        best_obj_vals: ObjValVector | None = None
 
         for pos in range(L + 1):
-            i_star, makespan = self.find_i_star_batch(pre, pos)
+            i_star, makespan = self.find_i_star_subseq(pre, pos)
 
-            tardy = self.evaluate_position_total_tardiness(
-                pi=pi, batch=batch, pre=pre, pos=pos, i_star=i_star
+            sum_Tj = self.evaluate_position_total_tardiness(
+                pi=pi, subseq=_subseq, pre=pre, pos=pos, i_star=i_star
             )
+            if tie_breaker == "makespan":
+                obj_vals = ObjValVector(sum_Tj, makespan)
+            else:
+                obj_vals = ObjValVector(sum_Tj)
 
-            if best_tardy is None or tardy < best_tardy:
-                best_pos, best_tardy = pos, tardy
-                best_makespan = makespan if tie_breaker == "makespan" else None
-                continue
+            if best_obj_vals is None or obj_vals < best_obj_vals:
+                best_pos = pos
+                best_obj_vals = obj_vals
 
-            if tardy == best_tardy and tie_breaker == "makespan":
-                if best_makespan is None or makespan < best_makespan:
-                    best_pos, best_tardy, best_makespan = pos, tardy, makespan
-
-        if best_tardy is None:
+        if best_obj_vals is None:
             raise ValueError("No insertion positions evaluated.")
-        return best_pos, best_tardy
+        return best_pos, best_obj_vals.obj1_val
