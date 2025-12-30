@@ -28,7 +28,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._profile_timing_enabled = False  # change to True to enable timing
+        self._profile_timing_enabled = True  # change to True to enable timing
         self._profile_timing_stats: defaultdict[str, int | float] = defaultdict(float)
         self._profile_timing_counts: defaultdict[str, int] = defaultdict(int)
 

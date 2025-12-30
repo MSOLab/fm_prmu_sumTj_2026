@@ -67,7 +67,7 @@ class PermutationFlowshopSubseqEvaluator:
         self.m = len(p)
         self.n_jobs = len(due)
 
-        self._timing_enabled = False  # change to True to enable timing
+        self._timing_enabled = True  # change to True to enable timing
         self._timing_stats: defaultdict[str, int | float] = defaultdict(float)
         self._timing_counts: defaultdict[str, int] = defaultdict(int)
 
@@ -85,6 +85,9 @@ class PermutationFlowshopSubseqEvaluator:
             avg = tot / cnt if cnt else 0.0
             print(f"{k:30s} total={tot:10.6f}s  cnt={cnt:6d}  avg={avg:10.6f}s")
         print("=================================\n")
+
+    def get_tardiness(self, job: int, completion_time: int) -> int:
+        return completion_time - self.due[job] if completion_time > self.due[job] else 0
 
     # ----------------------------
     # Fig.9-style precompute for pi
