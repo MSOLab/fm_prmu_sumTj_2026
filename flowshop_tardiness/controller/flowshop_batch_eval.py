@@ -97,6 +97,7 @@ class PermutationFlowshopSubseqEvaluator:
         m = self.m
         L = len(pi)
         b = len(subseq)
+        p: Sequence[Sequence[int]] = self.p
 
         # 1) forward DP c: m x L
         c = [[0] * L for _ in range(m)]
@@ -105,7 +106,7 @@ class PermutationFlowshopSubseqEvaluator:
             for i in range(m):
                 up = c[i - 1][j] if i > 0 else 0
                 left = c[i][j - 1] if j > 0 else 0
-                c[i][j] = (up if up > left else left) + self.p[i][job]
+                c[i][j] = (up if up > left else left) + p[i][job]
 
         # 2) reverse DP cbar/cp: m x L
         cbar_full = [[0] * (L + 1) for _ in range(m + 1)]
@@ -115,24 +116,24 @@ class PermutationFlowshopSubseqEvaluator:
             last_j = L - 1
             last_job = pi[last_j]
             for i in range(m - 1, -1, -1):
-                cbar_full[i][last_j] = cbar_full[i + 1][last_j] + self.p[i][last_job]
+                cbar_full[i][last_j] = cbar_full[i + 1][last_j] + p[i][last_job]
                 cp_full[i][last_j] = 0
 
             for j in range(L - 2, -1, -1):
                 job = pi[j]
 
                 i = m - 1
-                cbar_full[i][j] = cbar_full[i][j + 1] + self.p[i][job]
+                cbar_full[i][j] = cbar_full[i][j + 1] + p[i][job]
                 cp_full[i][j] = 1
 
                 for i in range(m - 2, -1, -1):
                     down = cbar_full[i + 1][j]
                     right = cbar_full[i][j + 1]
                     if down >= right:
-                        cbar_full[i][j] = down + self.p[i][job]
+                        cbar_full[i][j] = down + p[i][job]
                         cp_full[i][j] = 0
                     else:
-                        cbar_full[i][j] = right + self.p[i][job]
+                        cbar_full[i][j] = right + p[i][job]
                         cp_full[i][j] = 1
 
         cbar = [row[:L] for row in cbar_full[:m]]
@@ -143,7 +144,8 @@ class PermutationFlowshopSubseqEvaluator:
         for t in range(1, L + 1):
             job = pi[t - 1]
             C_last = c[m - 1][t - 1]
-            prefix_tardy[t] = prefix_tardy[t - 1] + self.get_tardiness(job, C_last)
+            dj = self.due[job]
+            prefix_tardy[t] = prefix_tardy[t - 1] + (C_last - dj if C_last > dj else 0)
 
         # 4) subseq completion DP for each pos in [0..L]
         subseq_end = [[0] * (L + 1) for _ in range(m)]
@@ -159,7 +161,7 @@ class PermutationFlowshopSubseqEvaluator:
                     left = left_boundary[i] if t == 0 else F_prev_job[i]
                     up = F_curr_job[i - 1] if i > 0 else 0
                     start = left if left > up else up
-                    F_curr_job[i] = start + self.p[i][job]
+                    F_curr_job[i] = start + p[i][job]
                 subseq_last[t][pos] = F_curr_job[m - 1]
                 F_prev_job = F_curr_job
 
@@ -205,85 +207,79 @@ class PermutationFlowshopSubseqEvaluator:
     ) -> int:
         """
         Compute tardiness of suffix pi[start_pos..] given:
-          - Load_init[i]: completion time on machine i right BEFORE starting suffix (after subseq).
-          - i_star: critical machine at the start boundary (from subseq_end + cbar).
-          - cp: direction table for pi (size m x L).
+        - Load_init[i]: completion time on machine i right BEFORE starting suffix (after subseq).
+        - i_star: critical machine at the start boundary (from subseq_end + cbar).
+        - cp: direction table for pi (size m x L).
 
-        This is the single-σ Fig.10 logic, generalized to "start from arbitrary boundary state"
-        by treating the boundary state as the column at index start_pos (like sigma column),
-        and shifting suffix columns by +1 relative to pi indices.
-
-        Returns: total tardiness of suffix jobs.
+        Optimized version:
+        - DO NOT allocate/store full completion-time matrix C.
+        - Accumulate tardiness on-the-fly using Load[m-1] when each suffix job finishes.
         """
         m = self.m
         L = len(pi)
+        p: Sequence[Sequence[int]] = self.p
 
         if start_pos >= L:
             return 0
 
-        # Load is updated in-place; copy for safety
+        # Copy boundary completion times into Load (we will update in-place)
         Load = list(Load_init)  # size m
 
-        # We will store only what Fig.10 writes, on columns t=start_pos..L
-        # C[:, start_pos] is the boundary state (after subseq).
-        C = [[0] * (L + 1) for _ in range(m)]
-        for i in range(m):
-            C[i][start_pos] = Load[i]
+        obj_val = 0
 
-        # Equivalent of Fig.10 "if j1 <= Length" pre-update for the first suffix job on i*
+        # --- Pre-update for the first suffix job on boundary machine i_star (same logic as before)
+        # This is exactly what your original code did before entering the main loop.
         first_job = pi[start_pos]
-        Load[i_star] = Load[i_star] + self.p[i_star][first_job]
-        C[i_star][start_pos + 1] = Load[i_star]
+        Load[i_star] = Load[i_star] + p[i_star][first_job]
 
         # Main loop: j = start_pos .. L-1
         for j in range(start_pos, L):
             job = pi[j]
+            dj = self.due[job]
 
             if cp[i_star][j] == 1:
                 # Update machines below boundary for current job
                 for i in range(i_star + 1, m):
                     if Load[i - 1] > Load[i]:
                         Load[i] = Load[i - 1]
-                    Load[i] += self.p[i][job]
-                    C[i][j + 1] = Load[i]
+                    Load[i] += p[i][job]
+
+                # Current job completes on last machine now -> accumulate tardiness
+                C_last = Load[m - 1]
+                obj_val += C_last - dj if C_last > dj else 0
 
                 # Pre-update boundary machine for next job
                 if (j + 1) < L:
                     next_job = pi[j + 1]
-                    Load[i_star] = Load[i_star] + self.p[i_star][next_job]
-                    C[i_star][j + 2] = Load[i_star]
+                    Load[i_star] = Load[i_star] + p[i_star][next_job]
 
             else:
                 # Move boundary down at least once (if possible)
                 if i_star + 1 < m:
-                    Load[i_star + 1] = Load[i_star] + self.p[i_star + 1][job]
-                    C[i_star + 1][j + 1] = Load[i_star + 1]
+                    Load[i_star + 1] = Load[i_star] + p[i_star + 1][job]
                     i_star += 1
 
                 # Keep moving boundary down while cp indicates vertical continuation
                 while i_star < m - 1 and cp[i_star][j] == 0:
-                    Load[i_star + 1] = Load[i_star] + self.p[i_star + 1][job]
-                    C[i_star + 1][j + 1] = Load[i_star + 1]
+                    Load[i_star + 1] = Load[i_star] + p[i_star + 1][job]
                     i_star += 1
 
                 # Finish remaining machines for current job
                 for i in range(i_star + 1, m):
                     if Load[i - 1] > Load[i]:
                         Load[i] = Load[i - 1]
-                    Load[i] += self.p[i][job]
-                    C[i][j + 1] = Load[i]
+                    Load[i] += p[i][job]
+
+                # Current job completes on last machine now -> accumulate tardiness
+                C_last = Load[m - 1]
+                obj_val += C_last - dj if C_last > dj else 0
 
                 # Pre-update boundary machine for next job
                 if (j + 1) < L:
                     next_job = pi[j + 1]
-                    Load[i_star] = Load[i_star] + self.p[i_star][next_job]
-                    C[i_star][j + 2] = Load[i_star]
+                    Load[i_star] = Load[i_star] + p[i_star][next_job]
 
-        # Tardiness of suffix jobs: pi[j] completion at last machine is C[m-1][j+1]
-        total = 0
-        for j in range(start_pos, L):
-            total += self.get_tardiness(pi[j], C[m - 1][j + 1])
-        return total
+        return obj_val
 
     # ----------------------------
     # Full evaluation: prefix + subseq + accelerated suffix
@@ -304,22 +300,24 @@ class PermutationFlowshopSubseqEvaluator:
           - subseq: sum tardiness using pre.subseq_last[:,pos]
           - suffix: generalized Fig.10 boundary-walk from Load=pre.subseq_end[:,pos]
         """
-        total = pre.prefix_tardy[pos]
+        obj_val = pre.prefix_tardy[pos]
 
         # subseq tardiness
         for t, job in enumerate(subseq):
-            total += self.get_tardiness(job, pre.subseq_last[t][pos])
+            dj: int = self.due[job]
+            C_last: int = pre.subseq_last[t][pos]
+            obj_val += C_last - dj if C_last > dj else 0
 
         # suffix tardiness (accelerated)
-        Load_init = [pre.subseq_end[i][pos] for i in range(self.m)]
-        total += self._suffix_tardiness_fig10_like(
+        Load_init: list[int] = [row[pos] for row in pre.subseq_end]
+        obj_val += self._suffix_tardiness_fig10_like(
             pi=pi,
             start_pos=pos,
             Load_init=Load_init,
             i_star=i_star,
             cp=pre.cp,
         )
-        return total
+        return obj_val
 
     def get_best_position(
         self,
