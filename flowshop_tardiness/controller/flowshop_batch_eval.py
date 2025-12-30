@@ -1,3 +1,4 @@
+import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -71,11 +72,10 @@ class PermutationFlowshopSubseqEvaluator:
         self._timing_stats: defaultdict[str, int | float] = defaultdict(float)
         self._timing_counts: defaultdict[str, int] = defaultdict(int)
 
-    def print_timing(self):
+    def log_timing_as_info(self):
         if not self._timing_stats:
-            print("[eval timing] no stats")
             return
-        print("\n==== Evaluator Timing Summary ====")
+        timing_str = "\n==== Evaluator Timing Summary ===="
         keys = sorted(
             self._timing_stats.keys(), key=lambda k: self._timing_stats[k], reverse=True
         )
@@ -83,8 +83,9 @@ class PermutationFlowshopSubseqEvaluator:
             tot = self._timing_stats[k]
             cnt = self._timing_counts.get(k, 0)
             avg = tot / cnt if cnt else 0.0
-            print(f"{k:30s} total={tot:10.6f}s  cnt={cnt:6d}  avg={avg:10.6f}s")
-        print("=================================\n")
+            timing_str += f"\n{k:30s} total={tot:10.6f}s  cnt={cnt:6d}  avg={avg:10.6f}s"
+        timing_str += "\n==================================="
+        logging.info(timing_str)
 
     def get_tardiness(self, job: int, completion_time: int) -> int:
         return completion_time - self.due[job] if completion_time > self.due[job] else 0

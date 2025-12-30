@@ -32,20 +32,20 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         self._profile_timing_stats: defaultdict[str, int | float] = defaultdict(float)
         self._profile_timing_counts: defaultdict[str, int] = defaultdict(int)
 
-    def print_insertion_timing_summary(self):
+    def log_insertion_timing_summary_as_info(self):
         if not getattr(self, "_profile_timing_stats", None):
-            print("[timing] no stats")
             return
         stats = self._profile_timing_stats
         counts = self._profile_timing_counts
-        print("\n==== Insertion Timing Summary ====")
+        log_str = "\n==== Insertion Timing Summary ===="
         keys = sorted(stats.keys(), key=lambda k: stats[k], reverse=True)
         for k in keys:
             c = counts.get(k, 0)
             tot = stats[k]
             avg = tot / c if c else 0.0
-            print(f"{k:25s} total={tot:10.6f}s  cnt={c:6d}  avg={avg:10.6f}s")
-        print("=================================\n")
+            log_str += f"\n{k:25s} total={tot:10.6f}s  cnt={c:6d}  avg={avg:10.6f}s"
+        log_str += "\n=================================="
+        logging.info(log_str)
 
     def set_random_seed(self, seed: int):
         return super().set_random_seed(seed)
@@ -1035,8 +1035,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 break
         timing_enabled = getattr(self, "_profile_timing_enabled", False)
         if timing_enabled:
-            self.print_insertion_timing_summary()
-            self._new_acc_cache[0].print_timing()
+            self.log_insertion_timing_summary_as_info()
+            self._new_acc_cache[0].log_timing_as_info()
 
         schedule = self.get_dispatched_schedule(seq_before)
         if error_if_infeasible:
