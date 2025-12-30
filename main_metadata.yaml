@@ -110,9 +110,9 @@ benchmark_idx_list:
   # - 521
   # - 526
   # - 531
-  - 536
-# first: 1
-# last: 540
+  # - 536
+first: 1
+last: 540
 benchmark_filename_format: "{}.txt"
 
 # Scenario configurations
@@ -285,14 +285,14 @@ dicts_of_i_o_data_path:
     subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251229-1.yaml"
     output_dir : "pra_600s/20251229-1"
     description: "II; subseq_size 1; default TB"
-  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251229-2.yaml"
-  #   output_dir : "pra_600s/20251229-2"
-  #   description: "Repeat(II subseq_size 1 & 2); default TB"
-  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251229-3.yaml"
-  #   output_dir : "pra_600s/20251229-3"
-  #   description: "Repeat(II subseq_size 1 & 2 & 3); default TB"
+  - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+    subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251229-2.yaml"
+    output_dir : "pra_600s/20251229-2"
+    description: "Repeat(II subseq_size 1 & 2); default TB"
+  - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+    subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251229-3.yaml"
+    output_dir : "pra_600s/20251229-3"
+    description: "Repeat(II subseq_size 1 & 2 & 3); default TB"
   # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
   #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20251229-4.yaml"
   #   output_dir : "pra_600s/20251229-4"

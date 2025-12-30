@@ -68,7 +68,7 @@ class PermutationFlowshopSubseqEvaluator:
         self.m = len(p)
         self.n_jobs = len(due)
 
-        self._timing_enabled = True  # change to True to enable timing
+        self._timing_enabled = False  # change to True to enable timing
         self._timing_stats: defaultdict[str, int | float] = defaultdict(float)
         self._timing_counts: defaultdict[str, int] = defaultdict(int)
 
