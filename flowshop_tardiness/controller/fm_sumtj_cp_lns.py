@@ -1,6 +1,8 @@
 import logging
 import math
 import random
+import time
+from collections import defaultdict
 from typing import Callable, Sequence
 
 from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
@@ -23,6 +25,27 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     Whether to presolve the CP model before solving.
     If None, use the default behavior of the CP solver.
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._profile_timing_enabled = False  # change to True to enable timing
+        self._profile_timing_stats: defaultdict[str, int | float] = defaultdict(float)
+        self._profile_timing_counts: defaultdict[str, int] = defaultdict(int)
+
+    def print_insertion_timing_summary(self):
+        if not getattr(self, "_profile_timing_stats", None):
+            print("[timing] no stats")
+            return
+        stats = self._profile_timing_stats
+        counts = self._profile_timing_counts
+        print("\n==== Insertion Timing Summary ====")
+        keys = sorted(stats.keys(), key=lambda k: stats[k], reverse=True)
+        for k in keys:
+            c = counts.get(k, 0)
+            tot = stats[k]
+            avg = tot / c if c else 0.0
+            print(f"{k:25s} total={tot:10.6f}s  cnt={c:6d}  avg={avg:10.6f}s")
+        print("=================================\n")
 
     def set_random_seed(self, seed: int):
         return super().set_random_seed(seed)
@@ -836,6 +859,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             _subseq_size = subseq_size
             _first_improvement = True  # always first-improvement for subsequences > 1
 
+        # (메서드 시작부 어디쯤)
+        timing_enabled = getattr(self, "_profile_timing_enabled", False)
+        if timing_enabled:
+            stats = self._profile_timing_stats
+            counts = self._profile_timing_counts
+
         seq_before = list(job_seq)
         incumbent_seq = list(seq_before)
 
@@ -848,30 +877,67 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         )
         iter_cnt = 0
         for j_subseq in window_slide_over_list(job_seq, _subseq_size):
+            if timing_enabled:
+                t_iter0 = time.perf_counter()
+
+            # A) profile_fixed 생성 시간
+            if timing_enabled:
+                t0 = time.perf_counter()
+
             iter_cnt += 1
-            profile_fixed = [
+            profile_fixed: list[str] = [
                 j for j in incumbent_seq if j not in j_subseq
             ]  # remove subseq
+            if timing_enabled:
+                stats["A_profile_fixed"] += time.perf_counter() - t0
+                counts["A_profile_fixed"] += 1
+
+            # B) best position 탐색(get_best_pos_and_metric_new_acc)
+            if timing_enabled:
+                t0 = time.perf_counter()
             pos, after_metric = self._get_best_pos_and_metric_new_acc(
                 profile_fixed, j_subseq, tie_breaker=tie_breaker
             )
-            crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
+            if timing_enabled:
+                stats["B_get_best_pos_metric"] += time.perf_counter() - t0
+                counts["B_get_best_pos_metric"] += 1
 
+            # C) tie-criteria 계산
+            if timing_enabled:
+                t0 = time.perf_counter()
+            crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
             after_is_better = (crit1 < best_crit1) or (
                 crit1 == best_crit1 and crit2 < best_crit2
             )
+            if timing_enabled:
+                stats["C_tie_compare"] += time.perf_counter() - t0
+                counts["C_tie_compare"] += 1
+
+            # D) incumbent 업데이트 / list concat 비용
             if after_is_better:
+                if timing_enabled:
+                    t0 = time.perf_counter()
+
                 incumbent_seq = (
                     profile_fixed[:pos] + list(j_subseq) + profile_fixed[pos:]
                 )
                 best_metric = after_metric
                 best_crit1 = crit1
                 best_crit2 = crit2
+
+                if timing_enabled:
+                    stats["D_apply_update"] += time.perf_counter() - t0
+                    counts["D_apply_update"] += 1
+
                 if _first_improvement:
                     logging.info(
                         f"Insertion improvement pass: iteration {iter_cnt} / {max_iter_cnt}, found improvement to total tardiness {best_metric.sumTj}."
                     )
                     break  # exit after 1st improvement
+
+            if timing_enabled:
+                stats["ITER_total"] += time.perf_counter() - t_iter0
+                counts["ITER_total"] += 1
             if self.time_is_up():
                 logging.info(
                     f"Time limit reached during {iter_cnt} / {max_iter_cnt} insertion improvement."
@@ -967,6 +1033,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     f"Time limit reached during {passes} / {max_pass_str} insertion improvement passes."
                 )
                 break
+        timing_enabled = getattr(self, "_profile_timing_enabled", False)
+        if timing_enabled:
+            self.print_insertion_timing_summary()
+            self._new_acc_cache[0].print_timing()
 
         schedule = self.get_dispatched_schedule(seq_before)
         if error_if_infeasible:

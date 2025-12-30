@@ -1,3 +1,5 @@
+import time
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -65,8 +67,24 @@ class PermutationFlowshopSubseqEvaluator:
         self.m = len(p)
         self.n_jobs = len(due)
 
-    def get_tardiness(self, job: int, completion_time: int) -> int:
-        return completion_time - self.due[job] if completion_time > self.due[job] else 0
+        self._timing_enabled = False  # change to True to enable timing
+        self._timing_stats: defaultdict[str, int | float] = defaultdict(float)
+        self._timing_counts: defaultdict[str, int] = defaultdict(int)
+
+    def print_timing(self):
+        if not self._timing_stats:
+            print("[eval timing] no stats")
+            return
+        print("\n==== Evaluator Timing Summary ====")
+        keys = sorted(
+            self._timing_stats.keys(), key=lambda k: self._timing_stats[k], reverse=True
+        )
+        for k in keys:
+            tot = self._timing_stats[k]
+            cnt = self._timing_counts.get(k, 0)
+            avg = tot / cnt if cnt else 0.0
+            print(f"{k:30s} total={tot:10.6f}s  cnt={cnt:6d}  avg={avg:10.6f}s")
+        print("=================================\n")
 
     # ----------------------------
     # Fig.9-style precompute for pi
@@ -325,15 +343,39 @@ class PermutationFlowshopSubseqEvaluator:
             _subseq = [subseq]
         else:
             _subseq = subseq
-        pre = self.precompute(pi, _subseq)
-        L = len(pi)
 
+        timing_enabled = getattr(self, "_timing_enabled", False)
+        if timing_enabled:
+            stats = self._timing_stats
+            counts = self._timing_counts
+            t_all0 = time.perf_counter()
+
+        # (1) precompute
+        if timing_enabled:
+            t0 = time.perf_counter()
+        pre = self.precompute(pi, _subseq)
+        if timing_enabled:
+            stats["precompute"] += time.perf_counter() - t0
+            counts["precompute"] += 1
+
+        # (2) position loop
+        if timing_enabled:
+            t0 = time.perf_counter()
         best_pos = 0
         best_obj_vals: ObjValVector | None = None
-
+        L = len(pi)
         for pos in range(L + 1):
+            # (2-a) i_star 찾기
+            if timing_enabled:
+                t1 = time.perf_counter()
             i_star, makespan = self.find_i_star_subseq(pre, pos)
+            if timing_enabled:
+                stats["find_i_star_subseq"] += time.perf_counter() - t1
+                counts["find_i_star_subseq"] += 1
 
+            # (2-b) objective 평가
+            if timing_enabled:
+                t1 = time.perf_counter()
             sum_Tj = self.evaluate_position_total_tardiness(
                 pi=pi, subseq=_subseq, pre=pre, pos=pos, i_star=i_star
             )
@@ -341,10 +383,20 @@ class PermutationFlowshopSubseqEvaluator:
                 obj_vals = ObjValVector(sum_Tj, makespan)
             else:
                 obj_vals = ObjValVector(sum_Tj)
+            if timing_enabled:
+                stats["eval_total_tardiness"] += time.perf_counter() - t1
+                counts["eval_total_tardiness"] += 1
 
             if best_obj_vals is None or obj_vals < best_obj_vals:
                 best_pos = pos
                 best_obj_vals = obj_vals
+
+        if timing_enabled:
+            stats["pos_loop_total"] += time.perf_counter() - t0
+            counts["pos_loop_total"] += 1
+
+            stats["get_best_position_total"] += time.perf_counter() - t_all0
+            counts["get_best_position_total"] += 1
 
         if best_obj_vals is None:
             raise ValueError("No insertion positions evaluated.")
