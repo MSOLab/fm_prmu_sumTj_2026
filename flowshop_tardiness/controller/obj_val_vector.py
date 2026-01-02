@@ -34,3 +34,14 @@ class ObjValVector:
 
     def __ge__(self, other: ObjValVector) -> bool:
         return not self < other
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ObjValVector):
+            return NotImplemented
+        return (
+            self.obj1_val == other.obj1_val
+            and self.obj2_val == other.obj2_val
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.obj1_val, self.obj2_val))

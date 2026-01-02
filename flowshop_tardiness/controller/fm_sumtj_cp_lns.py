@@ -28,7 +28,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._profile_timing_enabled = False  # change to True to enable timing
+        self._profile_timing_enabled: bool = False  # change to True to enable timing
         self._profile_timing_stats: defaultdict[str, int | float] = defaultdict(float)
         self._profile_timing_counts: defaultdict[str, int] = defaultdict(int)
 
@@ -659,7 +659,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     # -----------------------------
     def _get_new_acc_evaluator(self):
         """
-        Build (and cache) a PermutationFlowshopEvaluator that uses 0-based
+        Build (and cache) a PermutationFlowshopSubseqEvaluator that uses 0-based
         integer job indices internally.
 
         Returns:
@@ -669,7 +669,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         if hasattr(self, "_new_acc_cache") and self._new_acc_cache is not None:
             return self._new_acc_cache
 
-        job_ids: list[str] = list(self.instance.job_idlist)
+        job_ids: list[str] = list(self.instance.job_id_list)
         stage_ids: list[str] = list(self.stage_ids)
 
         job_id_to_idx: dict[str, int] = {jid: k for k, jid in enumerate(job_ids)}
@@ -709,7 +709,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         Args:
             seq_now: current sequence of job IDs (strings)
             job_id_seq: job ID (string) or sequence of job IDs to insert
-            tie_breaker: tie breaking strategy (currently unused)
+            tie_breaker: tie breaking strategy
 
         Returns:
             (best_pos, ScheduleMetric) for the best insertion position.
@@ -854,19 +854,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 If subseq_size > 1, this is forced to True.
 
         Raises:
+            ValueError: If job_seq length <= 1.
             ValueError: If job_seq contains duplicate job IDs.
             ValueError: If subseq_size is less than 1.
 
         Returns:
-
-        if _subseq_size > job_cnt:
-            raise ValueError(
-                f"subseq_size ({_subseq_size}) cannot be greater than the number of jobs ({job_cnt})."
-            )
-        if _subseq_size > job_cnt:
-            raise ValueError(
-                f"subseq_size ({_subseq_size}) cannot be greater than the number of jobs ({job_cnt})."
-            )
+            list[str]: The improved job sequence after the insertion pass.
         """
         job_cnt = len(job_seq)
         if job_cnt <= 1:
@@ -898,7 +891,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 f"subseq_size ({_subseq_size}) cannot be greater than the number of jobs ({job_cnt})."
             )
 
-        timing_enabled = getattr(self, "_profile_timing_enabled", False)
+        timing_enabled: bool = getattr(self, "_profile_timing_enabled", False)
         if timing_enabled:
             stats = self._profile_timing_stats
             counts = self._profile_timing_counts
