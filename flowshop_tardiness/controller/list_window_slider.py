@@ -1,15 +1,15 @@
 from collections import deque
 from itertools import islice
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Iterable
 
 
 def window_slide_over_list(
-    iterable: Sequence[Any], n: int
+    iterable: Iterable[Any], n: int
 ) -> Iterator[tuple[Any, ...]]:
     """Generate a sliding window of width n over data from the iterable.
 
     Args:
-        iterable (Sequence[Any]): input sequence
+        iterable (Iterable[Any]): input iterable
         n (int): window size
 
     Raises:
@@ -21,19 +21,20 @@ def window_slide_over_list(
     """
     if n <= 0:
         raise ValueError("Window size n must be positive.")
-    if n > len(iterable):
+
+    it = iter(iterable)
+    window = deque(islice(it, n), maxlen=n)
+    if len(window) < n:
         raise ValueError(
             "Window size n must not be greater than the length of the iterable."
         )
 
-    # Use iter() so input can be any iterable (streams too)
-    it = iter(iterable)
-    window = deque(islice(it, n), maxlen=n)
-    if len(window) == n:
+    while True:
         yield tuple(window)
-    for elem in it:
-        window.append(elem)  # deque drops leftmost on overflow and appends right (O(1))
-        yield tuple(window)
+        try:
+            window.append(next(it))
+        except StopIteration:
+            break
 
 
 if __name__ == "__main__":

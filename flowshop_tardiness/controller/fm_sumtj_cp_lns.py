@@ -231,8 +231,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         Returns:
             list[str]: ordered job ids
         """
-        dmap = self.instance.job_2_duedate_map
-        pmap = self.job_2_stage_2_p_dict
+        dmap: dict[str, int] = self.instance.job_2_duedate_map
+        pmap: dict[str, dict[str, int]] = self.job_2_stage_2_p_dict
 
         def total_p(j: str) -> float:
             # Sum processing times across all stages for job j
@@ -259,9 +259,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     ) -> None:
         sub_timer = ElapsedTimer()
 
-        i_list = self.stage_ids
-        dmap = self.instance.job_2_duedate_map
-        pmap = self.job_2_stage_2_p_dict
+        i_list: tuple[str, ...] = self.stage_ids
+        dmap: dict[str, int] = self.instance.job_2_duedate_map
+        pmap: dict[str, dict[str, int]] = self.job_2_stage_2_p_dict
 
         # pre-calc total processing time used for tie-breaking
         total_proc_time_map = {
@@ -361,7 +361,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         )
 
     def mdd_min_value(self, job_id: str, completion_time: int) -> int:
-        return_val = self.instance.job_2_duedate_map[job_id]
+        return_val: int = self.instance.job_2_duedate_map[job_id]
         if completion_time > return_val:
             return completion_time
         return return_val
@@ -460,8 +460,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             - If job_seq is empty, returns ({0: {stage:0}}, {0:0}).
             - Assumes every job has defined processing time on every stage.
         """
-        dmap = self.instance.job_2_duedate_map
-        pos_2_stage_2_endtime_map = {0: {i: 0 for i in self.stage_ids}}
+        dmap: dict[str, int] = self.instance.job_2_duedate_map
+        pos_2_stage_2_endtime_map: dict[int, dict[str, int]] = {0: {i: 0 for i in self.stage_ids}}
 
         prefix_sumTj: dict[int, int] = {0: 0}
         for j_idx, j in enumerate(job_seq):
@@ -554,7 +554,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         Returns:
             tuple[int, ScheduleMetrics]: (best position, best schedule metrics).
         """
-        dmap = self.instance.job_2_duedate_map
+        dmap: dict[str, int] = self.instance.job_2_duedate_map
 
         if not seq_now:
             # only one position
@@ -669,11 +669,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         if hasattr(self, "_new_acc_cache") and self._new_acc_cache is not None:
             return self._new_acc_cache
 
-        job_ids = list(self.instance.job_id_list)
-        stage_ids = list(self.stage_ids)
+        job_ids: list[str] = list(self.instance.job_idlist)
+        stage_ids: list[str] = list(self.stage_ids)
 
-        job_id_to_idx = {jid: k for k, jid in enumerate(job_ids)}
-        idx_to_job_id = {k: jid for jid, k in job_id_to_idx.items()}
+        job_id_to_idx: dict[str, int] = {jid: k for k, jid in enumerate(job_ids)}
+        idx_to_job_id: dict[int, str] = {k: jid for jid, k in job_id_to_idx.items()}
 
         m = len(stage_ids)
         n = len(job_ids)
@@ -693,7 +693,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         evaluator = PermutationFlowshopSubseqEvaluator(p, due)
 
-        self._new_acc_cache = (evaluator, job_id_to_idx, idx_to_job_id)
+        self._new_acc_cache: tuple[PermutationFlowshopSubseqEvaluator, dict[str, int], dict[int, str]] = (evaluator, job_id_to_idx, idx_to_job_id)
         return self._new_acc_cache
 
     def _get_best_pos_and_metric_new_acc(
@@ -841,6 +841,33 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         tie_breaker: str = "default",
         first_improvement: bool = False,
     ) -> list[str]:
+        """Perform a single pass of insertion-based improvement on the job sequence.
+
+        Args:
+            job_seq (list[str]): The current sequence of jobs.
+            subseq_size (int | None, optional): Size of subsequences to consider for insertion.
+                Defaults to None.
+            tie_breaker (str, optional): Criteria for breaking ties when choosing positions.
+                Defaults to "default".
+            first_improvement (bool, optional): Whether to stop at the first improvement found.
+                Defaults to False.
+                If subseq_size > 1, this is forced to True.
+
+        Raises:
+            ValueError: If job_seq contains duplicate job IDs.
+            ValueError: If subseq_size is less than 1.
+
+        Returns:
+
+        if _subseq_size > job_cnt:
+            raise ValueError(
+                f"subseq_size ({_subseq_size}) cannot be greater than the number of jobs ({job_cnt})."
+            )
+        if _subseq_size > job_cnt:
+            raise ValueError(
+                f"subseq_size ({_subseq_size}) cannot be greater than the number of jobs ({job_cnt})."
+            )
+        """
         job_cnt = len(job_seq)
         if job_cnt <= 1:
             logging.info("Insertion improvement skipped: only one or zero jobs.")
@@ -857,9 +884,20 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             raise ValueError("subseq_size must be at least 1.")
         else:
             _subseq_size = subseq_size
-            _first_improvement = True  # always first-improvement for subsequences > 1
+            if first_improvement is False:
+                logging.warning(
+                    "first_improvement=False was requested but is not supported when "
+                    "subseq_size > 1; overriding first_improvement to True."
+                )
+                _first_improvement = (
+                    True  # always first-improvement for subsequences > 1
+                )
 
-        # (메서드 시작부 어디쯤)
+        if _subseq_size > job_cnt:
+            raise ValueError(
+                f"subseq_size ({_subseq_size}) cannot be greater than the number of jobs ({job_cnt})."
+            )
+
         timing_enabled = getattr(self, "_profile_timing_enabled", False)
         if timing_enabled:
             stats = self._profile_timing_stats
@@ -878,10 +916,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         iter_cnt = 0
         for j_subseq in window_slide_over_list(job_seq, _subseq_size):
             if timing_enabled:
+                # overall iteration timer
                 t_iter0 = time.perf_counter()
-
-            # A) profile_fixed 생성 시간
-            if timing_enabled:
+                # A) profile_fixed creation timer
                 t0 = time.perf_counter()
 
             iter_cnt += 1
@@ -892,7 +929,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 stats["A_profile_fixed"] += time.perf_counter() - t0
                 counts["A_profile_fixed"] += 1
 
-            # B) best position 탐색(get_best_pos_and_metric_new_acc)
+            # B) get best position timer
             if timing_enabled:
                 t0 = time.perf_counter()
             pos, after_metric = self._get_best_pos_and_metric_new_acc(
@@ -902,7 +939,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 stats["B_get_best_pos_metric"] += time.perf_counter() - t0
                 counts["B_get_best_pos_metric"] += 1
 
-            # C) tie-criteria 계산
+            # C) tie-criteria calc timer
             if timing_enabled:
                 t0 = time.perf_counter()
             crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
@@ -913,7 +950,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 stats["C_tie_compare"] += time.perf_counter() - t0
                 counts["C_tie_compare"] += 1
 
-            # D) incumbent 업데이트 / list concat 비용
+            # D) incumbent sequence update timer
             if after_is_better:
                 if timing_enabled:
                     t0 = time.perf_counter()
@@ -1036,7 +1073,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         timing_enabled = getattr(self, "_profile_timing_enabled", False)
         if timing_enabled:
             self.log_insertion_timing_summary_as_info()
-            self._new_acc_cache[0].log_timing_as_info()
+            cache = getattr(self, "_new_acc_cache", None)
+            if cache:
+                first_evaluator = cache[0]
+                if first_evaluator is not None:
+                    first_evaluator.log_timing_as_info()
 
         schedule = self.get_dispatched_schedule(seq_before)
         if error_if_infeasible:

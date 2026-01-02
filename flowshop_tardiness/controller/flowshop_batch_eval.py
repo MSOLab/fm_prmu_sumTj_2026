@@ -292,13 +292,20 @@ class PermutationFlowshopSubseqEvaluator:
         pos: int,
         i_star: int,
     ) -> int:
-        """
-        Total tardiness for:
-            pi[0..pos-1] + subseq + pi[pos..]
-        computed as:
-          - prefix: pre.prefix_tardy[pos]
-          - subseq: sum tardiness using pre.subseq_last[:,pos]
-          - suffix: generalized Fig.10 boundary-walk from Load=pre.subseq_end[:,pos]
+        """Evaluate total tardiness for inserting subseq into pi at position pos.
+
+        Args:
+            pi (Sequence[int]): permutation without the subseq jobs
+            subseq (Sequence[int]): subsequence of jobs to insert
+            pre (PrecompSubseq): precomputed data for subseq insertion
+            pos (int): position to insert subseq into pi
+            i_star (int): boundary machine index for suffix evaluation
+
+        Returns:
+            int: total tardiness for pi[0..pos-1] + subseq + pi[pos..] where
+                - prefix: pre.prefix_tardy[pos]
+                - subseq: sum tardiness using pre.subseq_last[:,pos]
+                - suffix: generalized Fig.10 boundary-walk from Load=pre.subseq_end[:,pos]
         """
         obj_val = pre.prefix_tardy[pos]
 
@@ -367,7 +374,7 @@ class PermutationFlowshopSubseqEvaluator:
         best_obj_vals: ObjValVector | None = None
         L = len(pi)
         for pos in range(L + 1):
-            # (2-a) i_star 찾기
+            # (2-a) find i^*
             if timing_enabled:
                 t1 = time.perf_counter()
             i_star, makespan = self.find_i_star_subseq(pre, pos)
@@ -375,7 +382,7 @@ class PermutationFlowshopSubseqEvaluator:
                 stats["find_i_star_subseq"] += time.perf_counter() - t1
                 counts["find_i_star_subseq"] += 1
 
-            # (2-b) objective 평가
+            # (2-b) objective
             if timing_enabled:
                 t1 = time.perf_counter()
             sum_Tj = self.evaluate_position_total_tardiness(

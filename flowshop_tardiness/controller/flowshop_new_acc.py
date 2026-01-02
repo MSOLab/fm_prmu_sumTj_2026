@@ -414,13 +414,13 @@ class PermutationFlowshopEvaluator:
           - Fig.10 to compute objective (sumTj)
 
         Args:
-            pi (list[int]): original job sequence
+            pi (Sequence[int]): original job sequence
             sigma (int): new job to insert
             tie_breaker (str): tie breaking strategy.
                 If "makespan", store makespan as secondary objective.
 
         Returns:
-            tuple[int, int]: (best_pos, best_OF)
+            tuple[int, int]: (best_pos, best_total_tardiness)
         """
         pre = self.precompute(pi, sigma)
 

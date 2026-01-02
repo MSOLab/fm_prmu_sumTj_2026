@@ -116,7 +116,6 @@ def test_fig10_matches_naive_one_instance(p, due, pi, sigma):
         i_star, _ = solver.find_i_star(pre, pos)
 
         # NEW evaluation (Fig.10)
-        # NOTE: this assumes your calculate_OF_fig10 returns ObjValVector(total_tardy, total_idle or None)
         new_val = solver.calculate_OF_fig10(
             pi=pi,
             sigma=sigma,
