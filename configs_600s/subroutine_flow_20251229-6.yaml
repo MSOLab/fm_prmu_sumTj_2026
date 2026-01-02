@@ -8,8 +8,11 @@
   routine_data:
     - method: improve_by_insertion
       subseq_size: 1
-      tie_breaker: "default"
+      tie_breaker: "makespan"
       first_improvement: false
     - method: improve_by_insertion
       subseq_size: 2
-      tie_breaker: "default"
+      tie_breaker: "makespan"
+    - method: improve_by_insertion
+      subseq_size: 3
+      tie_breaker: "makespan"

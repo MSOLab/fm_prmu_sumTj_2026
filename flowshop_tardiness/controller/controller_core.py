@@ -19,6 +19,9 @@ from ..solution_manager import FsSolutionManager
 class FlowshopTardinessControllerCore(
     CpSubroutineController[FlowshopDuedateParameters, PositionModel, StoppingCriteria]
 ):
+    instance: FlowshopDuedateParameters
+    """The FlowshopDuedateParameters instance being solved."""
+
     # Start controller states
 
     solution_manager: FsSolutionManager
@@ -62,17 +65,17 @@ class FlowshopTardinessControllerCore(
         self.log_search_progress = False  # TODO: make it configurable
 
         # Frequently used parameters
-        self.job_cnt = len(self.instance.job_id_list)
-        self.stage_ids = tuple(self.instance._stage_id_list)
-        self.stage_cnt = len(self.stage_ids)
-        self.last_stage_id = self.stage_ids[-1]
-        self.job_2_stage_2_p_dict = self.instance.get_job_2_stage_2_builtin_int_p_map()
+        self.job_cnt: int = len(self.instance.job_id_list)
+        self.stage_ids: tuple[str, ...] = tuple(self.instance._stage_id_list)
+        self.stage_cnt: int = len(self.stage_ids)
+        self.last_stage_id: str = self.stage_ids[-1]
+        self.job_2_stage_2_p_dict: dict[str, dict[str, int]] = self.instance.get_job_2_stage_2_builtin_int_p_map()
         """Job name -> stage name -> processing time map"""
 
-        self.stage_2_job_2_p_dict = self.instance.get_stage_2_job_2_builtin_int_p_map()
+        self.stage_2_job_2_p_dict: dict[str, dict[str, int]] = self.instance.get_stage_2_job_2_builtin_int_p_map()
         """Stage name -> job name -> processing time map"""
 
-        self.stage_job_2_p_dict = self.instance.get_stage_job_2_builtin_int_p_map()
+        self.stage_job_2_p_dict: dict[tuple[str, str], int] = self.instance.get_stage_job_2_builtin_int_p_map()
         """(Stage name, Job name) -> processing time map"""
 
         logging.info(

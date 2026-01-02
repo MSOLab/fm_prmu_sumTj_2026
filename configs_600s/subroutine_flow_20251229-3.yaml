@@ -13,3 +13,6 @@
     - method: improve_by_insertion
       subseq_size: 2
       tie_breaker: "default"
+    - method: improve_by_insertion
+      subseq_size: 3
+      tie_breaker: "default"

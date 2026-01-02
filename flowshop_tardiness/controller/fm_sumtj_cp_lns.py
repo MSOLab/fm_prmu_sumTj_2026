@@ -1,7 +1,9 @@
 import logging
 import math
 import random
-from typing import Callable
+import time
+from collections import defaultdict
+from typing import Callable, Sequence
 
 from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
 from routix import DynamicDataObject, ElapsedTimer
@@ -10,6 +12,8 @@ from schore.schedule_examples.shop.flow import FlowshopSchedule
 
 from ..report import FsSubroutineReport
 from .controller_core import FlowshopTardinessControllerCore
+from .flowshop_batch_eval import PermutationFlowshopSubseqEvaluator
+from .list_window_slider import window_slide_over_list
 from .schedule_metric import ScheduleMetric
 
 REL_TOL = 1e-9  # for safe float comparisons
@@ -21,6 +25,27 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     Whether to presolve the CP model before solving.
     If None, use the default behavior of the CP solver.
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._profile_timing_enabled: bool = False  # change to True to enable timing
+        self._profile_timing_stats: defaultdict[str, int | float] = defaultdict(float)
+        self._profile_timing_counts: defaultdict[str, int] = defaultdict(int)
+
+    def log_insertion_timing_summary_as_info(self):
+        if not getattr(self, "_profile_timing_stats", None):
+            return
+        stats = self._profile_timing_stats
+        counts = self._profile_timing_counts
+        log_str = "\n==== Insertion Timing Summary ===="
+        keys = sorted(stats.keys(), key=lambda k: stats[k], reverse=True)
+        for k in keys:
+            c = counts.get(k, 0)
+            tot = stats[k]
+            avg = tot / c if c else 0.0
+            log_str += f"\n{k:25s} total={tot:10.6f}s  cnt={c:6d}  avg={avg:10.6f}s"
+        log_str += "\n=================================="
+        logging.info(log_str)
 
     def set_random_seed(self, seed: int):
         return super().set_random_seed(seed)
@@ -206,8 +231,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         Returns:
             list[str]: ordered job ids
         """
-        dmap = self.instance.job_2_duedate_map
-        pmap = self.job_2_stage_2_p_dict
+        dmap: dict[str, int] = self.instance.job_2_duedate_map
+        pmap: dict[str, dict[str, int]] = self.job_2_stage_2_p_dict
 
         def total_p(j: str) -> float:
             # Sum processing times across all stages for job j
@@ -234,9 +259,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     ) -> None:
         sub_timer = ElapsedTimer()
 
-        i_list = self.stage_ids
-        dmap = self.instance.job_2_duedate_map
-        pmap = self.job_2_stage_2_p_dict
+        i_list: tuple[str, ...] = self.stage_ids
+        dmap: dict[str, int] = self.instance.job_2_duedate_map
+        pmap: dict[str, dict[str, int]] = self.job_2_stage_2_p_dict
 
         # pre-calc total processing time used for tie-breaking
         total_proc_time_map = {
@@ -336,7 +361,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         )
 
     def mdd_min_value(self, job_id: str, completion_time: int) -> int:
-        return_val = self.instance.job_2_duedate_map[job_id]
+        return_val: int = self.instance.job_2_duedate_map[job_id]
         if completion_time > return_val:
             return completion_time
         return return_val
@@ -435,8 +460,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             - If job_seq is empty, returns ({0: {stage:0}}, {0:0}).
             - Assumes every job has defined processing time on every stage.
         """
-        dmap = self.instance.job_2_duedate_map
-        pos_2_stage_2_endtime_map = {0: {i: 0 for i in self.stage_ids}}
+        dmap: dict[str, int] = self.instance.job_2_duedate_map
+        pos_2_stage_2_endtime_map: dict[int, dict[str, int]] = {0: {i: 0 for i in self.stage_ids}}
 
         prefix_sumTj: dict[int, int] = {0: 0}
         for j_idx, j in enumerate(job_seq):
@@ -495,7 +520,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         """
         if tie_breaker == "default":
             return (metric.sumTj, 0)
-        if tie_breaker == "NEHms":
+        if tie_breaker == "makespan":
             return (metric.sumTj, metric.makespan)
         if tie_breaker == "NEH-M":
             return (metric.sumTj + metric.makespan * makespan_multiplier, 0)
@@ -529,7 +554,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         Returns:
             tuple[int, ScheduleMetrics]: (best position, best schedule metrics).
         """
-        dmap = self.instance.job_2_duedate_map
+        dmap: dict[str, int] = self.instance.job_2_duedate_map
 
         if not seq_now:
             # only one position
@@ -629,6 +654,89 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             raise RuntimeError("Unexpected: best_metric is None after evaluation.")
         return best_pos, best_metric
 
+    # -----------------------------
+    # NEW acceleration helper: build evaluator with index-mapped p, due
+    # -----------------------------
+    def _get_new_acc_evaluator(self):
+        """
+        Build (and cache) a PermutationFlowshopSubseqEvaluator that uses 0-based
+        integer job indices internally.
+
+        Returns:
+            (evaluator, job_id_to_idx, idx_to_job_id)
+        """
+        # cache on controller instance to avoid rebuilding on every call
+        if hasattr(self, "_new_acc_cache") and self._new_acc_cache is not None:
+            return self._new_acc_cache
+
+        job_ids: list[str] = list(self.instance.job_id_list)
+        stage_ids: list[str] = list(self.stage_ids)
+
+        job_id_to_idx: dict[str, int] = {jid: k for k, jid in enumerate(job_ids)}
+        idx_to_job_id: dict[int, str] = {k: jid for jid, k in job_id_to_idx.items()}
+
+        m = len(stage_ids)
+        n = len(job_ids)
+
+        # Build p[m][n] aligned with (stage_idx, job_idx)
+        p = [[0] * n for _ in range(m)]
+        for i, stage_id in enumerate(stage_ids):
+            for jid in job_ids:
+                j = job_id_to_idx[jid]
+                p[i][j] = int(self.stage_2_job_2_p_dict[stage_id][jid])
+
+        # Build due[n]
+        due = [0] * n
+        for jid in job_ids:
+            j = job_id_to_idx[jid]
+            due[j] = int(self.instance.job_2_duedate_map[jid])
+
+        evaluator = PermutationFlowshopSubseqEvaluator(p, due)
+
+        self._new_acc_cache: tuple[PermutationFlowshopSubseqEvaluator, dict[str, int], dict[int, str]] = (evaluator, job_id_to_idx, idx_to_job_id)
+        return self._new_acc_cache
+
+    def _get_best_pos_and_metric_new_acc(
+        self,
+        seq_now: list[str],
+        job_id_seq: Sequence[str] | str,
+        tie_breaker: str = "default",
+    ) -> tuple[int, ScheduleMetric]:
+        """
+        Evaluate insertion of job_id into seq_now using NEW acceleration
+        (Fernandez-Viagas et al., 2020) evaluator.
+
+        Args:
+            seq_now: current sequence of job IDs (strings)
+            job_id_seq: job ID (string) or sequence of job IDs to insert
+            tie_breaker: tie breaking strategy
+
+        Returns:
+            (best_pos, ScheduleMetric) for the best insertion position.
+        """
+        _job_id_seq: Sequence[str]
+        if isinstance(job_id_seq, str):
+            _job_id_seq = [job_id_seq]
+        else:
+            _job_id_seq = job_id_seq
+
+        evaluator, job_id_to_idx, _ = self._get_new_acc_evaluator()
+
+        # convert current sequence to index sequence
+        pi_idx = [job_id_to_idx[j] for j in seq_now]
+        sigma_idx_seq = [job_id_to_idx[job_id] for job_id in _job_id_seq]
+
+        # NEW evaluator returns best position and best objective1 value (sumTj)
+        best_pos, _ = evaluator.get_best_position(
+            pi_idx, sigma_idx_seq, tie_breaker=tie_breaker
+        )
+
+        # Build resulting sequence and compute ScheduleMetric using existing method
+        new_seq = seq_now[:best_pos] + list(_job_id_seq) + seq_now[best_pos:]
+        metric = self._compute_schedule_metric_from_sequence(new_seq)
+
+        return best_pos, metric
+
     def _run_neh_edd(
         self,
         method_name: str,
@@ -643,7 +751,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         Complexity: O(n^2 * m) with small constants via prefix reuse.
         """
         sub_timer = ElapsedTimer()
-        job_cnt = self.instance.job_count
 
         # 1) EDD order
         incumbent_sol = self.solution_manager.get_incumbent()
@@ -654,16 +761,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         seq: list[str] = []
 
-        # 2) NEH insertion by EDD order with fast evaluation
+        # 2) NEH insertion by EDD order with NEW acceleration evaluation
         for j in job_sequence:
-            j_idx = job_sequence.index(j)
-            makespan_multiplier = (job_cnt - 1 - j_idx) / (job_cnt - 1)
-            pos, _ = self._eval_insert_with_criteria(
-                seq,
-                j,
-                tie_breaker,
-                first_improvement=first_improvement,
-                makespan_multiplier=makespan_multiplier,
+            pos, _ = self._get_best_pos_and_metric_new_acc(
+                seq, j, tie_breaker=tie_breaker
             )
             seq.insert(pos, j)
 
@@ -696,77 +797,188 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     def initialize_by_nehedd(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEHedd", "default", error_if_infeasible, draw_gantt)
+        self._run_neh_edd(
+            "NEHedd",
+            "default",
+            error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
+        )
 
     def initialize_by_nehms(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEHms", "NEHms", error_if_infeasible, draw_gantt)
+        self._run_neh_edd(
+            "makespan",
+            "makespan",
+            error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
+        )
 
     def initialize_by_nehm(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEH-M", "NEH-M", error_if_infeasible, draw_gantt)
+        self._run_neh_edd(
+            "NEH-M",
+            "NEH-M",
+            error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
+        )
 
     def initialize_by_neh_it1(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
     ) -> None:
-        self._run_neh_edd("NEH-IT1", "NEH-IT1", error_if_infeasible, draw_gantt)
+        self._run_neh_edd(
+            "NEH-IT1",
+            "NEH-IT1",
+            error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
+        )
 
     def improve_job_seq_by_insertion_single_pass(
         self,
         job_seq: list[str],
+        subseq_size: int | None = None,
         tie_breaker: str = "default",
         first_improvement: bool = False,
     ) -> list[str]:
+        """Perform a single pass of insertion-based improvement on the job sequence.
+
+        Args:
+            job_seq (list[str]): The current sequence of jobs.
+            subseq_size (int | None, optional): Size of subsequences to consider for insertion.
+                Defaults to None.
+            tie_breaker (str, optional): Criteria for breaking ties when choosing positions.
+                Defaults to "default".
+            first_improvement (bool, optional): Whether to stop at the first improvement found.
+                Defaults to False.
+                If subseq_size > 1, this is forced to True.
+
+        Raises:
+            ValueError: If job_seq length <= 1.
+            ValueError: If job_seq contains duplicate job IDs.
+            ValueError: If subseq_size is less than 1.
+
+        Returns:
+            list[str]: The improved job sequence after the insertion pass.
+        """
         job_cnt = len(job_seq)
         if job_cnt <= 1:
             logging.info("Insertion improvement skipped: only one or zero jobs.")
             return job_seq
         # Quick sanity: unique IDs
         if len(set(job_seq)) != job_cnt:
-            logging.warning(
-                "Duplicate job IDs detected in sequence. Insertion pass may misbehave."
+            raise ValueError("job_seq contains duplicate job IDs.")
+
+        _first_improvement = first_improvement
+
+        if subseq_size is None or subseq_size == 1:
+            _subseq_size = 1
+        elif subseq_size < 1:
+            raise ValueError("subseq_size must be at least 1.")
+        else:
+            _subseq_size = subseq_size
+            if first_improvement is False:
+                logging.warning(
+                    "first_improvement=False was requested but is not supported when "
+                    "subseq_size > 1; overriding first_improvement to True."
+                )
+                _first_improvement = (
+                    True  # always first-improvement for subsequences > 1
+                )
+
+        if _subseq_size > job_cnt:
+            raise ValueError(
+                f"subseq_size ({_subseq_size}) cannot be greater than the number of jobs ({job_cnt})."
             )
 
+        timing_enabled: bool = getattr(self, "_profile_timing_enabled", False)
+        if timing_enabled:
+            stats = self._profile_timing_stats
+            counts = self._profile_timing_counts
+
         seq_before = list(job_seq)
-        seq_after = list(seq_before)
+        incumbent_seq = list(seq_before)
 
         best_metric = self._compute_schedule_metric_from_sequence(seq_before)
         best_crit1, best_crit2 = self._tie_crit_from_tm(best_metric, tie_breaker)
 
-        for j in seq_before:
-            j_idx = seq_after.index(j)
-            seq_after.remove(j)
-            pos, after_metric = self._eval_insert_with_criteria(
-                seq_after,
-                j,
-                tie_breaker,
-                first_improvement=first_improvement,
-                baseline_metric=best_metric,
-            )
-            crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
+        max_iter_cnt = job_cnt - _subseq_size + 1
+        logging.info(
+            f"Starting insertion improvement pass (subseq_size={_subseq_size}, max iterations={max_iter_cnt})."
+        )
+        iter_cnt = 0
+        for j_subseq in window_slide_over_list(job_seq, _subseq_size):
+            if timing_enabled:
+                # overall iteration timer
+                t_iter0 = time.perf_counter()
+                # A) profile_fixed creation timer
+                t0 = time.perf_counter()
 
+            iter_cnt += 1
+            profile_fixed: list[str] = [
+                j for j in incumbent_seq if j not in j_subseq
+            ]  # remove subseq
+            if timing_enabled:
+                stats["A_profile_fixed"] += time.perf_counter() - t0
+                counts["A_profile_fixed"] += 1
+
+            # B) get best position timer
+            if timing_enabled:
+                t0 = time.perf_counter()
+            pos, after_metric = self._get_best_pos_and_metric_new_acc(
+                profile_fixed, j_subseq, tie_breaker=tie_breaker
+            )
+            if timing_enabled:
+                stats["B_get_best_pos_metric"] += time.perf_counter() - t0
+                counts["B_get_best_pos_metric"] += 1
+
+            # C) tie-criteria calc timer
+            if timing_enabled:
+                t0 = time.perf_counter()
+            crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
             after_is_better = (crit1 < best_crit1) or (
                 crit1 == best_crit1 and crit2 < best_crit2
             )
+            if timing_enabled:
+                stats["C_tie_compare"] += time.perf_counter() - t0
+                counts["C_tie_compare"] += 1
+
+            # D) incumbent sequence update timer
             if after_is_better:
-                seq_after.insert(pos, j)
+                if timing_enabled:
+                    t0 = time.perf_counter()
+
+                incumbent_seq = (
+                    profile_fixed[:pos] + list(j_subseq) + profile_fixed[pos:]
+                )
                 best_metric = after_metric
                 best_crit1 = crit1
                 best_crit2 = crit2
-            else:
-                seq_after.insert(j_idx, j)  # revert to original spot for stability
+
+                if timing_enabled:
+                    stats["D_apply_update"] += time.perf_counter() - t0
+                    counts["D_apply_update"] += 1
+
+                if _first_improvement:
+                    logging.info(
+                        f"Insertion improvement pass: iteration {iter_cnt} / {max_iter_cnt}, found improvement to total tardiness {best_metric.sumTj}."
+                    )
+                    break  # exit after 1st improvement
+
+            if timing_enabled:
+                stats["ITER_total"] += time.perf_counter() - t_iter0
+                counts["ITER_total"] += 1
             if self.time_is_up():
                 logging.info(
-                    f"Time limit reached during {j_idx + 1} / {job_cnt} insertion improvement."
+                    f"Time limit reached during {iter_cnt} / {max_iter_cnt} insertion improvement."
                 )
                 break
 
-        return seq_after
+        return incumbent_seq
 
     def improve_by_insertion(
         self,
+        subseq_size: int | None = None,
         tie_breaker: str = "default",
         max_passes: int | None = None,
         first_improvement: bool = False,
@@ -817,7 +1029,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             passes += 1
 
             seq_after = self.improve_job_seq_by_insertion_single_pass(
-                seq_before, tie_breaker, first_improvement=first_improvement
+                seq_before,
+                subseq_size=subseq_size,
+                tie_breaker=tie_breaker,
+                first_improvement=first_improvement,
             )
             after_metric = self._compute_schedule_metric_from_sequence(seq_after)
             crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
@@ -848,6 +1063,14 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     f"Time limit reached during {passes} / {max_pass_str} insertion improvement passes."
                 )
                 break
+        timing_enabled = getattr(self, "_profile_timing_enabled", False)
+        if timing_enabled:
+            self.log_insertion_timing_summary_as_info()
+            cache = getattr(self, "_new_acc_cache", None)
+            if cache:
+                first_evaluator = cache[0]
+                if first_evaluator is not None:
+                    first_evaluator.log_timing_as_info()
 
         schedule = self.get_dispatched_schedule(seq_before)
         if error_if_infeasible:
