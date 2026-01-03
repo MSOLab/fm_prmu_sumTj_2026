@@ -1415,6 +1415,88 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     note, obj_value_is_valid=True, obj_bound_is_valid=True
                 )
 
+        def _solve_cp_model_lexico_for_batch(
+            sub_instance,
+            stage_2_est_map,
+            stage_2_lct_map,
+            sumTj_offset,
+            timelimit: float,
+            solver_thread_cnt: int,
+            all_jobs_are_included: bool,
+        ):
+            # ---------- Phase 1: minimize total tardiness (log) ----------
+            mdl1, params1, vars1 = builder.build(
+                sub_instance,
+                stage_2_est_map=stage_2_est_map,
+                stage_2_lct_map=stage_2_lct_map,
+                sumTj_offset=sumTj_offset,
+            )
+            if vars1.total_tardiness is None:
+                raise RuntimeError(
+                    "Unexpected: total_tardiness variable is None after CP solving."
+                )
+
+            if (
+                all_jobs_are_included
+                and self.solution_manager.best_obj_bound is not None
+                and not math.isnan(self.solution_manager.best_obj_bound)
+            ):
+                self.set_sumTj_lower_bound(
+                    mdl1, vars1, bound=self.solution_manager.best_obj_bound
+                )
+
+            report1 = self.solve_cp_model_2(
+                mdl1,
+                timelimit,
+                solver_thread_cnt,
+                obj_value_is_valid=all_jobs_are_included,
+            )
+
+            if not getattr(report1, "is_feasible", False):
+                # if infeasible, return here
+                return report1, mdl1, params1, vars1
+
+            best_T = int(self.solver.Value(vars1.total_tardiness))
+            # phase2 hint: pi only
+            pi_hint = [int(self.solver.Value(vars1.pi[k])) for k in params1.j_list]
+
+            # ---------- Phase 2: freeze primary, minimize secondary (no log) ----------
+            mdl2, params2, vars2 = builder.build(
+                sub_instance,
+                stage_2_est_map=stage_2_est_map,
+                stage_2_lct_map=stage_2_lct_map,
+                sumTj_offset=sumTj_offset,
+            )
+            if vars2.sum_latest_completion is None:
+                raise RuntimeError(
+                    "Unexpected: total_tardiness variable is None before CP solving."
+                )
+
+            # Freeze primary objective
+            mdl2.add(vars2.total_tardiness == best_T)
+
+            # Add hints from phase1
+            mdl2.clear_hints()
+            for idx, k in enumerate(params2.j_list):
+                mdl2.add_hint(vars2.pi[k], pi_hint[idx])
+
+            # Apply secondary objective
+            mdl2.minimize(vars2.sum_latest_completion)
+
+            # Solve without logging objective values
+            _ = self.solve_cp_model_2(
+                mdl2,
+                timelimit,
+                solver_thread_cnt,
+                obj_value_is_valid=False,
+                obj_bound_is_valid=False,
+                log_level_obj_value=logging.NOTSET,
+                log_level_obj_bound=logging.NOTSET,
+            )
+
+            # Return the report from phase 1 (with objective log), and the model/params/vars from phase 2
+            return report1, mdl2, params2, vars2
+
         builder = BaseModelBuilder()
 
         # ================== /helpers ==================
@@ -1495,11 +1577,14 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 len(added_job_sublist),
                 sub_timer.get_formatted_elapsed_time(),
             )
-            iter_report = self.solve_cp_model_2(
-                sub_cp_mdl,
-                _timelimit,
-                solver_thread_cnt,
-                obj_value_is_valid=all_jobs_are_included,
+            iter_report, sub_cp_mdl, params, vars = _solve_cp_model_lexico_for_batch(
+                sub_instance=sub_instance,
+                stage_2_est_map=stage_2_est_map,
+                stage_2_lct_map=stage_2_lct_map,
+                sumTj_offset=sum_Tj_offset,
+                timelimit=_timelimit,
+                solver_thread_cnt=solver_thread_cnt,
+                all_jobs_are_included=all_jobs_are_included,
             )
             last_timestamp = sub_timer.elapsed_sec
 
