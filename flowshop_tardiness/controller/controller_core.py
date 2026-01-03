@@ -714,7 +714,7 @@ class FlowshopTardinessControllerCore(
             )
             self.cp_model.clear_hints()
             self.add_hints_from_schedule(
-                 self.cp_model,self.params, self.vars, incumbent_solution
+                self.cp_model, self.params, self.vars, incumbent_solution
             )
 
         self.solve_current_cp_remaining_time_limit(
@@ -729,14 +729,37 @@ class FlowshopTardinessControllerCore(
             draw_gantt=draw_gantt,
         )
 
+    def _get_j_sequence_from_solver(self, params: Params, vars: Vars) -> list[int]:
+        """Get the job index sequence from the solver.
+
+        Args:
+            params (Params): parameter instance
+            vars (Vars): variable instance
+
+        Returns:
+            list[int]: The job index sequence as determined by the solver.
+        """
+        return [self.solver.Value(vars.pi[k]) for k in params.j_list]
+
+    def get_job_sequence_from_solver(self, params: Params, vars: Vars) -> list[str]:
+        """Get the job name sequence from the solver's job index sequence.
+
+        Args:
+            params (Params): parameter instance
+            vars (Vars): variable instance
+
+        Returns:
+            list[str]: The job name sequence as determined by the solver.
+        """
+        j_sequence = self._get_j_sequence_from_solver(params, vars)
+        j_name_sequence = [params.j_2_job_name_map[j] for j in j_sequence]
+        return j_name_sequence
+
     def create_schedule_from_sequence(
-        self,
-        params: Params,
-        vars: Vars,
-        j_name_sequence: list[str] | None = None,
+        self, params: Params, vars: Vars, j_name_sequence: list[str] | None = None
     ) -> FlowshopSchedule:
         if j_name_sequence is None:
-            j_sequence = [self.solver.Value(vars.pi[k]) for k in params.j_list]
+            j_sequence = self._get_j_sequence_from_solver(params, vars)
         else:
             j_sequence = [params.job_name_2_j_map[j_name] for j_name in j_name_sequence]
         i_name_list = [params.i_2_stage_name_map[i] for i in params.i_list]
@@ -806,7 +829,9 @@ class FlowshopTardinessControllerCore(
                 raise ValueError("total_tardiness undefined in Vars")
             mdl.add_hint(vars.total_tardiness, sum_Tj)
 
-    def set_sumTj_lower_bound(self,  mdl: CustomCpModel,vars: Vars, bound: float | None) -> None:
+    def set_sumTj_lower_bound(
+        self, mdl: CustomCpModel, vars: Vars, bound: float | None
+    ) -> None:
         if bound is None:
             return
         if math.isnan(bound):

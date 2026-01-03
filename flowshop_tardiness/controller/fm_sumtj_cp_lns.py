@@ -1308,11 +1308,23 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         draw_gantt: bool = False,
     ):
         sub_timer = ElapsedTimer()
-        last_solution: FlowshopSchedule | None = None
         sub_obj_store = ObjValueBoundStore[float]()
         """Subroutine-specific objective store"""
         sub_obj_store.obj_value_series.name = "ObjVal after dispatch"
         sub_obj_store.obj_bound_series.name = "ObjVal before dispatch"
+
+        # The schedule to be built incrementally
+        last_solution: FlowshopSchedule | None = None
+        # This is the schedule with all jobs
+        # Initially, the job sequence is the given job_sequence
+        from ..fm_prmu import PermutationFlowshopScheduleLight
+
+        last_complete_solution = PermutationFlowshopScheduleLight(
+            self.stage_ids,
+            job_2_stage_2_p_map=self.job_2_stage_2_p_dict,
+            job_2_due_map=self.instance.job_2_duedate_map,
+        )
+        last_complete_solution.extend_jobs(job_sequence)
 
         job_cnt = len(job_sequence)
         sequence_of_job_sublist = [
@@ -1409,11 +1421,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         halt_incremental_cp_processing = False
         target_job_subset: set[str] = set()
-        incumbent_job_seq = []
-        incumbent_obj_val = 0
+        last_job_seq = []
+        last_obj_val = 0
 
         for bidx, added_job_sublist in enumerate(sequence_of_job_sublist):
-            # ---------- [Time over?] : cutoff before partial dispatch ----------
+            # ---------- [Time over?] : cutoff before sub CP model building ----------
             _timelimit = self.get_remaining_time_limit(max_time_per_add)
             if float_a_leq_b(_timelimit, 0):
                 logging.info(
@@ -1424,77 +1436,38 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 halt_incremental_cp_processing = True
                 break  # End loop & go to 'after-loop finishing'
 
-            # ---------- [Partial dispatch] ----------
-            partial_sol: FlowshopSchedule = (
-                FlowshopSchedule.from_stage_name_list(self.stage_ids)
-                if last_solution is None
-                else last_solution.deepcopy()
-            )
-            for j in added_job_sublist:
-                partial_sol.dispatch_job_by_stages(
-                    j,
-                    self.stage_ids,
-                    self.job_2_stage_2_p_dict[j],
-                    after_last=True,
-                )
             target_job_subset.update(added_job_sublist)
-            dispatch_obj_val = self.get_obj_value(partial_sol)
-
-            # ---------- [sumTj == 0 ?] ----------
-            if dispatch_obj_val == 0:
-                logging.info(
-                    "(Batch %d/%d) sumTj=0 -> skip CP; keep partial dispatched schedule.",
-                    bidx + 1,
-                    job_sublist_cnt,
-                )
-                last_solution = partial_sol
-                incumbent_job_seq = last_solution.get_last_stage_job_list()
-                # TODO: uncomment only for debug purpose
-                # job_subset_cnt = len(target_job_subset)
-                # output_path = self.get_file_path_for_subroutine(
-                #     f"_gantt_n{job_subset_cnt}_solution.yaml"
-                # )
-                # solution_dict = {
-                #     "start_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_start_time_map()
-                #     ),
-                #     "end_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_end_time_map()
-                #     ),
-                # }
-                # object_to_yaml(solution_dict, output_path)
-                incumbent_obj_val = 0
-                _log_snapshot(
-                    last_solution,
-                    target_job_subset,
-                    note=f"{len(target_job_subset)}/{job_cnt} (sumTj=0; skip CP)",
-                )
-                continue
+            job_subset_cnt = len(target_job_subset)
+            all_jobs_are_included = job_subset_cnt == job_cnt
 
             # ---------- [Sub CP build & solve] ----------
-            job_subset_cnt = len(target_job_subset)
             sub_instance = self.instance.get_subinstance(added_job_sublist)
             logging.info(sub_instance.job_id_list)
-            if last_solution is not None:
+
+            sum_Tj_offset = None
+            stage_2_est_map = None
+            stage_2_lct_map = None
+            if isinstance(last_solution, FlowshopSchedule):
+                sum_Tj_offset = int(last_obj_val)
                 # Add earliest start time constraints for each stages from the last solution
                 stage_2_est_map = last_solution.get_stage_2_makespan_map()
-                sub_cp_mdl, params, vars = builder.build(
-                    sub_instance,
-                    stage_2_est_map=stage_2_est_map,
-                    sumTj_offset=int(incumbent_obj_val),
-                )
-                # Apply hint
-                self.add_hints_from_schedule(
-                    sub_cp_mdl,
-                    params,
-                    vars,
-                    partial_sol,
-                    job_subset=set(added_job_sublist),
-                )
-            else:
-                sub_cp_mdl, params, vars = builder.build(sub_instance)
+                # Latest completion time if this is not the last batch
+                if not all_jobs_are_included:
+                    remaining_job_cnt = job_cnt - job_subset_cnt
+                    stage_2_lct_map = (
+                        last_complete_solution.push_back_tail_jobs_keep_total_tardiness(
+                            remaining_job_cnt
+                        )
+                    )
+
+            sub_cp_mdl, params, vars = builder.build(
+                sub_instance,
+                stage_2_est_map=stage_2_est_map,
+                stage_2_lct_map=stage_2_lct_map,
+                sumTj_offset=sum_Tj_offset,
+            )
+
             # set obj lower bound if all jobs are included and we have a valid bound
-            all_jobs_are_included = job_subset_cnt == job_cnt
             if (
                 all_jobs_are_included
                 and self.solution_manager.best_obj_bound is not None
@@ -1512,32 +1485,14 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     bidx + 1,
                     job_sublist_cnt,
                 )
-                last_solution = partial_sol  # keep the dispatched partial schedule
-                incumbent_job_seq = last_solution.get_last_stage_job_list()
-                incumbent_obj_val = int(dispatch_obj_val)
                 halt_incremental_cp_processing = True
-                # TODO: uncomment only for debug purpose
-                # job_subset_cnt = len(target_job_subset)
-                # output_path = self.get_file_path_for_subroutine(
-                #     f"_gantt_n{job_subset_cnt}_solution.yaml"
-                # )
-                # solution_dict = {
-                #     "start_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_start_time_map()
-                #     ),
-                #     "end_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_end_time_map()
-                #     ),
-                # }
-                # object_to_yaml(solution_dict, output_path)
                 break  # End loop & go to 'after-loop finishing'
 
             logging.info(
-                "(batch %d/%d) Starting CP on subproblem with %d jobs (dispatched obj val: %d) at %s",
+                "(batch %d/%d) Starting CP on subproblem with %d jobs at %s",
                 bidx + 1,
                 job_sublist_cnt,
-                len(target_job_subset),
-                dispatch_obj_val,
+                len(added_job_sublist),
                 sub_timer.get_formatted_elapsed_time(),
             )
             iter_report = self.solve_cp_model_2(
@@ -1548,82 +1503,39 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             )
             last_timestamp = sub_timer.elapsed_sec
 
-            # ---------- [CP feasible? & CP is better?] ----------
-            # Use sequence-based schedule creation since the starting times by CP model
-            # does not minimize the total completion time (its main goal is to minimize
-            # tardiness).
-            # Update the last solution
-            appended_solution = self.create_schedule_from_sequence(params, vars)
-            job_seq_to_be_appended = appended_solution.get_last_stage_job_list()
-            new_job_seq = incumbent_job_seq + job_seq_to_be_appended
-            cp_sched = (
-                self.create_schedule_from_sequence(
-                    self.params, vars, j_name_sequence=new_job_seq
+            job_seq_to_be_appended = self.get_job_sequence_from_solver(params, vars)
+            if set(job_seq_to_be_appended) != set(added_job_sublist):
+                raise RuntimeError(
+                    "Inconsistent job set from CP solver."
+                    f" Expected {set(added_job_sublist)},"
+                    f" got {set(job_seq_to_be_appended)}."
                 )
-                if iter_report.is_feasible
-                else None
+            new_job_seq: list[str] = last_job_seq + job_seq_to_be_appended
+            cp_sched: FlowshopSchedule = self.create_schedule_from_sequence(
+                self.params, vars, j_name_sequence=new_job_seq
             )
-            cp_obj_val = None if cp_sched is None else self.get_obj_value(cp_sched)
-            cp_is_better = cp_obj_val is not None and float_a_stl_b(
-                cp_obj_val, dispatch_obj_val
-            )
+            cp_obj_val = self.get_obj_value(cp_sched)
 
-            if cp_is_better:
-                assert cp_obj_val is not None
-                logging.info(
-                    "CP is better (%d < %d) -> use CP schedule.",
-                    cp_obj_val,
-                    dispatch_obj_val,
-                )
-                assert cp_sched is not None
-                last_solution = cp_sched
-                incumbent_job_seq = last_solution.get_last_stage_job_list()
-                incumbent_obj_val = int(cp_obj_val)
-                # TODO: uncomment only for debug purpose
-                # job_subset_cnt = len(target_job_subset)
-                # output_path = self.get_file_path_for_subroutine(
-                #     f"_gantt_n{job_subset_cnt}_solution.yaml"
-                # )
-                # solution_dict = {
-                #     "start_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_start_time_map()
-                #     ),
-                #     "end_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_end_time_map()
-                #     ),
-                # }
-                # object_to_yaml(solution_dict, output_path)
-            else:
-                reason = (
-                    "infeasible" if not iter_report.is_feasible else "no improvement"
-                )
-                logging.info("CP %s -> keep dispatched partial.", reason)
-                last_solution = partial_sol
-                incumbent_job_seq = last_solution.get_last_stage_job_list()
-                incumbent_obj_val = int(dispatch_obj_val)
-                # TODO: uncomment only for debug purpose
-                # job_subset_cnt = len(target_job_subset)
-                # output_path = self.get_file_path_for_subroutine(
-                #     f"_gantt_n{job_subset_cnt}_solution.yaml"
-                # )
-                # solution_dict = {
-                #     "start_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_start_time_map()
-                #     ),
-                #     "end_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_end_time_map()
-                #     ),
-                # }
-                # object_to_yaml(solution_dict, output_path)
-
-            # ---------- [CP is not better & timeover?] ----------
-            if (not cp_is_better) and float_a_leq_b(
-                _timelimit, iter_report.elapsed_time
-            ):
-                logging.warning(
-                    "CP timeover at this batch -> halt further incremental CP."
-                )
-                halt_incremental_cp_processing = True
+            last_solution: FlowshopSchedule = cp_sched
+            last_job_seq: list[str] = new_job_seq
+            last_obj_val = int(cp_obj_val)
+            # TODO: uncomment only for debug purpose
+            # job_subset_cnt = len(target_job_subset)
+            # output_path = self.get_file_path_for_subroutine(
+            #     f"_gantt_n{job_subset_cnt}_solution.yaml"
+            # )
+            # solution_dict = {
+            #     "start_time_map": tuple_to_pyyaml_key(
+            #         last_solution.get_start_time_map()
+            #     ),
+            #     "end_time_map": tuple_to_pyyaml_key(
+            #         last_solution.get_end_time_map()
+            #     ),
+            # }
+            # object_to_yaml(solution_dict, output_path)
+            full_job_seq = last_job_seq + job_sequence[job_subset_cnt:]
+            last_complete_solution.clear()
+            last_complete_solution.extend_jobs(full_job_seq)
 
             # ---------- [Log snapshot & halt] ----------
             _log_snapshot(
@@ -1637,7 +1549,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 break
 
         # ---------- [End] : Dispatch remaining jobs ----------
-        if last_solution is None:
+        if not isinstance(last_solution, FlowshopSchedule):
             last_solution = FlowshopSchedule.from_stage_name_list(self.stage_ids)
 
         remaining_jobs = [j for j in job_sequence if j not in target_job_subset]

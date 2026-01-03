@@ -91,10 +91,11 @@ class BaseModelBuilder:
         self,
         instance: FlowshopDuedateParameters,
         stage_2_est_map: dict[str, int] | None = None,
+        stage_2_lct_map: dict[str, int] | None = None,
         sumTj_offset: int | None = None,
     ) -> tuple[CustomCpModel, Params, Vars]:
         mdl = CustomCpModel()
-        params: Params = self._make_params(instance, stage_2_est_map=stage_2_est_map)
+        params: Params = self._make_params(instance, stage_2_est_map=stage_2_est_map, stage_2_lct_map=stage_2_lct_map)
 
         vars = self._make_vars(mdl, instance, params)
         self._add_structural_constraints(mdl, instance, params, vars)
@@ -108,6 +109,7 @@ class BaseModelBuilder:
         self,
         instance: FlowshopDuedateParameters,
         stage_2_est_map: dict[str, int] | None = None,
+        stage_2_lct_map: dict[str, int] | None = None,
     ) -> Params:
         j_2_job_name_map = {j: name for j, name in enumerate(instance.job_id_list)}
         job_name_2_j_map = {name: j for j, name in j_2_job_name_map.items()}
@@ -146,6 +148,10 @@ class BaseModelBuilder:
                 sum(P[ip, j] for j in j_list for ip in i_list[: i + 1])
                 + stage_start_time_lb[i]
             )
+            if stage_2_lct_map:
+                lct = stage_2_lct_map.get(i_2_stage_name_map[i], None)
+                if lct is not None and stage_end_time_ub[i] > lct:
+                    stage_end_time_ub[i] = lct
             # logging.info(f"Stage {i} end time UB: {self.stage_end_time_ub[i]}")
         D = {
             j: int(round(instance.job_2_duedate_map[j_name]))
