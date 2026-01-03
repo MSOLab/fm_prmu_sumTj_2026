@@ -101,10 +101,10 @@ class PermutationFlowshopScheduleLight:
         for job_name in job_name_list:
             self.append_job(job_name)
 
-    def push_back_tail_jobs_keep_total_tardiness(self, tail_job_cnt: int) -> dict[str, int]:
+    def push_back_tail_jobs_keep_tardiness(self, tail_job_cnt: int) -> dict[str, int]:
         """
         Push back the last 'tail_job_cnt' jobs in the schedule
-        while keeping the total_tardiness unchanged.mary_
+        while keeping each job's tardiness unchanged.
 
         Args:
             tail_job_cnt (int): The number of jobs to push back from the end of the schedule.
@@ -166,13 +166,17 @@ class PermutationFlowshopScheduleLight:
                         - self._stage_2_job_2_end_map[this_i][this_j]
                         - stage_2_p_this_j[next_i]
                     )
+                    if dist_to_next_i < 0:
+                        raise ValueError(
+                            "Inconsistent end times detected when pushing back tail jobs."
+                        )
                 else:
-                    d_j: int = self._job_2_due_map[this_j]
+                    d_j: int | None = self._job_2_due_map.get(this_j, None)
                     if d_j is not None:
                         due_date_room = (
                             d_j - self._stage_2_job_2_end_map[this_i][this_j]
                         )
-                        dist_to_next_i = due_date_room if due_date_room >= 0 else 0
+                        dist_to_next_i = due_date_room if due_date_room > 0 else 0
 
                 # New end time calculation
                 dist_to_next = None
@@ -184,9 +188,49 @@ class PermutationFlowshopScheduleLight:
 
         # Return the start time of the last-pushed job at each stage
         stage_2_start_time_map: dict[str, int] = {}
+        last_job_name: str = tail_jobs[0]
+        # logging.info(f"Last pushed job: {last_job_name}")
         for stage_name in self._stage_name_list:
-            last_job_name: str = tail_jobs[0]
             end_time: int = self._stage_2_job_2_end_map[stage_name][last_job_name]
             p_time: int = self._job_2_stage_2_p_map[last_job_name][stage_name]
+            stage_2_start_time_map[stage_name] = end_time - p_time
+        return stage_2_start_time_map
+
+    def get_next_job_name(self, this_job_name: str) -> str | None:
+        """
+        Get the next job name in the schedule after the specified job.
+
+        Args:
+            this_job_name (str): The current job name.
+
+        Returns:
+            str | None: The next job name if it exists, otherwise None.
+        """
+        try:
+            current_index: int = self._job_seq.index(this_job_name)
+            if current_index + 1 < len(self._job_seq):
+                return self._job_seq[current_index + 1]
+            else:
+                return None
+        except ValueError:
+            return None
+
+    def get_stage_2_start_time_map(self, job_name: str | None) -> dict[str, int]:
+        """
+        Get the start time of a job at each stage.
+
+        Args:
+            job_name (str | None): The name of the job. If None, returns an empty dictionary.
+
+        Returns:
+            dict[str, int]: A dictionary mapping stage names to start times for the specified job.
+        """
+        stage_2_start_time_map: dict[str, int] = {}
+        if job_name is None:
+            return stage_2_start_time_map
+
+        for stage_name in self._stage_name_list:
+            end_time: int = self._stage_2_job_2_end_map[stage_name][job_name]
+            p_time: int = self._job_2_stage_2_p_map[job_name][stage_name]
             stage_2_start_time_map[stage_name] = end_time - p_time
         return stage_2_start_time_map

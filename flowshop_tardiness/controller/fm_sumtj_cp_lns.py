@@ -1283,7 +1283,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         if incumbent_sol is None:
             # use EDD order if no incumbent
             job_sequence = self.get_edd_sequence()
-            logging.info(f"Job sequence from incumbent: {job_sequence}")
         else:
             job_sequence = incumbent_sol.get_last_stage_job_list()
 
@@ -1313,6 +1312,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         sub_obj_store.obj_value_series.name = "ObjVal after dispatch"
         sub_obj_store.obj_bound_series.name = "ObjVal before dispatch"
 
+        job_cnt = len(job_sequence)
+
         # The schedule to be built incrementally
         last_solution: FlowshopSchedule | None = None
         # This is the schedule with all jobs
@@ -1325,8 +1326,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             job_2_due_map=self.instance.job_2_duedate_map,
         )
         last_complete_solution.extend_jobs(job_sequence)
+        last_complete_solution.push_back_tail_jobs_keep_tardiness(job_cnt)
 
-        job_cnt = len(job_sequence)
         sequence_of_job_sublist = [
             job_sequence[i : i + added_batch_size]
             for i in range(0, len(job_sequence), added_batch_size)
@@ -1454,9 +1455,15 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
             if not getattr(report1, "is_feasible", False):
                 # if infeasible, return here
+                logging.info("Sub-CP model infeasible in phase 1; skipping phase 2.")
                 return report1, mdl1, params1, vars1
 
             best_T = int(self.solver.Value(vars1.total_tardiness))
+            logging.info(
+                "Phase 1 complete(%s): best total tardiness = %d",
+                report1.status,
+                best_T,
+            )
             # phase2 hint: pi only
             pi_hint = [int(self.solver.Value(vars1.pi[k])) for k in params1.j_list]
 
@@ -1503,7 +1510,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         halt_incremental_cp_processing = False
         target_job_subset: set[str] = set()
-        last_job_seq = []
+        last_job_seq: list[str] = []
         last_obj_val = 0
 
         for bidx, added_job_sublist in enumerate(sequence_of_job_sublist):
@@ -1518,29 +1525,24 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 halt_incremental_cp_processing = True
                 break  # End loop & go to 'after-loop finishing'
 
-            target_job_subset.update(added_job_sublist)
-            job_subset_cnt = len(target_job_subset)
+            job_subset_cnt = len(target_job_subset) + len(added_job_sublist)
             all_jobs_are_included = job_subset_cnt == job_cnt
 
             # ---------- [Sub CP build & solve] ----------
             sub_instance = self.instance.get_subinstance(added_job_sublist)
-            logging.info(sub_instance.job_id_list)
 
             sum_Tj_offset = None
             stage_2_est_map = None
             stage_2_lct_map = None
+            # Add earliest start time constraints for each stages from the last solution
             if isinstance(last_solution, FlowshopSchedule):
                 sum_Tj_offset = int(last_obj_val)
-                # Add earliest start time constraints for each stages from the last solution
                 stage_2_est_map = last_solution.get_stage_2_makespan_map()
-                # Latest completion time if this is not the last batch
-                if not all_jobs_are_included:
-                    remaining_job_cnt = job_cnt - job_subset_cnt
-                    stage_2_lct_map = (
-                        last_complete_solution.push_back_tail_jobs_keep_total_tardiness(
-                            remaining_job_cnt
-                        )
-                    )
+            # Latest completion time if this is not the last batch
+            if not all_jobs_are_included:
+                stage_2_lct_map = last_complete_solution.get_stage_2_start_time_map(
+                    last_complete_solution.get_next_job_name(added_job_sublist[-1])
+                )
 
             sub_cp_mdl, params, vars = builder.build(
                 sub_instance,
@@ -1588,6 +1590,25 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             )
             last_timestamp = sub_timer.elapsed_sec
 
+            # ---------- [Infeasible?] : log & halt ----------
+            if not getattr(iter_report, "is_feasible", False):
+                logging.info(
+                    "(batch %d/%d) Sub-CP model infeasible -> finish by dispatching remaining jobs.",
+                    bidx + 1,
+                    job_sublist_cnt,
+                )
+                # Log snapshot before halting
+                if isinstance(last_solution, FlowshopSchedule):
+                    _log_snapshot(
+                        last_solution,
+                        target_job_subset,
+                        note=f"{len(target_job_subset)}/{job_cnt}",
+                        iter_report=iter_report,
+                        timestamp=last_timestamp,
+                    )
+                halt_incremental_cp_processing = True
+                break  # End loop & go to 'after-loop finishing'
+
             job_seq_to_be_appended = self.get_job_sequence_from_solver(params, vars)
             if set(job_seq_to_be_appended) != set(added_job_sublist):
                 raise RuntimeError(
@@ -1601,8 +1622,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             )
             cp_obj_val = self.get_obj_value(cp_sched)
 
-            last_solution: FlowshopSchedule = cp_sched
-            last_job_seq: list[str] = new_job_seq
+            target_job_subset.update(added_job_sublist)
+            last_solution = cp_sched
+            last_job_seq = new_job_seq
             last_obj_val = int(cp_obj_val)
             # TODO: uncomment only for debug purpose
             # job_subset_cnt = len(target_job_subset)
@@ -1618,9 +1640,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             #     ),
             # }
             # object_to_yaml(solution_dict, output_path)
-            full_job_seq = last_job_seq + job_sequence[job_subset_cnt:]
-            last_complete_solution.clear()
-            last_complete_solution.extend_jobs(full_job_seq)
 
             # ---------- [Log snapshot & halt] ----------
             _log_snapshot(
