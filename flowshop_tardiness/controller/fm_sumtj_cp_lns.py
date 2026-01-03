@@ -10,6 +10,7 @@ from routix import DynamicDataObject, ElapsedTimer
 from routix.util.comparison import float_a_leq_b, float_a_stl_b
 from schore.schedule_examples.shop.flow import FlowshopSchedule
 
+from ..cpsat_model_2.position import BaseModelBuilder
 from ..report import FsSubroutineReport
 from .controller_core import FlowshopTardinessControllerCore
 from .flowshop_batch_eval import PermutationFlowshopSubseqEvaluator
@@ -461,7 +462,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             - Assumes every job has defined processing time on every stage.
         """
         dmap: dict[str, int] = self.instance.job_2_duedate_map
-        pos_2_stage_2_endtime_map: dict[int, dict[str, int]] = {0: {i: 0 for i in self.stage_ids}}
+        pos_2_stage_2_endtime_map: dict[int, dict[str, int]] = {
+            0: {i: 0 for i in self.stage_ids}
+        }
 
         prefix_sumTj: dict[int, int] = {0: 0}
         for j_idx, j in enumerate(job_seq):
@@ -693,7 +696,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         evaluator = PermutationFlowshopSubseqEvaluator(p, due)
 
-        self._new_acc_cache: tuple[PermutationFlowshopSubseqEvaluator, dict[str, int], dict[int, str]] = (evaluator, job_id_to_idx, idx_to_job_id)
+        self._new_acc_cache: tuple[
+            PermutationFlowshopSubseqEvaluator, dict[str, int], dict[int, str]
+        ] = (evaluator, job_id_to_idx, idx_to_job_id)
         return self._new_acc_cache
 
     def _get_best_pos_and_metric_new_acc(
@@ -1398,6 +1403,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     note, obj_value_is_valid=True, obj_bound_is_valid=True
                 )
 
+        builder = BaseModelBuilder()
+
         # ================== /helpers ==================
 
         halt_incremental_cp_processing = False
@@ -1471,20 +1478,21 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             if last_solution is not None:
                 # Add earliest start time constraints for each stages from the last solution
                 stage_2_est_map = last_solution.get_stage_2_makespan_map()
-                sub_cp_mdl = self.cp_model.from_instance(
+                sub_cp_mdl, params, vars = builder.build(
                     sub_instance,
-                    self.get_horizon(),
                     stage_2_est_map=stage_2_est_map,
                     sumTj_offset=int(incumbent_obj_val),
                 )
                 # Apply hint
-                sub_cp_mdl.add_hints_from_schedule(
-                    partial_sol, job_subset=set(added_job_sublist)
+                self.add_hints_from_schedule(
+                    sub_cp_mdl,
+                    params,
+                    vars,
+                    partial_sol,
+                    job_subset=set(added_job_sublist),
                 )
             else:
-                sub_cp_mdl = self.cp_model.from_instance(
-                    sub_instance, self.get_horizon()
-                )
+                sub_cp_mdl, params, vars = builder.build(sub_instance)
             # set obj lower bound if all jobs are included and we have a valid bound
             all_jobs_are_included = job_subset_cnt == job_cnt
             if (
@@ -1492,7 +1500,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 and self.solution_manager.best_obj_bound is not None
                 and not math.isnan(self.solution_manager.best_obj_bound)
             ):
-                sub_cp_mdl.set_sumTj_lower_bound(self.solution_manager.best_obj_bound)
+                self.set_sumTj_lower_bound(
+                    sub_cp_mdl, vars, bound=self.solution_manager.best_obj_bound
+                )
 
             # ---------- [Time over?] : cutoff before CP solving ----------
             _timelimit = self.get_remaining_time_limit(max_time_per_add)
@@ -1530,13 +1540,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 dispatch_obj_val,
                 sub_timer.get_formatted_elapsed_time(),
             )
-            iter_report = self.solve_cp_model(
+            iter_report = self.solve_cp_model_2(
                 sub_cp_mdl,
                 _timelimit,
                 solver_thread_cnt,
-                random_seed=self.random_seed,
-                cp_model_presolve=self.cp_model_presolve,
-                e_timer=sub_timer,
                 obj_value_is_valid=all_jobs_are_included,
             )
             last_timestamp = sub_timer.elapsed_sec
@@ -1546,11 +1553,13 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             # does not minimize the total completion time (its main goal is to minimize
             # tardiness).
             # Update the last solution
-            appended_solution = sub_cp_mdl.create_schedule_from_sequence()
+            appended_solution = self.create_schedule_from_sequence(params, vars)
             job_seq_to_be_appended = appended_solution.get_last_stage_job_list()
             new_job_seq = incumbent_job_seq + job_seq_to_be_appended
             cp_sched = (
-                self.cp_model.create_schedule_from_sequence(j_name_sequence=new_job_seq)
+                self.create_schedule_from_sequence(
+                    self.params, vars, j_name_sequence=new_job_seq
+                )
                 if iter_report.is_feasible
                 else None
             )
