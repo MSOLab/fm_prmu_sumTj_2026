@@ -12,7 +12,7 @@ from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from schore.schedule_examples.shop.flow import FlowshopSchedule
 
 from ..cpsat_model_2.position import BaseModelBuilder
-from ..fm_prmu import PermutationFlowshopScheduleLight
+from ..fm_prmu import PermutationFlowshopScheduleLite
 from ..report import FsSubroutineReport
 from .controller_core import FlowshopTardinessControllerCore
 from .flowshop_batch_eval import PermutationFlowshopSubseqEvaluator
@@ -1320,7 +1320,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         last_solution: FlowshopSchedule | None = None
         # This is the schedule with all jobs
         # Initially, the job sequence is the given job_sequence
-        given_sched = PermutationFlowshopScheduleLight(
+        given_sched = PermutationFlowshopScheduleLite(
             self.stage_ids,
             job_2_stage_2_p_map=self.job_2_stage_2_p_dict,
             job_2_due_map=self.instance.job_2_duedate_map,

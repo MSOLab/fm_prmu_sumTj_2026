@@ -2,7 +2,7 @@ from itertools import pairwise
 from typing import Iterable
 
 
-class PermutationFlowshopScheduleLight:
+class PermutationFlowshopScheduleLite:
     def __init__(
         self,
         stage_name_list: Iterable[str],
