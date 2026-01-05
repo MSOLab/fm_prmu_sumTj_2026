@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 
 from mbls.cpsat import CustomCpModel
@@ -95,7 +94,9 @@ class BaseModelBuilder:
         sumTj_offset: int | None = None,
     ) -> tuple[CustomCpModel, Params, Vars]:
         mdl = CustomCpModel()
-        params: Params = self._make_params(instance, stage_2_est_map=stage_2_est_map, stage_2_lct_map=stage_2_lct_map)
+        params: Params = self._make_params(
+            instance, stage_2_est_map=stage_2_est_map, stage_2_lct_map=stage_2_lct_map
+        )
 
         vars = self._make_vars(mdl, instance, params)
         self._add_structural_constraints(mdl, instance, params, vars)
@@ -249,7 +250,7 @@ class BaseModelBuilder:
         # All-different constraint on sequence variables
         mdl.add_all_different([vars.pi[k] for k in j_list])
 
-        logging.info(f"  All-different constr. took {timer.elapsed_sec:.3f} sec.")
+        # logging.info(f"  All-different constr. took {timer.elapsed_sec:.3f} sec.")
         timer.set_start_time_as_now()
 
         # Processing time of each operation
@@ -260,7 +261,7 @@ class BaseModelBuilder:
             for k in j_list:
                 mdl.add_element(vars.pi[k], P_vals_i, vars.op_lth[i, k])
 
-        logging.info(f"  Processing time constr. took {timer.elapsed_sec:.3f} sec.")
+        # logging.info(f"  Processing time constr. took {timer.elapsed_sec:.3f} sec.")
         timer.set_start_time_as_now()
 
         # Due date of each job
@@ -269,7 +270,7 @@ class BaseModelBuilder:
         for k in j_list:
             mdl.add_element(vars.pi[k], D_vals, vars.d[k])
 
-        logging.info(f"  Due date constr. took {timer.elapsed_sec:.3f} sec.")
+        # logging.info(f"  Due date constr. took {timer.elapsed_sec:.3f} sec.")
         timer.set_start_time_as_now()
 
         # Precedence between consecutive stages for each job
@@ -277,9 +278,9 @@ class BaseModelBuilder:
             for k in j_list:
                 mdl.add(vars.op_end[i, k] <= vars.op_start[next_i, k])
 
-        logging.info(
-            f"  Precedence (inter-stage) constr. took {timer.elapsed_sec:.3f} sec."
-        )
+        # logging.info(
+        #     f"  Precedence (inter-stage) constr. took {timer.elapsed_sec:.3f} sec."
+        # )
         timer.set_start_time_as_now()
 
         # Precedence between operations in the same stage
@@ -289,9 +290,9 @@ class BaseModelBuilder:
                 if k != params.j_first:
                     mdl.add(vars.op_end[i, k - 1] <= vars.op_start[i, k])
 
-        logging.info(
-            f"  Precedence (intra-stage) constr. took {timer.elapsed_sec:.3f} sec."
-        )
+        # logging.info(
+        #     f"  Precedence (intra-stage) constr. took {timer.elapsed_sec:.3f} sec."
+        # )
 
     def _define_objectives(
         self,
