@@ -501,8 +501,9 @@ class FlowshopTardinessControllerCore(
                 return_list.append((entry[0], entry[1].value))
             return return_list
 
-        obj_value_records = get_obj_value_records()
+        obj_value_records: list[tuple[float, float]] = []
         if obj_value_is_valid:
+            obj_value_records = get_obj_value_records()
             if cpsat_status.is_feasible:
                 obj_value_records.append((last_timestamp, obj_value))
             self.extend_obj_value_log(
@@ -552,8 +553,9 @@ class FlowshopTardinessControllerCore(
                 for timestamp in timestamp_list
             ]
 
-        obj_bound_records = get_obj_bound_records()
+        obj_bound_records: list[tuple[float, float]] = []
         if obj_bound_is_valid:
+            obj_bound_records = get_obj_bound_records()
             if cpsat_status.is_feasible:
                 obj_bound_records.append((last_timestamp, obj_bound))
             self.extend_obj_bound_log(obj_bound_records, is_maximize=False)
@@ -575,7 +577,12 @@ class FlowshopTardinessControllerCore(
         )
 
         solver_report = CpsatSolverReport(
-            elapsed_time, obj_value, obj_bound, cpsat_status, [], []
+            elapsed_time,
+            obj_value,
+            obj_bound,
+            cpsat_status,
+            obj_value_records,
+            obj_bound_records,
         )
         return solver_report
 
