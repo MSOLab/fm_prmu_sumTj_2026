@@ -4,13 +4,13 @@
 - method: initialize_by_edd
 - method: initialize_by_nehms
 - method: set_cp_model_as_base_cp_model
-- method: bd_cp
-  added_batch_size: 5
-  max_time_per_add: 10
-  solver_thread_cnt: 1
 - method: repeat_while_improvement
   n_repeats: 99
   routine_data:
+    - method: bd_cp
+      added_batch_size: 5
+      max_time_per_add: 10
+      solver_thread_cnt: 1
     - method: improve_by_insertion
       subseq_size: 1
       tie_breaker: "default"
