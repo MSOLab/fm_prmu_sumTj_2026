@@ -1542,7 +1542,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
             _timelimit = self.get_remaining_time_limit(timelimit)
             # Solve without logging objective values
-            _ = self.solve_cp_model_2(
+            report2 = self.solve_cp_model_2(
                 mdl2,
                 _timelimit,
                 solver_thread_cnt,
@@ -1551,6 +1551,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 log_level_obj_value=logging.NOTSET,
                 log_level_obj_bound=logging.NOTSET,
             )
+            if not getattr(report2, "is_feasible", False):
+                # if infeasible, return here
+                logging.info("Sub-CP model infeasible in phase 2.")
+                return report2, mdl2, params2, vars2
 
             phase2_job_idx_seq = [
                 int(self.solver.Value(vars2.pi[k])) for k in params2.j_list
