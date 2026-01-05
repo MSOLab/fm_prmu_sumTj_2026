@@ -22,39 +22,56 @@ class PermutationFlowshopScheduleLight:
         self._stage_name_list: list[str] = list(stage_name_list)
         """A list of stage names in the flowshop."""
 
+        self.last_stage_name: str = self._stage_name_list[-1]
+        """The name of the last stage in the flowshop."""
+
         self._job_2_stage_2_p_map: dict[str, dict[str, int]] = job_2_stage_2_p_map
         """A nested dictionary mapping job names to stage names to processing times."""
 
-        self._job_2_due_map: dict[str, int] = (
-            job_2_due_map if job_2_due_map is not None else {}
-        )
-        """A dictionary mapping job names to due dates."""
+        self._job_2_due_map: dict[str, int] | None = job_2_due_map
+        """Optional dictionary mapping job names to due dates."""
 
         self._job_seq: list[str] = []
         """A list of job names representing the processing sequence."""
 
         self._stage_2_job_2_end_map: dict[str, dict[str, int]] = {
-            stage_name: {} for stage_name in stage_name_list
+            stage_name: {} for stage_name in self._stage_name_list
         }
         """A nested dictionary mapping job names to stage names to end times."""
 
     def clear(self) -> None:
         """Clear the schedule."""
         self._job_seq.clear()
-        for job_2_end_map in self._stage_2_job_2_end_map.values():
-            job_2_end_map.clear()
+        for stage_name in self._stage_name_list:
+            self._stage_2_job_2_end_map[stage_name].clear()
 
-    def simulate_append(self, job_name: str) -> list[int]:
+    def simulate_append(
+        self, job_name: str, stage_2_est_map: dict[str, int] | None = None
+    ) -> dict[str, int]:
         """
-        Simulate appending a job to the schedule and return the resulting total tardiness.
+        Simulate appending a job to the schedule and return the resulting completion times.
 
         Args:
             job_name (str): The name of the job to simulate appending.
+            stage_2_est_map (dict[str, int] | None): (Optional) stage names -> earliest start times.
+                If None, defaults to no earliest start time constraints.
 
         Returns:
-            list[int]: The completion time of the appended job at each stage.
+            dict[str, int]: The completion time of the appended job at each stage.
         """
-        end_time_list: list[int] = []
+        if job_name not in self._job_2_stage_2_p_map:
+            raise KeyError(f"Job {job_name} not found in processing time map.")
+        missing_stage = [
+            stage
+            for stage in self._stage_name_list
+            if stage not in self._job_2_stage_2_p_map[job_name]
+        ]
+        if missing_stage:
+            raise KeyError(
+                f"Job {job_name} missing processing times for stages: {missing_stage}"
+            )
+
+        end_time_dict: dict[str, int] = {}
         last_j_before_append: str | None = self._job_seq[-1] if self._job_seq else None
 
         i0: str = self._stage_name_list[0]
@@ -63,43 +80,65 @@ class PermutationFlowshopScheduleLight:
             if last_j_before_append is None
             else self._stage_2_job_2_end_map[i0][last_j_before_append]
         )
-        end_time_list.append(this_stage_est + self._job_2_stage_2_p_map[job_name][i0])
+        given_i_est: int = 0 if stage_2_est_map is None else stage_2_est_map.get(i0, 0)
+        this_stage_est = given_i_est if given_i_est > this_stage_est else this_stage_est
+        end_time_dict[i0] = this_stage_est + self._job_2_stage_2_p_map[job_name][i0]
 
         for prev_i, this_i in pairwise(self._stage_name_list):
-            prev_stage_est: int = end_time_list[-1]
+            prev_stage_est: int = end_time_dict[prev_i]
             this_stage_est = (
                 0
                 if last_j_before_append is None
                 else self._stage_2_job_2_end_map[this_i][last_j_before_append]
             )
+            given_i_est = (
+                0 if stage_2_est_map is None else stage_2_est_map.get(this_i, 0)
+            )
+            this_stage_est = (
+                given_i_est if given_i_est > this_stage_est else this_stage_est
+            )
             est: int = (
                 this_stage_est if this_stage_est > prev_stage_est else prev_stage_est
             )
-            end_time_list.append(est + self._job_2_stage_2_p_map[job_name][this_i])
+            end_time_dict[this_i] = est + self._job_2_stage_2_p_map[job_name][this_i]
 
-        return end_time_list
+        return end_time_dict
 
-    def append_job(self, job_name: str) -> None:
+    def append_job(
+        self, job_name: str, stage_2_est_map: dict[str, int] | None = None
+    ) -> None:
         """
         Append a job to the schedule.
 
         Args:
             job_name (str): The name of the job to append.
+            stage_2_est_map (dict[str, int] | None): (Optional) stage names -> earliest start times.
+                If None, defaults to no earliest start time constraints.
         """
-        end_time_list: list[int] = self.simulate_append(job_name)
-        for stage_name, end_time in zip(self._stage_name_list, end_time_list):
+        if job_name in self._stage_2_job_2_end_map[self.last_stage_name]:
+            raise KeyError(f"Job {job_name} already exists in the schedule.")
+        end_time_dict: dict[str, int] = self.simulate_append(
+            job_name, stage_2_est_map=stage_2_est_map
+        )
+        for stage_name, end_time in end_time_dict.items():
             self._stage_2_job_2_end_map[stage_name][job_name] = end_time
         self._job_seq.append(job_name)
 
-    def extend_jobs(self, job_name_list: Iterable[str]) -> None:
+    def extend_jobs(
+        self,
+        job_name_list: Iterable[str],
+        stage_2_est_map: dict[str, int] | None = None,
+    ) -> None:
         """
         Extend the schedule by appending multiple jobs.
 
         Args:
             job_name_list (Iterable[str]): An iterable of job names to append.
+            stage_2_est_map (dict[str, int] | None): (Optional) stage names -> earliest start times.
+                If None, defaults to no earliest start time constraints.
         """
         for job_name in job_name_list:
-            self.append_job(job_name)
+            self.append_job(job_name, stage_2_est_map=stage_2_est_map)
 
     def push_back_tail_jobs_keep_tardiness(self, tail_job_cnt: int) -> dict[str, int]:
         """
@@ -234,3 +273,39 @@ class PermutationFlowshopScheduleLight:
             p_time: int = self._job_2_stage_2_p_map[job_name][stage_name]
             stage_2_start_time_map[stage_name] = end_time - p_time
         return stage_2_start_time_map
+
+    def get_total_tardiness(self) -> int:
+        """
+        Calculate the total tardiness of the schedule.
+
+        Returns:
+            int: The total tardiness of all jobs in the schedule.
+                If a job has no due date, its due date is considered as 0.
+                If no due dates are provided, returns 0.
+        """
+        total_tardiness: int = 0
+        if not self._job_2_due_map:
+            return total_tardiness
+
+        for job_name in self._job_seq:
+            if job_name in self._job_2_due_map:
+                due_date: int = self._job_2_due_map[job_name]
+            else:
+                due_date = 0
+
+            completion_time: int = self._stage_2_job_2_end_map[self.last_stage_name][
+                job_name
+            ]
+            tardiness: int = (
+                completion_time - due_date if completion_time > due_date else 0
+            )
+            total_tardiness += tardiness
+
+            # logging.info(
+            #     "Job %s: completion time = %d, due date = %d, tardiness = %d",
+            #     job_name,
+            #     completion_time,
+            #     due_date,
+            #     tardiness,
+            # )
+        return total_tardiness
