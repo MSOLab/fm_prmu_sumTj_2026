@@ -245,13 +245,13 @@ class BaseModelBuilder:
         j_list = params.j_list
         i_list = params.i_list
 
-        timer = ElapsedTimer()
+        # timer = ElapsedTimer()
 
         # All-different constraint on sequence variables
         mdl.add_all_different([vars.pi[k] for k in j_list])
 
         # logging.info(f"  All-different constr. took {timer.elapsed_sec:.3f} sec.")
-        timer.set_start_time_as_now()
+        # timer.set_start_time_as_now()
 
         # Processing time of each operation
         # lth_{i,k} = sum_j{P_{ij} * (pi_k == j_index)} \forall i\in I, k\in K
@@ -262,7 +262,7 @@ class BaseModelBuilder:
                 mdl.add_element(vars.pi[k], P_vals_i, vars.op_lth[i, k])
 
         # logging.info(f"  Processing time constr. took {timer.elapsed_sec:.3f} sec.")
-        timer.set_start_time_as_now()
+        # timer.set_start_time_as_now()
 
         # Due date of each job
         # d_k = sum_j{D_j * (pi_k == j_index)}
@@ -271,7 +271,7 @@ class BaseModelBuilder:
             mdl.add_element(vars.pi[k], D_vals, vars.d[k])
 
         # logging.info(f"  Due date constr. took {timer.elapsed_sec:.3f} sec.")
-        timer.set_start_time_as_now()
+        # timer.set_start_time_as_now()
 
         # Precedence between consecutive stages for each job
         for i, next_i in zip(i_list[:-1], i_list[1:]):
@@ -281,7 +281,7 @@ class BaseModelBuilder:
         # logging.info(
         #     f"  Precedence (inter-stage) constr. took {timer.elapsed_sec:.3f} sec."
         # )
-        timer.set_start_time_as_now()
+        # timer.set_start_time_as_now()
 
         # Precedence between operations in the same stage
         for i in i_list:
