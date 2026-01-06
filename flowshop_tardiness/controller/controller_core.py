@@ -652,7 +652,7 @@ class FlowshopTardinessControllerCore(
         else:
             solution: FlowshopSchedule | None = None
             if fs_solver_report.is_feasible:
-                solution = self.create_schedule_from_sequence(
+                solution = self.create_schedule_from_params_and_vars(
                     params=self.params,
                     vars=self.vars,
                 )
@@ -763,12 +763,9 @@ class FlowshopTardinessControllerCore(
         return j_name_sequence
 
     def create_schedule_from_sequence(
-        self, params: Params, vars: Vars, j_name_sequence: list[str] | None = None
+        self, params: Params, j_name_sequence: list[str]
     ) -> FlowshopSchedule:
-        if j_name_sequence is None:
-            j_sequence = self._get_j_sequence_from_solver(params, vars)
-        else:
-            j_sequence = [params.job_name_2_j_map[j_name] for j_name in j_name_sequence]
+        j_sequence = [params.job_name_2_j_map[j_name] for j_name in j_name_sequence]
         i_name_list = [params.i_2_stage_name_map[i] for i in params.i_list]
         schedule = FlowshopSchedule.from_stage_name_list(i_name_list)
 
@@ -783,6 +780,15 @@ class FlowshopTardinessControllerCore(
             )
 
         return schedule
+
+    def create_schedule_from_params_and_vars(
+        self, params: Params, vars: Vars
+    ) -> FlowshopSchedule:
+        j_sequence = self._get_j_sequence_from_solver(params, vars)
+        j_name_sequence = [params.j_2_job_name_map[j] for j in j_sequence]
+        return self.create_schedule_from_sequence(
+            params=params, j_name_sequence=j_name_sequence
+        )
 
     # End solver call methods
 

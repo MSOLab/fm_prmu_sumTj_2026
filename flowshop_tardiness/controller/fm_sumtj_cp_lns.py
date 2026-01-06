@@ -1647,8 +1647,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     job_seq_to_be_appended,
                 )
             new_job_seq: list[str] = last_job_seq + job_seq_to_be_appended
+            # self.params is used instead of params to create full-instance schedule
+            # because params only has sub-instance jobs
+            # vars is not used if j_name_sequence is given
             cp_sched: FlowshopSchedule = self.create_schedule_from_sequence(
-                self.params, vars, j_name_sequence=new_job_seq
+                self.params, new_job_seq
             )
             cp_obj_val = self.get_obj_value(cp_sched)
 
