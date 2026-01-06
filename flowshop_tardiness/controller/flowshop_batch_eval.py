@@ -93,7 +93,7 @@ class PermutationFlowshopSubseqEvaluator:
     # ----------------------------
     # Fig.9-style precompute for pi
     # ----------------------------
-    def precompute(self, pi: Sequence[int], subseq: Sequence[int]) -> PrecompSubseq:
+    def _precompute(self, pi: Sequence[int], subseq: Sequence[int]) -> PrecompSubseq:
         m = self.m
         L = len(pi)
         b = len(subseq)
@@ -180,7 +180,7 @@ class PermutationFlowshopSubseqEvaluator:
     # ----------------------------
     # i* for subseq (subseq_end + cbar)
     # ----------------------------
-    def find_i_star_subseq(self, pre: PrecompSubseq, pos: int) -> tuple[int, int]:
+    def _find_i_star_subseq(self, pre: PrecompSubseq, pos: int) -> tuple[int, int]:
         m = self.m
         L = len(pre.c[0]) if m > 0 else 0
 
@@ -284,7 +284,7 @@ class PermutationFlowshopSubseqEvaluator:
     # ----------------------------
     # Full evaluation: prefix + subseq + accelerated suffix
     # ----------------------------
-    def evaluate_position_total_tardiness(
+    def _evaluate_position_total_tardiness(
         self,
         pi: Sequence[int],
         subseq: Sequence[int],
@@ -362,7 +362,7 @@ class PermutationFlowshopSubseqEvaluator:
         # (1) precompute
         if timing_enabled:
             t0 = time.perf_counter()
-        pre = self.precompute(pi, _subseq)
+        pre = self._precompute(pi, _subseq)
         if timing_enabled:
             stats["precompute"] += time.perf_counter() - t0
             counts["precompute"] += 1
@@ -377,7 +377,7 @@ class PermutationFlowshopSubseqEvaluator:
             # (2-a) find i^*
             if timing_enabled:
                 t1 = time.perf_counter()
-            i_star, makespan = self.find_i_star_subseq(pre, pos)
+            i_star, makespan = self._find_i_star_subseq(pre, pos)
             if timing_enabled:
                 stats["find_i_star_subseq"] += time.perf_counter() - t1
                 counts["find_i_star_subseq"] += 1
@@ -385,7 +385,7 @@ class PermutationFlowshopSubseqEvaluator:
             # (2-b) objective
             if timing_enabled:
                 t1 = time.perf_counter()
-            sum_Tj = self.evaluate_position_total_tardiness(
+            sum_Tj = self._evaluate_position_total_tardiness(
                 pi=pi, subseq=_subseq, pre=pre, pos=pos, i_star=i_star
             )
             if tie_breaker == "makespan":

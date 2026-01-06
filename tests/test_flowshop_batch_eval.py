@@ -110,14 +110,14 @@ def test_fig10_matches_naive_one_instance(p, due, pi, sigma):
     """
     solver = PermutationFlowshopSubseqEvaluator(p, due)
     _sigma = [sigma]
-    pre = solver.precompute(pi, _sigma)
+    pre = solver._precompute(pi, _sigma)
 
     for pos in range(len(pi) + 1):
         # i* from Cor.3.2
-        i_star, _ = solver.find_i_star_subseq(pre, pos)
+        i_star, _ = solver._find_i_star_subseq(pre, pos)
 
         # NEW evaluation (Fig.10)
-        new_val = solver.evaluate_position_total_tardiness(
+        new_val = solver._evaluate_position_total_tardiness(
             pi=pi,
             subseq=_sigma,
             pre=pre,
