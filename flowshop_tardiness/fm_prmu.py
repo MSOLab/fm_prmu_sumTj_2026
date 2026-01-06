@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from itertools import pairwise
 from typing import Iterable
 
@@ -38,6 +40,25 @@ class PermutationFlowshopScheduleLite:
             stage_name: {} for stage_name in self._stage_name_list
         }
         """A nested dictionary mapping job names to stage names to end times."""
+
+    def deepcopy(self) -> PermutationFlowshopScheduleLite:
+        """
+        Create a deep copy of this PermutationFlowshopScheduleLite instance.
+
+        Returns:
+            PermutationFlowshopScheduleLite: A deep copy of the current instance.
+        """
+        new_instance = PermutationFlowshopScheduleLite(
+            stage_name_list=self._stage_name_list,
+            job_2_stage_2_p_map=self._job_2_stage_2_p_map,
+            job_2_due_map=self._job_2_due_map,
+        )
+        new_instance._job_seq = self._job_seq.copy()
+        new_instance._stage_2_job_2_end_map = {
+            stage_name: job_2_end.copy()
+            for stage_name, job_2_end in self._stage_2_job_2_end_map.items()
+        }
+        return new_instance
 
     def clear(self) -> None:
         """Clear the schedule."""
@@ -235,6 +256,17 @@ class PermutationFlowshopScheduleLite:
             stage_2_start_time_map[stage_name] = end_time - p_time
         return stage_2_start_time_map
 
+    # Getters
+
+    def get_job_sequence(self) -> list[str]:
+        """
+        Get the current job sequence in the schedule.
+
+        Returns:
+            list[str]: A list of job names in the current schedule.
+        """
+        return self._job_seq.copy()
+
     def get_next_job_name(self, this_job_name: str) -> str | None:
         """
         Get the next job name in the schedule after the specified job.
@@ -309,3 +341,20 @@ class PermutationFlowshopScheduleLite:
             #     tardiness,
             # )
         return total_tardiness
+
+    def get_stage_2_makespan_map(self) -> dict[str, int]:
+        """
+        Get the completion time of the last job at each stage.
+
+        Returns:
+            dict[str, int]: A dictionary mapping stage names to their respective makespans.
+        """
+        return_map: dict[str, int] = {}
+        for stage_name in self._stage_name_list:
+            if self._job_seq:
+                last_job_name: str = self._job_seq[-1]
+                Ci: int = self._stage_2_job_2_end_map[stage_name][last_job_name]
+            else:
+                Ci = 0
+            return_map[stage_name] = Ci
+        return return_map
