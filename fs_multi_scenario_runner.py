@@ -17,7 +17,6 @@ from fs_config import BaselineColumnMapping
 from fs_multi_instance_runner import FsMultiInstanceRunner
 from fs_single_instance_runner import FsSingleInstanceRunner
 from output_filenames import OutputFilenames
-from scripts.process_logs import process_scenario
 
 
 class FsMultiScenarioRunner(
@@ -94,19 +93,6 @@ class FsMultiScenarioRunner(
         Aggregates results from all scenarios and generates a comprehensive Excel report
         that includes a comparative dashboard, raw data, and scenario information.
         """
-        # 0. Process Logs for each scenario
-        logging.info("Starting Log Processing for all scenarios...")
-        for i, runner in enumerate(self.runners):
-            scenario_name = self.scenario_configs[i].get(
-                "output_subdir", f"scenario_{i + 1}"
-            )
-            scenario_path = self.output_dir / str(scenario_name)
-            try:
-                process_scenario(scenario_path)
-            except Exception as e:
-                logging.error(f"Error processing logs for {scenario_name}: {e}")
-        logging.info("Log Processing Complete.")
-
         # 1. Aggregate all scenario summaries
         all_summary_dfs = []
         for i, runner in enumerate(self.runners):
