@@ -1,6 +1,7 @@
 import logging
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from mbls.cpsat import CpsatSolverReport, CpsatStatus, ObjValueBoundStore
@@ -66,7 +67,13 @@ class PwCpContext(Protocol):
     def add_obj_value_log(self, ts: float, value: float, is_maximize=None) -> None: ...
     @property
     def obj_store(self): ...
-    def draw_incumbent_gantt(self) -> None: ...
+    def export_solution_to_yaml(
+        self,
+        start_time_map: dict[tuple[str, str], int],
+        end_time_map: dict[tuple[str, str], int],
+        output_path: Path | None = None,
+        encoding="utf-8",
+    ) -> None: ...
     def get_file_path_for_subroutine(self, suffix: str): ...
     def _get_call_context_of_current_method(self) -> str: ...
 
@@ -109,6 +116,25 @@ class PwCpConstructor:
             raise RuntimeError("PwCpConstructor.run() is not active; state is missing.")
         return self._st
 
+    def save_schedule_lite_to_yaml(
+        self, schedule: PermutationFlowshopScheduleLite, output_path: Path
+    ) -> None:
+        """Save a PermutationFlowshopScheduleLite to a YAML file via the context method.
+
+        Args:
+            schedule (PermutationFlowshopScheduleLite): The schedule to save.
+            output_path (Path): The output file path.
+        """
+        ctx = self.ctx
+        start_time_map = schedule.get_start_time_map()
+        end_time_map = schedule.get_end_time_map()
+
+        ctx.export_solution_to_yaml(
+            start_time_map=start_time_map,
+            end_time_map=end_time_map,
+            output_path=output_path,
+        )
+
     def run(
         self,
         job_sequence: list[str],
@@ -116,6 +142,7 @@ class PwCpConstructor:
         solver_thread_cnt: int | None = None,
         max_time_per_add: float | None = None,
         error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
     ) -> PwCpResult:
         ctx = self.ctx
         timer = ElapsedTimer()
@@ -132,6 +159,12 @@ class PwCpConstructor:
         )
         given_sol.extend_jobs(job_sequence)
         given_sol.push_back_tail_jobs_keep_tardiness(job_cnt)
+        if draw_gantt:
+            given_sol_output_path = ctx.get_file_path_for_subroutine(
+                "_0_pushed_back_solution.yaml"
+            )
+            self.save_schedule_lite_to_yaml(given_sol, given_sol_output_path)
+            logging.info("Saved pushed-back solution to: %s", given_sol_output_path)
 
         self._st = PwCpRunState(
             timer=timer,
@@ -151,6 +184,7 @@ class PwCpConstructor:
                 solver_thread_cnt=solver_thread_cnt,
                 max_time_per_add=max_time_per_add,
                 error_if_infeasible=error_if_infeasible,
+                draw_gantt=draw_gantt,
             )
         finally:
             self._st = None
@@ -188,6 +222,7 @@ class PwCpConstructor:
         note: str,
         timestamp: float,
         iter_report: CpsatSolverReport | None = None,
+        draw_gantt: bool = False,
     ) -> None:
         """Log a snapshot of the current state.
 
@@ -202,11 +237,19 @@ class PwCpConstructor:
                 If provided, objective bounds are extracted.
                 Defaults to None.
         """
+        ctx = self.ctx
         st = self._require_state()
         sub_obj_store = st.sub_obj_store
 
         full_sched = self._make_all_dispatched(picked_sol, already_scheduled_job_set)
         full_sched_value = full_sched.get_total_tardiness()
+        if draw_gantt:
+            number = len(already_scheduled_job_set)
+            full_sol_output_path = ctx.get_file_path_for_subroutine(
+                f"_{number}_full_disp_solution.yaml"
+            )
+            self.save_schedule_lite_to_yaml(full_sched, full_sol_output_path)
+            logging.info("Saved full-dispatched solution to: %s", full_sol_output_path)
         sub_obj_store.add_obj_value(timestamp, full_sched_value, is_maximize=None)
 
         if iter_report is not None and getattr(iter_report, "is_feasible", False):
@@ -326,7 +369,7 @@ class PwCpConstructor:
                 log_level_obj_bound=logging.NOTSET,
             )
             if not getattr(report1, "is_feasible", False):
-                logging.info("Sub-CP infeasible in phase 1; skip phase 2.")
+                logging.info("No solution from phase 1 CP; skip phase 2.")
                 return report1, []
 
             best_sumTj = int(ctx.solver.Value(vars1.total_tardiness))
@@ -438,6 +481,7 @@ class PwCpConstructor:
         solver_thread_cnt: int | None = None,
         max_time_per_add: float | None = None,
         error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
     ) -> PwCpResult:
         st = self._require_state()
         ctx = self.ctx
@@ -527,12 +571,21 @@ class PwCpConstructor:
             st.last_job_seq += job_seq_to_be_appended
             st.last_solution.extend_jobs(job_seq_to_be_appended)
 
+            seq_changed: bool = job_seq_to_be_appended != added_job_sublist
+            if draw_gantt and seq_changed:
+                batch_sol_output_path = ctx.get_file_path_for_subroutine(
+                    f"_{job_subset_cnt}_batch_disp_solution.yaml"
+                )
+                self.save_schedule_lite_to_yaml(st.last_solution, batch_sol_output_path)
+                logging.info("Saved batch-dispatched solution to: %s", batch_sol_output_path)
+
             self._log_snapshot(
                 st.last_solution,
                 st.target_job_subset,
                 note=f"{len(st.target_job_subset)}/{st.job_cnt}",
                 iter_report=iter_report,
                 timestamp=last_timestamp,
+                draw_gantt=draw_gantt and seq_changed,
             )
 
         # -------- finish by dispatch remaining --------

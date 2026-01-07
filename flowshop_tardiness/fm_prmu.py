@@ -358,3 +358,29 @@ class PermutationFlowshopScheduleLite:
                 Ci = 0
             return_map[stage_name] = Ci
         return return_map
+
+    def get_end_time_map(self) -> dict[tuple[str, str], int]:
+        """
+        Get a map of (job_name, stage_name) to end time for all operations in the schedule.
+
+        Returns:
+            dict[tuple[str, str], int]: A dictionary mapping (job_name, stage_name) to end time.
+        """
+        end_time_map: dict[tuple[str, str], int] = {}
+        for stage_name in self._stage_name_list:
+            for job_name, end_time in self._stage_2_job_2_end_map[stage_name].items():
+                end_time_map[(job_name, stage_name)] = end_time
+        return end_time_map
+
+    def get_start_time_map(self) -> dict[tuple[str, str], int]:
+        """
+        Get a map of (job_name, stage_name) to start time for all operations in the schedule.
+
+        Returns:
+            dict[tuple[str, str], int]: A dictionary mapping (job_name, stage_name) to start time.
+        """
+        return_map: dict[tuple[str, str], int] = self.get_end_time_map()
+        for (job_name, stage_name), end_time in return_map.items():
+            p_time: int = self._job_2_stage_2_p_map[job_name][stage_name]
+            return_map[(job_name, stage_name)] = end_time - p_time
+        return return_map

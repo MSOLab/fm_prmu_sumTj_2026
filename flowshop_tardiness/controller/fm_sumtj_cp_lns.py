@@ -5,14 +5,10 @@ import time
 from collections import defaultdict
 from typing import Callable, Sequence
 
-from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
 from routix import DynamicDataObject, ElapsedTimer
-from routix.util.comparison import float_a_leq_b, float_a_stl_b
-from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
+from routix.util.comparison import float_a_stl_b
 from schore.schedule_examples.shop.flow import FlowshopSchedule
 
-from ..cpsat_model_2.position import BaseModelBuilder
-from ..fm_prmu import PermutationFlowshopScheduleLite
 from ..report import FsSubroutineReport
 from .controller_core import FlowshopTardinessControllerCore
 from .flowshop_batch_eval import PermutationFlowshopSubseqEvaluator
@@ -191,7 +187,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         )
         # Draw Gantt chart if the solution is an improvement
         if was_updated and draw_gantt:
-            self.draw_incumbent_gantt()
+            self.export_incumbent_to_yaml()
 
     # Subroutine: dispatch by EDD rule
 
@@ -351,7 +347,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         )
         # Draw Gantt chart if the solution is an improvement
         if was_updated and draw_gantt:
-            self.draw_incumbent_gantt()
+            self.export_incumbent_to_yaml()
 
     def initialize_by_mdd(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
@@ -799,7 +795,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         )
 
         if was_updated and draw_gantt:
-            self.draw_incumbent_gantt()
+            self.export_incumbent_to_yaml()
 
     def initialize_by_nehedd(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
@@ -1108,7 +1104,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 _last_timestamp_note, obj_value_is_valid=True
             )
             if draw_gantt:
-                self.draw_incumbent_gantt()
+                self.export_incumbent_to_yaml()
 
     # Subroutine: job block neighbor search
 
@@ -1256,7 +1252,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             )
             # Draw Gantt chart if the solution is an improvement
             if was_updated and draw_gantt:
-                self.draw_incumbent_gantt()
+                self.export_incumbent_to_yaml()
 
     def bd_cp(
         self,
@@ -1290,6 +1286,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         else:
             job_sequence = incumbent_sol.get_last_stage_job_list()
 
+        # Draw Gantt chart of the initial solution if requested
+        if draw_gantt:
+            output_path = self.get_file_path_for_subroutine("_0_init_solution.yaml")
+            self.export_incumbent_to_yaml(output_path=output_path)
+
         from .pw_cp import PwCpConstructor, PwCpResult
 
         constructor = PwCpConstructor(self)
@@ -1299,6 +1300,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             solver_thread_cnt=solver_thread_cnt,
             max_time_per_add=max_time_per_add,
             error_if_infeasible=error_if_infeasible,
+            draw_gantt=draw_gantt,
         )
         last_solution_obj_value = self.get_obj_value(result.schedule)
         logging.info(f"BD-CP done with total tardiness {last_solution_obj_value}")
@@ -1321,7 +1323,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 _last_timestamp_note, obj_value_is_valid=True
             )
             if draw_gantt:
-                self.draw_incumbent_gantt()
+                self.export_incumbent_to_yaml()
 
         # Write the objective store to a YAML file
         # TODO: suffix from output_metadata

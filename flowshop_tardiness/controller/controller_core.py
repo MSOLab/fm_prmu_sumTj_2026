@@ -14,6 +14,7 @@ from mbls.cpsat import (
 )
 from mbls.cpsat.callbacks import ValueBoundPair
 from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
+from routix.io import object_to_yaml, tuple_to_pyyaml_key
 from routix.util.comparison import float_a_leq_b, float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from schore.schedule_examples.shop.flow import FlowshopSchedule
@@ -250,6 +251,38 @@ class FlowshopTardinessControllerCore(
             logging.warning(
                 "Incumbent solution is not a FlowshopSchedule. Cannot draw Gantt chart."
             )
+
+    def export_solution_to_yaml(
+        self,
+        start_time_map: dict[tuple[str, str], int],
+        end_time_map: dict[tuple[str, str], int],
+        output_path: Path | None = None,
+        encoding="utf-8",
+    ):
+        if output_path is None:
+            # Filename suffix should be the same as in fs_single_instance_runner.py line 160
+            output_path = self.get_file_path_for_subroutine("_solution.yaml")
+        from ..io_solution import END_TIME_MAP_KEY, START_TIME_MAP_KEY
+
+        solution_dict = {
+            START_TIME_MAP_KEY: tuple_to_pyyaml_key(start_time_map),
+            END_TIME_MAP_KEY: tuple_to_pyyaml_key(end_time_map),
+        }
+        object_to_yaml(solution_dict, output_path, encoding=encoding)
+
+    def export_schedule_to_yaml(
+        self, schedule: FlowshopSchedule, output_path: Path | None = None
+    ):
+        self.export_solution_to_yaml(
+            schedule.get_start_time_map(),
+            schedule.get_end_time_map(),
+            output_path,
+        )
+
+    def export_incumbent_to_yaml(self, output_path: Path | None = None):
+        incumbent_solution = self.solution_manager.get_incumbent()
+        if isinstance(incumbent_solution, FlowshopSchedule):
+            self.export_schedule_to_yaml(incumbent_solution, output_path)
 
     # End visualization
 
@@ -695,7 +728,7 @@ class FlowshopTardinessControllerCore(
                 # Register the solution
                 was_updated = self.solution_manager.register(fs_solver_report, solution)
                 if was_updated and draw_gantt:
-                    self.draw_incumbent_gantt()
+                    self.export_incumbent_to_yaml()
 
     def solve_with_initial_solution(
         self,
