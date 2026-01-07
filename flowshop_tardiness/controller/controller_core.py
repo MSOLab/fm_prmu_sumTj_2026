@@ -435,6 +435,7 @@ class FlowshopTardinessControllerCore(
         mdl: CustomCpModel,
         computational_time: float,
         solver_thread_cnt: int,
+        e_timer: ElapsedTimer | None = None,
         print_on_obj_value_update: bool = False,
         print_on_obj_bound_update: bool = False,
         log_level_obj_value: int = logging.INFO,
@@ -446,6 +447,8 @@ class FlowshopTardinessControllerCore(
         from ..cpsat_model_2.solver import SolveConfig, configure_solver
 
         _timelimit = self.get_remaining_time_limit(computational_time)
+        if e_timer is None:
+            e_timer = self.timer
 
         solve_cfg = SolveConfig(
             log=self.log_search_progress,
@@ -455,13 +458,13 @@ class FlowshopTardinessControllerCore(
         )
         self.solver = configure_solver(solve_cfg)
         self.obj_value_recorder = ObjectiveValueRecorder(
-            self.timer,
+            e_timer,
             print_on_record=print_on_obj_value_update,
             log_level_on_record=log_level_obj_value,
         )
 
         self.obj_bound_recorder = ObjectiveBoundRecorder(
-            self.timer,
+            e_timer,
             print_on_record=print_on_obj_bound_update,
             log_level_on_record=log_level_obj_bound,
         )
@@ -483,7 +486,7 @@ class FlowshopTardinessControllerCore(
                 False
             )
 
-        last_timestamp = self.timer.elapsed_sec
+        last_timestamp = e_timer.elapsed_sec
 
         # Store the objective value and bound logs
 

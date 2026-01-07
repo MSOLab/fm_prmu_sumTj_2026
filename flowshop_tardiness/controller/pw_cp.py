@@ -3,8 +3,8 @@ import math
 from dataclasses import dataclass
 from typing import Protocol
 
-from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
-from ortools.sat.python.cp_model import CpModel, CpSolver
+from mbls.cpsat import CpsatSolverReport, CpsatStatus, ObjValueBoundStore
+from ortools.sat.python.cp_model import CpSolver
 from routix import ElapsedTimer
 from routix.util.comparison import float_a_leq_b
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
@@ -16,15 +16,15 @@ from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite
 
 class PwCpContext(Protocol):
     """
-    최소 의존성 인터페이스.
-    (FlowshopTardinessControllerCore가 사실상 이 인터페이스를 만족하도록 설계)
+    Minimal dependency interface.
+    (FlowshopTardinessControllerCore is effectively designed to satisfy this interface.)
     """
 
     # data
     instance: FlowshopDuedateParameters
     stage_ids: tuple[str, ...]
     job_2_stage_2_p_dict: dict[str, dict[str, int]]
-    params: Params  # global/full params (create_schedule에서 사용)
+    params: Params  # global/full params
     solver: CpSolver
 
     # solution manager access
@@ -47,6 +47,7 @@ class PwCpContext(Protocol):
         mdl,
         computational_time: float,
         solver_thread_cnt: int,
+        e_timer: ElapsedTimer | None = None,
         obj_value_is_valid: bool = False,
         obj_bound_is_valid: bool = False,
         log_level_obj_value: int = logging.INFO,
@@ -233,59 +234,128 @@ class PwCpConstructor:
         stage_2_est_map: dict[str, int] | None,
         stage_2_lct_map: dict[str, int] | None,
         sumTj_offset: int | None,
-        timelimit: float,
+        solver_timelimit: float,
         solver_thread_cnt: int | None,
         all_jobs_are_included: bool,
-    ) -> tuple[CpsatSolverReport, CpModel, Params, Vars]:
+    ) -> tuple[CpsatSolverReport, list[str]]:
+        """
+        Solve CP model in two phases to optimize lexicographic objectives:
+
+        - Phase 1: Minimize total tardiness
+          - If total tardiness is zero with initial sequence, skip CP solving.
+          - If no solution is found, return the solver report and an empty job sequence.
+        - Phase 2: Minimize sum of latest completion times, subject to optimal total tardiness
+          - If no solution is found, return the phase 1 solver report and job sequence.
+          - If all jobs are included, skip phase 2.
+
+        Args:
+            sub_instance (FlowshopDuedateParameters): Sub-instance to solve CP on.
+            stage_2_est_map (dict[str, int] | None): map of earliest start times for stage 2.
+            stage_2_lct_map (dict[str, int] | None): map of latest completion times for stage 2.
+            sumTj_offset (int | None): offset for total tardiness.
+            solver_timelimit (float): time limit for solving each phase.
+            solver_thread_cnt (int | None): number of solver threads.
+            all_jobs_are_included (bool): whether all jobs are included in the sub-instance.
+
+        Raises:
+            RuntimeError: If total_tardiness or sum_latest_completion variable is None after CP building.
+            RuntimeError: If obj_value is None despite feasibility.
+
+        Returns:
+            tuple[CpsatSolverReport, list[str]]: Solver report and job sequence.
+        """
         if solver_thread_cnt is None:
             solver_thread_cnt = 1
+        st = self._require_state()
         ctx = self.ctx
 
         subjob_id_list: list[str] = sub_instance.job_id_list
         init_pi_hint: list[int] = list(range(len(subjob_id_list)))
 
-        mdl1, params1, vars1 = self.builder.build(
-            sub_instance,
-            stage_2_est_map=stage_2_est_map,
-            stage_2_lct_map=stage_2_lct_map,
-            sumTj_offset=sumTj_offset,
+        # Phase 1: Minimize total tardiness
+
+        # Simulate before building CP model
+        init_pi_sched = PermutationFlowshopScheduleLite(
+            self.ctx.stage_ids,
+            job_2_stage_2_p_map=self.ctx.job_2_stage_2_p_dict,
+            job_2_due_map=self.ctx.instance.job_2_duedate_map,
         )
-        if vars1.total_tardiness is None:
-            raise RuntimeError(
-                "Unexpected: total_tardiness variable is None after CP building."
+        init_pi_sched.extend_jobs(subjob_id_list, stage_2_est_map=stage_2_est_map)
+        init_pi_total_tardiness = init_pi_sched.get_total_tardiness()
+
+        if init_pi_total_tardiness > 0:
+            # If initial total tardiness is nonzero, build & solve phase 1 CP
+            logging.info(
+                "Initial total tardiness with given subsequence: %d",
+                init_pi_total_tardiness,
             )
-        mdl1.minimize(vars1.total_tardiness)
-
-        if (
-            all_jobs_are_included
-            and ctx.solution_manager.best_obj_bound is not None
-            and not math.isnan(ctx.solution_manager.best_obj_bound)
-        ):
-            ctx.set_sumTj_lower_bound(
-                mdl1, vars1, bound=ctx.solution_manager.best_obj_bound
+            mdl1, params1, vars1 = self.builder.build(
+                sub_instance,
+                stage_2_est_map=stage_2_est_map,
+                stage_2_lct_map=stage_2_lct_map,
+                sumTj_offset=sumTj_offset,
             )
+            if vars1.total_tardiness is None:
+                raise RuntimeError(
+                    "Unexpected: total_tardiness variable is None after CP building."
+                )
+            mdl1.minimize(vars1.total_tardiness)
 
-        mdl1.clear_hints()
-        for idx, k in enumerate(params1.j_list):
-            mdl1.add_hint(vars1.pi[k], init_pi_hint[idx])
+            if (
+                all_jobs_are_included
+                and ctx.solution_manager.best_obj_bound is not None
+                and not math.isnan(ctx.solution_manager.best_obj_bound)
+            ):
+                ctx.set_sumTj_lower_bound(
+                    mdl1, vars1, bound=ctx.solution_manager.best_obj_bound
+                )
 
-        _timelimit = ctx.get_remaining_time_limit(timelimit)
-        report1 = ctx.solve_cp_model_2(
-            mdl1,
-            _timelimit,
-            solver_thread_cnt,
-            obj_value_is_valid=all_jobs_are_included,
-            obj_bound_is_valid=False,
-            log_level_obj_value=logging.NOTSET,
-            log_level_obj_bound=logging.NOTSET,
-        )
+            mdl1.clear_hints()
+            for idx, k in enumerate(params1.j_list):
+                mdl1.add_hint(vars1.pi[k], init_pi_hint[idx])
 
-        if not getattr(report1, "is_feasible", False):
-            logging.info("Sub-CP infeasible in phase 1; skip phase 2.")
-            return report1, mdl1, params1, vars1
+            _timelimit = ctx.get_remaining_time_limit(solver_timelimit)
+            report1 = ctx.solve_cp_model_2(
+                mdl1,
+                _timelimit,
+                solver_thread_cnt,
+                e_timer=st.timer,
+                obj_value_is_valid=all_jobs_are_included,
+                obj_bound_is_valid=False,
+                log_level_obj_value=logging.NOTSET,
+                log_level_obj_bound=logging.NOTSET,
+            )
+            if not getattr(report1, "is_feasible", False):
+                logging.info("Sub-CP infeasible in phase 1; skip phase 2.")
+                return report1, []
 
-        best_T_solver = int(ctx.solver.Value(vars1.total_tardiness))
-        phase1_pi = [int(ctx.solver.Value(vars1.pi[k])) for k in params1.j_list]
+            best_sumTj = int(ctx.solver.Value(vars1.total_tardiness))
+            phase1_pi: list[int] = [
+                int(ctx.solver.Value(vars1.pi[k])) for k in params1.j_list
+            ]
+            logging.info(
+                "Phase 1 complete(%s): best total tardiness = %d",
+                report1.status,
+                best_sumTj,
+            )
+        else:
+            logging.info(
+                "Skip CP solving in phase 1: total tardiness of given subsequence is zero."
+            )
+            report_obj_val = sumTj_offset if sumTj_offset is not None else 0
+            elapsed_time = st.timer.elapsed_sec
+            report1 = CpsatSolverReport(
+                elapsed_time=elapsed_time,
+                obj_value=report_obj_val,
+                obj_bound=None,
+                status=CpsatStatus.OPTIMAL,
+                obj_value_records=[(elapsed_time, report_obj_val)],
+                obj_bound_records=[],
+            )
+            best_sumTj = report_obj_val
+            phase1_pi = init_pi_hint
+
+        job_seq: list[str] = [subjob_id_list[idx] for idx in phase1_pi]
 
         # TODO: uncomment only for debugging
         # logging.info(phase1_pi)
@@ -317,14 +387,9 @@ class PwCpConstructor:
         #         best_T_simulated,
         #     )
 
-        logging.info(
-            "Phase 1 complete(%s): best total tardiness = %d",
-            report1.status,
-            best_T_solver,
-        )
         if all_jobs_are_included:
             logging.info("All jobs are included; skip phase 2.")
-            return report1, mdl1, params1, vars1
+            return report1, job_seq
 
         mdl2, params2, vars2 = self.builder.build(
             sub_instance,
@@ -337,7 +402,7 @@ class PwCpConstructor:
                 "Unexpected: sum_latest_completion variable is None after CP building."
             )
         # Freeze primary objective value
-        mdl2.add(vars2.total_tardiness == best_T_solver)
+        mdl2.add(vars2.total_tardiness == best_sumTj)
         # Minimize secondary objective
         mdl2.minimize(vars2.sum_latest_completion)
 
@@ -345,22 +410,28 @@ class PwCpConstructor:
         for idx, k in enumerate(params2.j_list):
             mdl2.add_hint(vars2.pi[k], phase1_pi[idx])
 
-        _timelimit = ctx.get_remaining_time_limit(timelimit)
+        _timelimit = ctx.get_remaining_time_limit(solver_timelimit)
         # Solve without logging objective values / bounds
         report2 = ctx.solve_cp_model_2(
             mdl2,
             _timelimit,
             solver_thread_cnt,
-            obj_value_is_valid=False,
+            e_timer=st.timer,
+            obj_value_is_valid=all_jobs_are_included,
             obj_bound_is_valid=False,
             log_level_obj_value=logging.NOTSET,
             log_level_obj_bound=logging.NOTSET,
         )
         if not getattr(report2, "is_feasible", False):
-            logging.info("Sub-CP infeasible in phase 2.")
-            return report2, mdl2, params2, vars2
+            logging.info("Sub-CP infeasible in phase 2; use phase 1 solution.")
+            return report1, job_seq
 
-        return report1, mdl2, params2, vars2
+        phase2_pi: list[int] = [
+            int(ctx.solver.Value(vars2.pi[k])) for k in params2.j_list
+        ]
+        job_seq2: list[str] = [subjob_id_list[idx] for idx in phase2_pi]
+        # use report 1 which has total tardiness info
+        return report1, job_seq2
 
     def _run_loop(
         self,
@@ -427,16 +498,14 @@ class PwCpConstructor:
                 st.timer.get_formatted_elapsed_time(),
             )
 
-            iter_report, sub_cp_mdl, params, vars = (
-                self._solve_cp_model_lexico_for_batch(
-                    sub_instance=sub_instance,
-                    stage_2_est_map=stage_2_est_map,
-                    stage_2_lct_map=stage_2_lct_map,
-                    sumTj_offset=sumTj_offset,
-                    timelimit=_timelimit,
-                    solver_thread_cnt=solver_thread_cnt,
-                    all_jobs_are_included=all_jobs_are_included,
-                )
+            iter_report, job_seq_to_be_appended = self._solve_cp_model_lexico_for_batch(
+                sub_instance=sub_instance,
+                stage_2_est_map=stage_2_est_map,
+                stage_2_lct_map=stage_2_lct_map,
+                sumTj_offset=sumTj_offset,
+                solver_timelimit=_timelimit,
+                solver_thread_cnt=solver_thread_cnt,
+                all_jobs_are_included=all_jobs_are_included,
             )
             last_timestamp = st.timer.elapsed_sec
 
@@ -455,8 +524,6 @@ class PwCpConstructor:
                     "Unexpected: iter_report.obj_value is None despite feasibility."
                 )
             st.last_obj_val = int(iter_report.obj_value)
-
-            job_seq_to_be_appended = ctx.get_job_sequence_from_solver(params, vars)
             st.last_job_seq += job_seq_to_be_appended
             st.last_solution.extend_jobs(job_seq_to_be_appended)
 
@@ -478,6 +545,7 @@ class PwCpConstructor:
                 note="Final dispatch",
                 timestamp=st.timer.elapsed_sec,
             )
+            st.last_obj_val = st.last_solution.get_total_tardiness()
 
         # Build a solution to return
         last_solution = FlowshopSchedule.from_stage_name_list(ctx.stage_ids)
