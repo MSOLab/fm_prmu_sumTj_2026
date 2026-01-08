@@ -563,13 +563,9 @@ class PwCpConstructor:
 
             # Update state
             st.target_job_subset.update(added_job_sublist)
-            if iter_report.obj_value is None:
-                raise RuntimeError(
-                    "Unexpected: iter_report.obj_value is None despite feasibility."
-                )
-            st.last_obj_val = int(iter_report.obj_value)
             st.last_job_seq += job_seq_to_be_appended
             st.last_solution.extend_jobs(job_seq_to_be_appended)
+            st.last_obj_val = st.last_solution.get_total_tardiness()
 
             seq_changed: bool = job_seq_to_be_appended != added_job_sublist
             if draw_gantt and seq_changed:
