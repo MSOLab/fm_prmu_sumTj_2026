@@ -117,12 +117,6 @@ class FlowshopTardinessControllerCore(
 
     # End abstract getters
 
-    def get_horizon(self) -> int:
-        """Returns the horizon of the scheduling problem."""
-        if "horizon" not in self.shared_param_dict:
-            raise ValueError("Horizon not found in shared parameters.")
-        return self.shared_param_dict["horizon"]
-
     def set_working_dir(self, dir_path: Path | str):
         super().set_working_dir(dir_path)
         self.log_handlers: list[logging.StreamHandler] = []
@@ -372,11 +366,6 @@ class FlowshopTardinessControllerCore(
                 raise ValueError(
                     f"Job sequence mismatch between stage {i_list[0]} & {stage_name}."
                 )
-
-        if schedule.makespan > self.get_horizon():
-            logging.warning(
-                f"Schedule makespan {schedule.makespan} exceeds horizon {self.get_horizon()}."
-            )
 
         logging.info(f"Feasibility check passed; took {sub_timer.elapsed_sec:.2f} sec")
 
