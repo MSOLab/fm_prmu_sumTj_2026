@@ -372,7 +372,7 @@ class PwCpConstructor:
             )
             if not getattr(report1, "is_feasible", False):
                 logging.info("No solution from phase 1 CP; skip phase 2.")
-                return report1, []
+                return report1, subjob_id_list
 
             best_sumTj = int(ctx.solver.Value(vars1.total_tardiness))
             phase1_pi: list[int] = [
@@ -527,11 +527,10 @@ class PwCpConstructor:
 
             if not getattr(iter_report, "is_feasible", False):
                 logging.info(
-                    "(batch %d/%d) Sub-CP infeasible -> dispatch remaining jobs.",
+                    "(batch %d/%d) no solution from Sub-CP -> dispatch remaining jobs.",
                     bidx + 1,
                     job_sublist_cnt,
                 )
-                break
 
             # Update state
             st.target_job_subset.update(added_job_sublist)

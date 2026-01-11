@@ -8,8 +8,8 @@
   n_repeats: 99
   routine_data:
     - method: pw_cp
-      added_batch_size: 5
-      max_time_per_add: 10
+      added_batch_size: 7
+      max_time_per_add: 15
       solver_thread_cnt: 1
     - method: improve_by_insertion
       subseq_size: 1
@@ -21,6 +21,10 @@
       first_improvement: true
     - method: improve_by_insertion
       subseq_size: 3
+      tie_breaker: "default"
+      first_improvement: true
+    - method: improve_by_insertion
+      subseq_size: 4
       tie_breaker: "default"
       first_improvement: true
 - method: solve_base_cp_model

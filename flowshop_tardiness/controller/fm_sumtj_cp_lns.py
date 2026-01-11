@@ -1254,7 +1254,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             if was_updated and draw_gantt:
                 self.export_incumbent_to_yaml()
 
-    def bd_cp(
+    def pw_cp(
         self,
         solver_thread_cnt: int,
         added_batch_size: int = 1,
@@ -1303,7 +1303,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             draw_gantt=draw_gantt,
         )
         last_solution_obj_value = self.get_obj_value(result.schedule)
-        logging.info(f"BD-CP done with total tardiness {last_solution_obj_value}")
+        logging.info(f"PW-CP done with total tardiness {last_solution_obj_value}")
         # Create report for the final solution and register it
         final_report = FsSubroutineReport(
             elapsed_time=sub_timer.elapsed_sec,
