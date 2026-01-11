@@ -10,6 +10,7 @@ from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
 from flowshop_tardiness.io_solution import get_end_time_dict, get_start_time_dict
 from fs_single_instance_runner import FsSingleInstanceRunner
+from scripts.process_logs import process_scenario
 
 
 class FsMultiInstanceRunner(
@@ -46,6 +47,14 @@ class FsMultiInstanceRunner(
         Aggregates results from all single instance runs into a summary DataFrame
         by reading the individual summary CSV files from disk.
         """
+        # 0. Process Logs for this scenario (Added)
+        logging.info(f"Starting Log Processing for scenario in: {self.working_dir}")
+        try:
+            process_scenario(self.working_dir)
+        except Exception as e:
+            logging.error(f"Error processing logs for {self.working_dir}: {e}")
+        logging.info("Log Processing Complete.")
+
         summary_dfs = []
         logging.info(f"Aggregating instance summaries in: {self.working_dir}")
 

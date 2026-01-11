@@ -4,20 +4,30 @@ import math
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from mbls.cpsat import CpsatSolverReport, CpSubroutineController
+from mbls.cpsat import (
+    CpsatSolverReport,
+    CpsatStatus,
+    CpSubroutineController,
+    CustomCpModel,
+    ObjectiveBoundRecorder,
+    ObjectiveValueRecorder,
+)
+from mbls.cpsat.callbacks import ValueBoundPair
 from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
+from routix.io import object_to_yaml, tuple_to_pyyaml_key
 from routix.util.comparison import float_a_leq_b, float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from schore.schedule_examples.shop.flow import FlowshopSchedule
 
-from ..cpsat_model.position import PositionModel
+from flowshop_tardiness.cpsat_model_2.position import Params, Vars
+
 from ..painter.gantt import GanttPlotter
 from ..report import FsCpsatSolverReport
 from ..solution_manager import FsSolutionManager
 
 
 class FlowshopTardinessControllerCore(
-    CpSubroutineController[FlowshopDuedateParameters, PositionModel, StoppingCriteria]
+    CpSubroutineController[FlowshopDuedateParameters, CustomCpModel, StoppingCriteria]
 ):
     instance: FlowshopDuedateParameters
     """The FlowshopDuedateParameters instance being solved."""
@@ -49,7 +59,7 @@ class FlowshopTardinessControllerCore(
         super().__init__(
             instance,
             shared_param_dict,
-            PositionModel,
+            CustomCpModel,
             subroutine_flow,
             stopping_criteria,
         )
@@ -69,13 +79,19 @@ class FlowshopTardinessControllerCore(
         self.stage_ids: tuple[str, ...] = tuple(self.instance._stage_id_list)
         self.stage_cnt: int = len(self.stage_ids)
         self.last_stage_id: str = self.stage_ids[-1]
-        self.job_2_stage_2_p_dict: dict[str, dict[str, int]] = self.instance.get_job_2_stage_2_builtin_int_p_map()
+        self.job_2_stage_2_p_dict: dict[str, dict[str, int]] = (
+            self.instance.get_job_2_stage_2_builtin_int_p_map()
+        )
         """Job name -> stage name -> processing time map"""
 
-        self.stage_2_job_2_p_dict: dict[str, dict[str, int]] = self.instance.get_stage_2_job_2_builtin_int_p_map()
+        self.stage_2_job_2_p_dict: dict[str, dict[str, int]] = (
+            self.instance.get_stage_2_job_2_builtin_int_p_map()
+        )
         """Stage name -> job name -> processing time map"""
 
-        self.stage_job_2_p_dict: dict[tuple[str, str], int] = self.instance.get_stage_job_2_builtin_int_p_map()
+        self.stage_job_2_p_dict: dict[tuple[str, str], int] = (
+            self.instance.get_stage_job_2_builtin_int_p_map()
+        )
         """(Stage name, Job name) -> processing time map"""
 
         logging.info(
@@ -86,8 +102,18 @@ class FlowshopTardinessControllerCore(
 
     # Start abstract getters
 
-    def create_base_cp_model(self, **kwargs) -> PositionModel:
-        return self.cp_model_class.from_instance(self.instance, self.get_horizon())
+    def create_base_cp_model(self, **kwargs) -> CustomCpModel:
+        from ..cpsat_model_2.position import BaseModelBuilder
+
+        builder = BaseModelBuilder()
+        mdl, params, vars = builder.build(self.instance)
+        self.params: Params = params
+        self.vars: Vars = vars
+        # Set total tardiness as the objective
+        if vars.total_tardiness is None:
+            raise ValueError("Total tardiness variable is not defined in the model.")
+        mdl.minimize(vars.total_tardiness)
+        return mdl
 
     # End abstract getters
 
@@ -225,6 +251,38 @@ class FlowshopTardinessControllerCore(
             logging.warning(
                 "Incumbent solution is not a FlowshopSchedule. Cannot draw Gantt chart."
             )
+
+    def export_solution_to_yaml(
+        self,
+        start_time_map: dict[tuple[str, str], int],
+        end_time_map: dict[tuple[str, str], int],
+        output_path: Path | None = None,
+        encoding="utf-8",
+    ):
+        if output_path is None:
+            # Filename suffix should be the same as in fs_single_instance_runner.py line 160
+            output_path = self.get_file_path_for_subroutine("_solution.yaml")
+        from ..io_solution import END_TIME_MAP_KEY, START_TIME_MAP_KEY
+
+        solution_dict = {
+            START_TIME_MAP_KEY: tuple_to_pyyaml_key(start_time_map),
+            END_TIME_MAP_KEY: tuple_to_pyyaml_key(end_time_map),
+        }
+        object_to_yaml(solution_dict, output_path, encoding=encoding)
+
+    def export_schedule_to_yaml(
+        self, schedule: FlowshopSchedule, output_path: Path | None = None
+    ):
+        self.export_solution_to_yaml(
+            schedule.get_start_time_map(),
+            schedule.get_end_time_map(),
+            output_path,
+        )
+
+    def export_incumbent_to_yaml(self, output_path: Path | None = None):
+        incumbent_solution = self.solution_manager.get_incumbent()
+        if isinstance(incumbent_solution, FlowshopSchedule):
+            self.export_schedule_to_yaml(incumbent_solution, output_path)
 
     # End visualization
 
@@ -405,6 +463,165 @@ class FlowshopTardinessControllerCore(
 
     # Start solver call methods
 
+    def solve_cp_model_2(
+        self,
+        mdl: CustomCpModel,
+        computational_time: float,
+        solver_thread_cnt: int,
+        e_timer: ElapsedTimer | None = None,
+        print_on_obj_value_update: bool = False,
+        print_on_obj_bound_update: bool = False,
+        log_level_obj_value: int = logging.INFO,
+        log_level_obj_bound: int = logging.INFO,
+        obj_value_is_valid: bool = False,
+        obj_bound_is_valid: bool = False,
+        last_timestamp_note: Any | None = None,
+    ) -> CpsatSolverReport:
+        from ..cpsat_model_2.solver import SolveConfig, configure_solver
+
+        _timelimit = self.get_remaining_time_limit(computational_time)
+        if e_timer is None:
+            e_timer = self.timer
+
+        solve_cfg = SolveConfig(
+            log=self.log_search_progress,
+            time_limit_s=_timelimit,
+            num_workers=solver_thread_cnt,
+            random_seed=self.random_seed,
+        )
+        self.solver = configure_solver(solve_cfg)
+        self.obj_value_recorder = ObjectiveValueRecorder(
+            e_timer,
+            print_on_record=print_on_obj_value_update,
+            log_level_on_record=log_level_obj_value,
+        )
+
+        self.obj_bound_recorder = ObjectiveBoundRecorder(
+            e_timer,
+            print_on_record=print_on_obj_bound_update,
+            log_level_on_record=log_level_obj_bound,
+        )
+        self.solver.best_bound_callback = self.obj_bound_recorder
+
+        cp_solver_status = self.solver.solve(
+            mdl, solution_callback=self.obj_value_recorder
+        )
+        cpsat_status = CpsatStatus.from_cp_solver_status(cp_solver_status)
+        elapsed_time = self.solver.wall_time
+        if cpsat_status.is_feasible:
+            obj_value = self.solver.objective_value
+            if cpsat_status == CpsatStatus.OPTIMAL:
+                obj_bound = obj_value
+            else:
+                obj_bound = self.solver.best_objective_bound
+        else:
+            obj_value, obj_bound = CpsatStatus.get_obj_value_and_bound_for_infeasible(
+                False
+            )
+
+        last_timestamp = e_timer.elapsed_sec
+
+        # Store the objective value and bound logs
+
+        def get_obj_value_records() -> list[tuple[float, float]]:
+            """Returns the recorded objective values and elapsed times.
+
+            Returns:
+                list[tuple[float, float]]: A list of tuples containing (elapsed time, objective value).
+            """
+            return_list: list[tuple[float, float]] = []
+            list_by_value_recorder: list[tuple[float, ValueBoundPair]] = (
+                self.obj_value_recorder.entries
+            )
+            for entry in list_by_value_recorder:
+                return_list.append((entry[0], entry[1].value))
+            return return_list
+
+        obj_value_records: list[tuple[float, float]] = []
+        if obj_value_is_valid:
+            obj_value_records = get_obj_value_records()
+            if cpsat_status.is_feasible:
+                obj_value_records.append((last_timestamp, obj_value))
+            self.extend_obj_value_log(
+                obj_value_records, is_maximize=self.cp_model.is_maximize()
+            )
+            # Record value for the last timestamp if it is the same as the last value
+            # and is not recorded for the last timestamp
+            if (
+                obj_value == self.obj_store.get_last_obj_value()
+                and (last_timestamp, obj_value) not in obj_value_records
+            ):
+                self.add_obj_value_log(last_timestamp, obj_value, is_maximize=None)
+
+        def get_obj_bound_records() -> list[tuple[float, float]]:
+            """Returns the recorded objective bounds and elapsed times.
+
+            Returns:
+                list[tuple[float, float]]: A list of tuples containing (elapsed time, objective bound).
+            """
+            timestamp_list = []
+            timestamp_2_bound_map: dict[float, float] = {}
+
+            list_by_bound_recorder: list[tuple[float, float]] = (
+                self.obj_bound_recorder.elapsed_time_and_bound
+            )
+            for b_entry in list_by_bound_recorder:
+                timestamp = b_entry[0]
+                bound = b_entry[1]
+                if timestamp not in timestamp_list:
+                    timestamp_list.append(timestamp)
+                timestamp_2_bound_map[timestamp] = bound
+
+            list_by_value_recorder: list[tuple[float, ValueBoundPair]] = (
+                self.obj_value_recorder.entries
+            )
+            for v_entry in list_by_value_recorder:
+                timestamp = v_entry[0]
+                bound = v_entry[1].bound
+                if timestamp not in timestamp_list:
+                    timestamp_list.append(timestamp)
+                if timestamp not in timestamp_2_bound_map:
+                    timestamp_2_bound_map[timestamp] = bound
+
+            timestamp_list.sort()
+            return [
+                (timestamp, timestamp_2_bound_map[timestamp])
+                for timestamp in timestamp_list
+            ]
+
+        obj_bound_records: list[tuple[float, float]] = []
+        if obj_bound_is_valid:
+            obj_bound_records = get_obj_bound_records()
+            if cpsat_status.is_feasible:
+                obj_bound_records.append((last_timestamp, obj_bound))
+            self.extend_obj_bound_log(obj_bound_records, is_maximize=False)
+            # Record bound for the last timestamp if it is the same as the last bound
+            # and is not recorded for the last timestamp
+            if (
+                obj_bound == self.obj_store.get_last_obj_bound()
+                and (last_timestamp, obj_bound) not in obj_bound_records
+            ):
+                self.add_obj_bound_log(last_timestamp, obj_bound, is_maximize=None)
+
+        _last_timestamp_note = (
+            last_timestamp_note or self._get_call_context_of_current_method()
+        )
+        self.obj_store.add_last_timestamp_note(
+            _last_timestamp_note,
+            obj_value_is_valid=obj_value_is_valid,
+            obj_bound_is_valid=obj_bound_is_valid,
+        )
+
+        solver_report = CpsatSolverReport(
+            elapsed_time,
+            obj_value,
+            obj_bound,
+            cpsat_status,
+            obj_value_records,
+            obj_bound_records,
+        )
+        return solver_report
+
     def solve_current_cp_remaining_time_limit(
         self,
         computational_time: float,
@@ -422,30 +639,23 @@ class FlowshopTardinessControllerCore(
                 "Base CP model is not set. Call set_cp_model_as_base_cp_model() first."
             )
 
-        _timelimit = self.get_remaining_time_limit(computational_time)
-
         # Utilize the objective bound if available
         if (
             obj_value_is_valid
             and self.solution_manager.best_obj_bound is not None
             and not math.isnan(self.solution_manager.best_obj_bound)
         ):
-            self.cp_model.set_sumTj_lower_bound(self.solution_manager.best_obj_bound)
+            self.set_sumTj_lower_bound(
+                self.cp_model, self.vars, bound=self.solution_manager.best_obj_bound
+            )
 
         # mdl_txt_path = self.get_file_path_for_subroutine("_cp_sat_model.txt")
         # self.cp_model.export_to_file(str(mdl_txt_path))
 
-        solver_report: CpsatSolverReport = self.solve_current_cp_model(
-            _timelimit,
+        solver_report = self.solve_cp_model_2(
+            self.cp_model,
+            computational_time,
             solver_thread_cnt,
-            no_improvement_timelimit=no_improvement_timelimit,
-            cp_model_presolve=cp_model_presolve,
-            random_seed=self.random_seed,
-            e_timer=self.timer,
-            log_level_obj_value=logging.INFO,
-            log_level_obj_bound=logging.INFO,
-            log_level_solver=self.log_solver_level,
-            log_search_progress=self.log_search_progress,
             obj_value_is_valid=obj_value_is_valid,
             obj_bound_is_valid=obj_bound_is_valid,
         )
@@ -478,7 +688,10 @@ class FlowshopTardinessControllerCore(
         else:
             solution: FlowshopSchedule | None = None
             if fs_solver_report.is_feasible:
-                solution = self.cp_model.create_schedule_from_sequence()
+                solution = self.create_schedule_from_params_and_vars(
+                    params=self.params,
+                    vars=self.vars,
+                )
                 if error_if_infeasible:
                     self.check_feasibility(solution)
                 obj_value_by_solution = self.get_obj_value(solution)
@@ -515,7 +728,7 @@ class FlowshopTardinessControllerCore(
                 # Register the solution
                 was_updated = self.solution_manager.register(fs_solver_report, solution)
                 if was_updated and draw_gantt:
-                    self.draw_incumbent_gantt()
+                    self.export_incumbent_to_yaml()
 
     def solve_with_initial_solution(
         self,
@@ -543,7 +756,9 @@ class FlowshopTardinessControllerCore(
                 f"{incumbent_obj_value} as a hint."
             )
             self.cp_model.clear_hints()
-            self.cp_model.add_hints_from_schedule(incumbent_solution)
+            self.add_hints_from_schedule(
+                self.cp_model, self.params, self.vars, incumbent_solution
+            )
 
         self.solve_current_cp_remaining_time_limit(
             computational_time,
@@ -557,7 +772,132 @@ class FlowshopTardinessControllerCore(
             draw_gantt=draw_gantt,
         )
 
+    def _get_j_sequence_from_solver(self, params: Params, vars: Vars) -> list[int]:
+        """Get the job index sequence from the solver.
+
+        Args:
+            params (Params): parameter instance
+            vars (Vars): variable instance
+
+        Returns:
+            list[int]: The job index sequence as determined by the solver.
+        """
+        return [self.solver.Value(vars.pi[k]) for k in params.j_list]
+
+    def get_job_sequence_from_solver(self, params: Params, vars: Vars) -> list[str]:
+        """Get the job name sequence from the solver's job index sequence.
+
+        Args:
+            params (Params): parameter instance
+            vars (Vars): variable instance
+
+        Returns:
+            list[str]: The job name sequence as determined by the solver.
+        """
+        j_sequence = self._get_j_sequence_from_solver(params, vars)
+        j_name_sequence = [params.j_2_job_name_map[j] for j in j_sequence]
+        return j_name_sequence
+
+    def create_schedule_from_sequence(
+        self, params: Params, j_name_sequence: list[str]
+    ) -> FlowshopSchedule:
+        j_sequence = [params.job_name_2_j_map[j_name] for j_name in j_name_sequence]
+        i_name_list = [params.i_2_stage_name_map[i] for i in params.i_list]
+        schedule = FlowshopSchedule.from_stage_name_list(i_name_list)
+
+        for j in j_sequence:
+            j_name = params.j_2_job_name_map[j]
+            i_2_p_map = {
+                i_name: params.P[i, j]
+                for i, i_name in params.i_2_stage_name_map.items()
+            }
+            schedule.dispatch_job_by_stages(
+                j_name, i_name_list, i_2_p_map, after_last=True
+            )
+
+        return schedule
+
+    def create_schedule_from_params_and_vars(
+        self, params: Params, vars: Vars
+    ) -> FlowshopSchedule:
+        j_sequence = self._get_j_sequence_from_solver(params, vars)
+        j_name_sequence = [params.j_2_job_name_map[j] for j in j_sequence]
+        return self.create_schedule_from_sequence(
+            params=params, j_name_sequence=j_name_sequence
+        )
+
     # End solver call methods
+
+    # Start model modification methods
+
+    def add_hints_from_schedule(
+        self,
+        mdl: CustomCpModel,
+        params: Params,
+        vars: Vars,
+        schedule: FlowshopSchedule,
+        job_subset: set[str] | None = None,
+    ) -> None:
+        last_i = params.i_list[-1]
+        last_i_name = params.i_2_stage_name_map[last_i]
+        j_sequence = schedule.get_last_stage_job_list()
+        j_sequence = [j for j in j_sequence if (job_subset is None or j in job_subset)]
+        start_time_map = schedule.get_start_time_map()
+        sum_Tj = 0
+
+        all_ops_in_schedule = True
+        for k, j_name in enumerate(j_sequence):
+            j = params.job_name_2_j_map[j_name]
+            all_ops_of_j_in_schedule = True
+            for i, i_name in params.i_2_stage_name_map.items():
+                if (j_name, i_name) in start_time_map:
+                    start_hint = start_time_map[j_name, i_name]
+                    P_ij = params.P[i, j]
+                    mdl.add_hint(vars.op_start[i, k], start_hint)
+                    mdl.add_hint(vars.op_lth[i, k], P_ij)
+                    mdl.add_hint(vars.op_end[i, k], start_hint + P_ij)
+                else:
+                    all_ops_in_schedule = False
+                    all_ops_of_j_in_schedule = False
+            mdl.add_hint(vars.pi[k], j)
+            mdl.add_hint(vars.d[k], params.D[j])
+            if all_ops_of_j_in_schedule:
+                assert (j_name, last_i_name) in start_time_map, (
+                    f"Last operation of job {j_name} not found in start_time_map"
+                )
+                Tj = max(
+                    0,
+                    start_time_map[j_name, last_i_name]
+                    + params.P[last_i, j]
+                    - params.D[j],
+                )
+                mdl.add_hint(vars.T[k], Tj)
+                sum_Tj += Tj
+        if all_ops_in_schedule:
+            if vars.total_tardiness is None:
+                raise ValueError("total_tardiness undefined in Vars")
+            mdl.add_hint(vars.total_tardiness, sum_Tj)
+
+    def set_sumTj_lower_bound(
+        self, mdl: CustomCpModel, vars: Vars, bound: float | None
+    ) -> None:
+        if bound is None:
+            return
+        if math.isnan(bound):
+            return
+        if vars.total_tardiness is None:
+            raise ValueError("Objective variable is not defined yet.")
+
+        # If the bound is very close to an integer, treat it as such.
+        # Otherwise, use ceiling to ensure we don't cut off valid integer solutions.
+        if float_equals(bound, round(bound)):
+            int_bound = round(bound)
+        else:
+            int_bound = math.ceil(bound)
+
+        mdl.add(vars.total_tardiness >= int_bound)
+
+    # End model modification methods
 
     # Helper method for LNS-CP
 

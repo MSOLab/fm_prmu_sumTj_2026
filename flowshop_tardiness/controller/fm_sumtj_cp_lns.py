@@ -5,9 +5,8 @@ import time
 from collections import defaultdict
 from typing import Callable, Sequence
 
-from mbls.cpsat import CpsatSolverReport, ObjValueBoundStore
 from routix import DynamicDataObject, ElapsedTimer
-from routix.util.comparison import float_a_leq_b, float_a_stl_b
+from routix.util.comparison import float_a_stl_b
 from schore.schedule_examples.shop.flow import FlowshopSchedule
 
 from ..report import FsSubroutineReport
@@ -188,7 +187,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         )
         # Draw Gantt chart if the solution is an improvement
         if was_updated and draw_gantt:
-            self.draw_incumbent_gantt()
+            self.export_incumbent_to_yaml()
 
     # Subroutine: dispatch by EDD rule
 
@@ -348,7 +347,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         )
         # Draw Gantt chart if the solution is an improvement
         if was_updated and draw_gantt:
-            self.draw_incumbent_gantt()
+            self.export_incumbent_to_yaml()
 
     def initialize_by_mdd(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
@@ -461,7 +460,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             - Assumes every job has defined processing time on every stage.
         """
         dmap: dict[str, int] = self.instance.job_2_duedate_map
-        pos_2_stage_2_endtime_map: dict[int, dict[str, int]] = {0: {i: 0 for i in self.stage_ids}}
+        pos_2_stage_2_endtime_map: dict[int, dict[str, int]] = {
+            0: {i: 0 for i in self.stage_ids}
+        }
 
         prefix_sumTj: dict[int, int] = {0: 0}
         for j_idx, j in enumerate(job_seq):
@@ -693,7 +694,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         evaluator = PermutationFlowshopSubseqEvaluator(p, due)
 
-        self._new_acc_cache: tuple[PermutationFlowshopSubseqEvaluator, dict[str, int], dict[int, str]] = (evaluator, job_id_to_idx, idx_to_job_id)
+        self._new_acc_cache: tuple[
+            PermutationFlowshopSubseqEvaluator, dict[str, int], dict[int, str]
+        ] = (evaluator, job_id_to_idx, idx_to_job_id)
         return self._new_acc_cache
 
     def _get_best_pos_and_metric_new_acc(
@@ -792,7 +795,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         )
 
         if was_updated and draw_gantt:
-            self.draw_incumbent_gantt()
+            self.export_incumbent_to_yaml()
 
     def initialize_by_nehedd(
         self, error_if_infeasible: bool = False, draw_gantt: bool = False
@@ -1101,372 +1104,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 _last_timestamp_note, obj_value_is_valid=True
             )
             if draw_gantt:
-                self.draw_incumbent_gantt()
-
-    # Subroutine: incremental CP construction by incumbent solution's sequence
-
-    def initialize_by_incremental_cp_incumbent_sequence(
-        self,
-        solver_thread_cnt: int,
-        added_batch_size: int = 1,
-        max_time_per_add: float | None = None,
-        no_improvement_timelimit: float | None = None,
-        error_if_infeasible: bool = False,
-        draw_gantt: bool = False,
-    ):
-        if self.solution_manager.incumbent_solution is None:
-            raise RuntimeError(
-                "No incumbent solution available. Cannot use its sequence for initialization."
-            )
-        job_sequence = (
-            self.solution_manager.incumbent_solution.get_last_stage_job_list()
-        )
-        self.construct_solution_by_incremental_cp(
-            job_sequence,
-            solver_thread_cnt,
-            added_batch_size,
-            max_time_per_add,
-            no_improvement_timelimit,
-            is_init=False,  # TODO: set as True later
-            error_if_infeasible=error_if_infeasible,
-            draw_gantt=draw_gantt,
-        )
-
-    def construct_solution_by_incremental_cp(
-        self,
-        job_sequence: list[str],
-        solver_thread_cnt: int,
-        added_batch_size: int = 2,
-        max_time_per_add: float | None = None,
-        no_improvement_timelimit: float | None = None,
-        is_init: bool = False,
-        error_if_infeasible: bool = False,
-        draw_gantt: bool = False,
-    ):
-        """Constructs a solution by incrementally building and solving a CP model.
-
-        This method takes an initial job sequence and iteratively builds a schedule.
-        In each iteration, it adds a batch of jobs from the sequence to the
-        problem, solves the resulting subproblem using a CP model, and then
-        decides whether to keep the CP's solution or a simple dispatch-based
-        solution for that subset of jobs. This process continues until all jobs
-        are scheduled.
-
-        The objective values of partial solutions (bounds) and full solutions
-        (values, obtained by dispatching remaining jobs) are logged throughout
-        the process for detailed analysis.
-
-        Args:
-            job_sequence (list[str]): The initial sequence of jobs to guide the
-                incremental construction.
-            solver_thread_cnt (int): The number of threads for the CP solver.
-            added_batch_size (int, optional): The number of jobs to add in each
-                incremental step. Defaults to 2.
-            max_time_per_add (float | None, optional): The maximum time limit
-                in seconds for each CP solve step. Defaults to None.
-            no_improvement_timelimit (float | None, optional): A time limit for
-                the CP solver to find an improvement. Defaults to None.
-            is_init (bool, optional): Flag indicating if this is an initial
-                solution construction. Defaults to False.
-            error_if_infeasible (bool, optional): If True, raises an error if the
-                final schedule is infeasible. Defaults to False.
-            draw_gantt (bool, optional): If True, draws a Gantt chart if the
-                resulting solution improves the incumbent. Defaults to False.
-        """
-        sub_timer = ElapsedTimer()
-        last_solution: FlowshopSchedule | None = None
-        sub_obj_store = ObjValueBoundStore[float]()
-        """Subroutine-specific objective store"""
-        sub_obj_store.obj_value_series.name = "ObjVal after dispatch"
-        sub_obj_store.obj_bound_series.name = "ObjVal before dispatch"
-
-        job_cnt = len(job_sequence)
-        sequence_of_job_sublist = [
-            job_sequence[i : i + added_batch_size]
-            for i in range(0, job_cnt, added_batch_size)
-        ]
-        job_sublist_cnt = len(sequence_of_job_sublist)
-
-        # ================== helpers (method-internal) ==================
-
-        def _make_all_dispatched(
-            base_sol: FlowshopSchedule, already_scheduled_job_set: set[str]
-        ) -> FlowshopSchedule:
-            """Create a new FlowshopSchedule by dispatching remaining jobs.
-
-            Args:
-                base_sol (FlowshopSchedule): The base solution to modify.
-                already_scheduled_job_set (set[str]): The set of already scheduled jobs.
-
-            Raises:
-                ValueError: If a job cannot be dispatched to all stages.
-
-            Returns:
-                FlowshopSchedule: The modified flow shop schedule.
-            """
-            if len(already_scheduled_job_set) == job_cnt:
-                return base_sol.deepcopy()
-
-            remaining_jobs = [
-                j for j in job_sequence if j not in already_scheduled_job_set
-            ]
-            full_sched = base_sol.deepcopy()
-            for j in remaining_jobs:
-                full_sched.dispatch_job_by_stages(
-                    j,
-                    self.stage_ids,
-                    self.job_2_stage_2_p_dict[j],
-                    after_last=True,
-                )
-            # Safety check
-            self.check_feasibility(full_sched)
-            return full_sched
-
-        def _log_snapshot(
-            picked_sol: FlowshopSchedule,
-            already_scheduled_job_set: set[str],
-            note: str,
-            iter_report: CpsatSolverReport | None = None,
-            timestamp: float | None = None,
-        ) -> None:
-            """Log a snapshot of the current state.
-
-            Args:
-                picked_sol (FlowshopSchedule): The picked solution to log.
-                already_scheduled_job_set (set[str]): The set of already scheduled jobs.
-                note (str): A note to attach to the log.
-                iter_report (CpsatSolverReport | None, optional): CP solver report for the iteration.
-                    If provided, objective bounds are extracted. Defaults to None.
-                timestamp (float | None, optional): The timestamp for the log entry.
-                    If None, the current subroutine timer's elapsed time is used. Defaults to None.
-            """
-            ts = sub_timer.elapsed_sec if timestamp is None else timestamp
-
-            # value = objective value of the schedule with all jobs
-            full_sched = _make_all_dispatched(picked_sol, already_scheduled_job_set)
-            full_sched_value = self.get_obj_value(full_sched)
-            sub_obj_store.add_obj_value(ts, full_sched_value, is_maximize=None)
-
-            # bounds = objective value of the partial schedule (by CP or by partially dispatched)
-            if iter_report is not None and getattr(iter_report, "is_feasible", False):
-                records = iter_report.obj_value_records
-                seen = set()
-                for elapsed, val in records:
-                    sub_obj_store.add_obj_bound(elapsed, val, is_maximize=None)
-                    seen.add((elapsed, val))
-                # record the final value as a bound if not already recorded
-                final_val = self.get_obj_value(picked_sol)
-                if (ts, final_val) not in seen:
-                    sub_obj_store.add_obj_bound(ts, final_val, is_maximize=None)
-                sub_obj_store.add_last_timestamp_note(
-                    note, obj_value_is_valid=True, obj_bound_is_valid=True
-                )
-            else:
-                # if iter_report is None or infeasible, just log the final value as a bound
-                picked_val = self.get_obj_value(picked_sol)
-                sub_obj_store.add_obj_bound(ts, picked_val, is_maximize=None)
-                sub_obj_store.add_last_timestamp_note(
-                    note, obj_value_is_valid=True, obj_bound_is_valid=True
-                )
-
-        # ================== /helpers ==================
-
-        halt_incremental_cp_processing = False
-        target_job_subset: set[str] = set()
-
-        for bidx, added_job_sublist in enumerate(sequence_of_job_sublist):
-            # ---------- [Time over?] : cutoff before partial dispatch ----------
-            _timelimit = self.get_remaining_time_limit(max_time_per_add)
-            if float_a_leq_b(_timelimit, 0):
-                logging.info(
-                    "(batch %d/%d) Time over before CP solving -> finish by dispatching remaining jobs.",
-                    bidx + 1,
-                    job_sublist_cnt,
-                )
-                halt_incremental_cp_processing = True
-                break  # End loop & go to 'after-loop finishing'
-
-            # ---------- [Partial dispatch] ----------
-            partial_sol = (
-                FlowshopSchedule.from_stage_name_list(self.stage_ids)
-                if last_solution is None
-                else last_solution.deepcopy()
-            )
-            for j in added_job_sublist:
-                partial_sol.dispatch_job_by_stages(
-                    j,
-                    self.stage_ids,
-                    self.job_2_stage_2_p_dict[j],
-                    after_last=True,
-                )
-            target_job_subset.update(added_job_sublist)
-            dispatch_obj_val = self.get_obj_value(partial_sol)
-
-            # ---------- [sumTj == 0 ?] ----------
-            if dispatch_obj_val == 0:
-                logging.info(
-                    "(batch %d/%d) sumTj=0 -> skip CP; keep partial dispatched schedule.",
-                    bidx + 1,
-                    job_sublist_cnt,
-                )
-                last_solution = partial_sol
-                _log_snapshot(
-                    last_solution,
-                    target_job_subset,
-                    note=f"{len(target_job_subset)}/{job_cnt} (sumTj=0; skip CP)",
-                )
-                continue
-
-            # ---------- [Sub CP build & solve] ----------
-            sub_cp_mdl = self.cp_model.create_problem_of_job_subset(target_job_subset)
-            if last_solution is not None:
-                sub_cp_mdl.add_indirect_precedence_constraints_by_sequence(
-                    last_solution.get_last_stage_job_list()
-                )
-            sub_cp_mdl.add_hints_from_schedule(partial_sol)
-            # set obj lower bound if all jobs are included and we have a valid bound
-            all_jobs_are_included = len(target_job_subset) == job_cnt
-            if (
-                all_jobs_are_included
-                and self.solution_manager.best_obj_bound is not None
-                and not math.isnan(self.solution_manager.best_obj_bound)
-            ):
-                sub_cp_mdl.set_sumTj_lower_bound(self.solution_manager.best_obj_bound)
-
-            # ---------- [Time over?] : cutoff before CP solving ----------
-            _timelimit = self.get_remaining_time_limit(max_time_per_add)
-            if float_a_leq_b(_timelimit, 0):
-                logging.info(
-                    "(batch %d/%d) Time over before CP solving -> finish by dispatching remaining jobs.",
-                )
-                last_solution = partial_sol  # keep the dispatched partial schedule
-                halt_incremental_cp_processing = True
-                break  # End loop & go to 'after-loop finishing'
-
-            logging.info(
-                "(batch %d/%d) Starting CP on subproblem with %d jobs (dispatched obj val: %d) at %s",
-                bidx + 1,
-                job_sublist_cnt,
-                len(target_job_subset),
-                dispatch_obj_val,
-                sub_timer.get_formatted_elapsed_time(),
-            )
-            iter_report = self.solve_cp_model(
-                sub_cp_mdl,
-                _timelimit,
-                solver_thread_cnt,
-                random_seed=self.random_seed,
-                no_improvement_timelimit=no_improvement_timelimit,
-                cp_model_presolve=self.cp_model_presolve,
-                e_timer=sub_timer,
-                log_level_obj_value=logging.INFO,
-                log_level_obj_bound=logging.INFO,
-                log_level_solver=self.log_solver_level,
-                log_search_progress=self.log_search_progress,
-                obj_value_is_valid=all_jobs_are_included,
-            )
-            last_timestamp = sub_timer.elapsed_sec
-
-            # ---------- [CP feasible? & CP is better?] ----------
-            # Use sequence-based schedule creation since the starting times by CP model
-            # does not minimize the total completion time (its main goal is to minimize
-            # tardiness).
-            cp_sched = (
-                sub_cp_mdl.create_schedule_from_sequence()
-                if iter_report.is_feasible
-                else None
-            )
-            cp_obj_val = None if cp_sched is None else self.get_obj_value(cp_sched)
-            cp_is_better = cp_obj_val is not None and float_a_stl_b(
-                cp_obj_val, dispatch_obj_val
-            )
-
-            if cp_is_better:
-                assert cp_obj_val is not None
-                logging.info(
-                    "CP is better (%d < %d) -> use CP schedule.",
-                    cp_obj_val,
-                    dispatch_obj_val,
-                )
-                assert cp_sched is not None
-                last_solution = cp_sched
-            else:
-                reason = (
-                    "infeasible" if not iter_report.is_feasible else "no improvement"
-                )
-                logging.info("CP %s -> keep dispatched partial.", reason)
-                last_solution = partial_sol
-
-            # ---------- [CP is not better & timeover?] ----------
-            if (not cp_is_better) and float_a_leq_b(
-                _timelimit, iter_report.elapsed_time
-            ):
-                logging.warning(
-                    "CP timeover at this batch -> halt further incremental CP."
-                )
-                halt_incremental_cp_processing = True
-
-            # ---------- [Log snapshot & halt] ----------
-            _log_snapshot(
-                last_solution,
-                target_job_subset,
-                note=f"{len(target_job_subset)}/{job_cnt}",
-                iter_report=iter_report,
-                timestamp=last_timestamp,
-            )
-            if halt_incremental_cp_processing:
-                break
-
-        # ---------- [End] : Dispatch remaining jobs ----------
-        if last_solution is None:
-            last_solution = FlowshopSchedule.from_stage_name_list(self.stage_ids)
-
-        remaining_jobs = [j for j in job_sequence if j not in target_job_subset]
-        if remaining_jobs:
-            logging.info("Dispatch remaining %d jobs and finish.", len(remaining_jobs))
-            for j in remaining_jobs:
-                last_solution.dispatch_job_by_stages(
-                    j,
-                    self.stage_ids,
-                    self.job_2_stage_2_p_dict[j],
-                    after_last=True,
-                )
-            _log_snapshot(
-                last_solution,
-                set(job_sequence),
-                note="Final dispatch",
-                timestamp=sub_timer.elapsed_sec,
-            )
-
-        if error_if_infeasible:
-            self.check_feasibility(last_solution)
-        last_solution_obj_value = self.get_obj_value(last_solution)
-        logging.info(
-            f"Initialized by IC with total tardiness {last_solution_obj_value}"
-        )
-        # Create report for the final solution and register it
-        final_report = FsSubroutineReport(
-            elapsed_time=sub_timer.elapsed_sec,
-            obj_value=float(last_solution_obj_value),
-            obj_bound=None,
-            is_init=is_init,
-        )
-        was_updated = self.solution_manager.register(final_report, last_solution)
-
-        if was_updated:
-            log_time = self.timer.elapsed_sec
-            self.add_obj_value_log(log_time, last_solution_obj_value, is_maximize=None)
-            _last_timestamp_note = self._get_call_context_of_current_method()
-            self.obj_store.add_last_timestamp_note(
-                _last_timestamp_note, obj_value_is_valid=True
-            )
-            if draw_gantt:
-                self.draw_incumbent_gantt()
-
-        # Write the objective store to a YAML file
-        # TODO: suffix from output_metadata
-        if sub_obj_store:
-            sub_obj_store.save_yaml(self.get_file_path_for_subroutine("_obj_log.yaml"))
+                self.export_incumbent_to_yaml()
 
     # Subroutine: job block neighbor search
 
@@ -1614,7 +1252,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             )
             # Draw Gantt chart if the solution is an improvement
             if was_updated and draw_gantt:
-                self.draw_incumbent_gantt()
+                self.export_incumbent_to_yaml()
 
     def bd_cp(
         self,
@@ -1638,393 +1276,44 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             draw_gantt (bool, optional): If True, draws a Gantt chart of the solution.
                 Defaults to False.
         """
+        sub_timer = ElapsedTimer()
+
         # Job sequence from the incumbent solution
         incumbent_sol = self.solution_manager.get_incumbent()
         if incumbent_sol is None:
             # use EDD order if no incumbent
             job_sequence = self.get_edd_sequence()
-            logging.info(f"Job sequence from incumbent: {job_sequence}")
         else:
             job_sequence = incumbent_sol.get_last_stage_job_list()
 
-        self._construct_schedule_by_bd_cp(
+        # Draw Gantt chart of the initial solution if requested
+        if draw_gantt:
+            output_path = self.get_file_path_for_subroutine("_0_init_solution.yaml")
+            self.export_incumbent_to_yaml(output_path=output_path)
+
+        from .pw_cp import PwCpConstructor, PwCpResult
+
+        constructor = PwCpConstructor(self)
+        result: PwCpResult = constructor.run(
             job_sequence,
-            solver_thread_cnt,
             added_batch_size=added_batch_size,
+            solver_thread_cnt=solver_thread_cnt,
             max_time_per_add=max_time_per_add,
-            is_init=True,  # TODO: remove this line
             error_if_infeasible=error_if_infeasible,
             draw_gantt=draw_gantt,
         )
-
-    def _construct_schedule_by_bd_cp(
-        self,
-        job_sequence: list[str],
-        solver_thread_cnt: int,
-        added_batch_size: int = 1,
-        max_time_per_add: float | None = None,
-        is_init: bool = False,
-        error_if_infeasible: bool = False,
-        draw_gantt: bool = False,
-    ):
-        sub_timer = ElapsedTimer()
-        last_solution: FlowshopSchedule | None = None
-        sub_obj_store = ObjValueBoundStore[float]()
-        """Subroutine-specific objective store"""
-        sub_obj_store.obj_value_series.name = "ObjVal after dispatch"
-        sub_obj_store.obj_bound_series.name = "ObjVal before dispatch"
-
-        job_cnt = len(job_sequence)
-        sequence_of_job_sublist = [
-            job_sequence[i : i + added_batch_size]
-            for i in range(0, len(job_sequence), added_batch_size)
-        ]
-        job_sublist_cnt = len(sequence_of_job_sublist)
-
-        # ================== helpers (method-internal) ==================
-
-        def _make_all_dispatched(
-            base_sol: FlowshopSchedule, already_scheduled_job_set: set[str]
-        ) -> FlowshopSchedule:
-            """Create a new FlowshopSchedule by dispatching remaining jobs.
-
-            Args:
-                base_sol (FlowshopSchedule): The base solution to modify.
-                already_scheduled_job_set (set[str]): The set of already scheduled jobs.
-
-            Raises:
-                ValueError: If a job cannot be dispatched to all stages.
-
-            Returns:
-                FlowshopSchedule: The modified flow shop schedule.
-            """
-            if len(already_scheduled_job_set) == job_cnt:
-                return base_sol.deepcopy()
-
-            remaining_jobs = [
-                j for j in job_sequence if j not in already_scheduled_job_set
-            ]
-            full_sched = base_sol.deepcopy()
-            for j in remaining_jobs:
-                full_sched.dispatch_job_by_stages(
-                    j,
-                    self.stage_ids,
-                    self.job_2_stage_2_p_dict[j],
-                    after_last=True,
-                )
-            # Safety check
-            self.check_feasibility(full_sched)
-            return full_sched
-
-        def _log_snapshot(
-            picked_sol: FlowshopSchedule,
-            already_scheduled_job_set: set[str],
-            note: str,
-            iter_report: CpsatSolverReport | None = None,
-            timestamp: float | None = None,
-        ) -> None:
-            """Log a snapshot of the current state.
-
-            Args:
-                picked_sol (FlowshopSchedule): The picked solution to log.
-                already_scheduled_job_set (set[str]): The set of already scheduled jobs.
-                note (str): A note to attach to the log.
-                iter_report (CpsatSolverReport | None, optional): CP solver report for the iteration.
-                    If provided, objective bounds are extracted. Defaults to None.
-                timestamp (float | None, optional): The timestamp for the log entry.
-                    If None, the current subroutine timer's elapsed time is used. Defaults to None.
-            """
-            ts = sub_timer.elapsed_sec if timestamp is None else timestamp
-
-            # value = objective value of the schedule with all jobs
-            full_sched = _make_all_dispatched(picked_sol, already_scheduled_job_set)
-            full_sched_value = self.get_obj_value(full_sched)
-            sub_obj_store.add_obj_value(ts, full_sched_value, is_maximize=None)
-
-            # bounds = objective value of the partial schedule (by CP or by partially dispatched)
-            if iter_report is not None and getattr(iter_report, "is_feasible", False):
-                records = iter_report.obj_value_records
-                seen = set()
-                for elapsed, val in records:
-                    sub_obj_store.add_obj_bound(elapsed, val, is_maximize=None)
-                    seen.add((elapsed, val))
-                # record the final value as a bound if not already recorded
-                final_val = self.get_obj_value(picked_sol)
-                if (ts, final_val) not in seen:
-                    sub_obj_store.add_obj_bound(ts, final_val, is_maximize=None)
-                sub_obj_store.add_last_timestamp_note(
-                    note, obj_value_is_valid=True, obj_bound_is_valid=True
-                )
-            else:
-                # if iter_report is None or infeasible, just log the final value as a bound
-                picked_val = self.get_obj_value(picked_sol)
-                sub_obj_store.add_obj_bound(ts, picked_val, is_maximize=None)
-                sub_obj_store.add_last_timestamp_note(
-                    note, obj_value_is_valid=True, obj_bound_is_valid=True
-                )
-
-        # ================== /helpers ==================
-
-        halt_incremental_cp_processing = False
-        target_job_subset: set[str] = set()
-        incumbent_job_seq = []
-        incumbent_obj_val = 0
-
-        for bidx, added_job_sublist in enumerate(sequence_of_job_sublist):
-            # ---------- [Time over?] : cutoff before partial dispatch ----------
-            _timelimit = self.get_remaining_time_limit(max_time_per_add)
-            if float_a_leq_b(_timelimit, 0):
-                logging.info(
-                    "(batch %d/%d) Time over before CP solving -> finish by dispatching remaining jobs.",
-                    bidx + 1,
-                    job_sublist_cnt,
-                )
-                halt_incremental_cp_processing = True
-                break  # End loop & go to 'after-loop finishing'
-
-            # ---------- [Partial dispatch] ----------
-            partial_sol: FlowshopSchedule = (
-                FlowshopSchedule.from_stage_name_list(self.stage_ids)
-                if last_solution is None
-                else last_solution.deepcopy()
-            )
-            for j in added_job_sublist:
-                partial_sol.dispatch_job_by_stages(
-                    j,
-                    self.stage_ids,
-                    self.job_2_stage_2_p_dict[j],
-                    after_last=True,
-                )
-            target_job_subset.update(added_job_sublist)
-            dispatch_obj_val = self.get_obj_value(partial_sol)
-
-            # ---------- [sumTj == 0 ?] ----------
-            if dispatch_obj_val == 0:
-                logging.info(
-                    "(Batch %d/%d) sumTj=0 -> skip CP; keep partial dispatched schedule.",
-                    bidx + 1,
-                    job_sublist_cnt,
-                )
-                last_solution = partial_sol
-                incumbent_job_seq = last_solution.get_last_stage_job_list()
-                # TODO: uncomment only for debug purpose
-                # job_subset_cnt = len(target_job_subset)
-                # output_path = self.get_file_path_for_subroutine(
-                #     f"_gantt_n{job_subset_cnt}_solution.yaml"
-                # )
-                # solution_dict = {
-                #     "start_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_start_time_map()
-                #     ),
-                #     "end_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_end_time_map()
-                #     ),
-                # }
-                # object_to_yaml(solution_dict, output_path)
-                incumbent_obj_val = 0
-                _log_snapshot(
-                    last_solution,
-                    target_job_subset,
-                    note=f"{len(target_job_subset)}/{job_cnt} (sumTj=0; skip CP)",
-                )
-                continue
-
-            # ---------- [Sub CP build & solve] ----------
-            job_subset_cnt = len(target_job_subset)
-            sub_instance = self.instance.get_subinstance(added_job_sublist)
-            logging.info(sub_instance.job_id_list)
-            if last_solution is not None:
-                # Add earliest start time constraints for each stages from the last solution
-                stage_2_est_map = last_solution.get_stage_2_makespan_map()
-                sub_cp_mdl = self.cp_model.from_instance(
-                    sub_instance,
-                    self.get_horizon(),
-                    stage_2_est_map=stage_2_est_map,
-                    sumTj_offset=int(incumbent_obj_val),
-                )
-                # Apply hint
-                sub_cp_mdl.add_hints_from_schedule(
-                    partial_sol, job_subset=set(added_job_sublist)
-                )
-            else:
-                sub_cp_mdl = self.cp_model.from_instance(
-                    sub_instance, self.get_horizon()
-                )
-            # set obj lower bound if all jobs are included and we have a valid bound
-            all_jobs_are_included = job_subset_cnt == job_cnt
-            if (
-                all_jobs_are_included
-                and self.solution_manager.best_obj_bound is not None
-                and not math.isnan(self.solution_manager.best_obj_bound)
-            ):
-                sub_cp_mdl.set_sumTj_lower_bound(self.solution_manager.best_obj_bound)
-
-            # ---------- [Time over?] : cutoff before CP solving ----------
-            _timelimit = self.get_remaining_time_limit(max_time_per_add)
-            if float_a_leq_b(_timelimit, 0):
-                logging.info(
-                    "(batch %d/%d) Time over before CP solving -> finish by dispatching remaining jobs.",
-                    bidx + 1,
-                    job_sublist_cnt,
-                )
-                last_solution = partial_sol  # keep the dispatched partial schedule
-                incumbent_job_seq = last_solution.get_last_stage_job_list()
-                incumbent_obj_val = int(dispatch_obj_val)
-                halt_incremental_cp_processing = True
-                # TODO: uncomment only for debug purpose
-                # job_subset_cnt = len(target_job_subset)
-                # output_path = self.get_file_path_for_subroutine(
-                #     f"_gantt_n{job_subset_cnt}_solution.yaml"
-                # )
-                # solution_dict = {
-                #     "start_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_start_time_map()
-                #     ),
-                #     "end_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_end_time_map()
-                #     ),
-                # }
-                # object_to_yaml(solution_dict, output_path)
-                break  # End loop & go to 'after-loop finishing'
-
-            logging.info(
-                "(batch %d/%d) Starting CP on subproblem with %d jobs (dispatched obj val: %d) at %s",
-                bidx + 1,
-                job_sublist_cnt,
-                len(target_job_subset),
-                dispatch_obj_val,
-                sub_timer.get_formatted_elapsed_time(),
-            )
-            iter_report = self.solve_cp_model(
-                sub_cp_mdl,
-                _timelimit,
-                solver_thread_cnt,
-                random_seed=self.random_seed,
-                cp_model_presolve=self.cp_model_presolve,
-                e_timer=sub_timer,
-                obj_value_is_valid=all_jobs_are_included,
-            )
-            last_timestamp = sub_timer.elapsed_sec
-
-            # ---------- [CP feasible? & CP is better?] ----------
-            # Use sequence-based schedule creation since the starting times by CP model
-            # does not minimize the total completion time (its main goal is to minimize
-            # tardiness).
-            # Update the last solution
-            appended_solution = sub_cp_mdl.create_schedule_from_sequence()
-            job_seq_to_be_appended = appended_solution.get_last_stage_job_list()
-            new_job_seq = incumbent_job_seq + job_seq_to_be_appended
-            cp_sched = (
-                self.cp_model.create_schedule_from_sequence(j_name_sequence=new_job_seq)
-                if iter_report.is_feasible
-                else None
-            )
-            cp_obj_val = None if cp_sched is None else self.get_obj_value(cp_sched)
-            cp_is_better = cp_obj_val is not None and float_a_stl_b(
-                cp_obj_val, dispatch_obj_val
-            )
-
-            if cp_is_better:
-                assert cp_obj_val is not None
-                logging.info(
-                    "CP is better (%d < %d) -> use CP schedule.",
-                    cp_obj_val,
-                    dispatch_obj_val,
-                )
-                assert cp_sched is not None
-                last_solution = cp_sched
-                incumbent_job_seq = last_solution.get_last_stage_job_list()
-                incumbent_obj_val = int(cp_obj_val)
-                # TODO: uncomment only for debug purpose
-                # job_subset_cnt = len(target_job_subset)
-                # output_path = self.get_file_path_for_subroutine(
-                #     f"_gantt_n{job_subset_cnt}_solution.yaml"
-                # )
-                # solution_dict = {
-                #     "start_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_start_time_map()
-                #     ),
-                #     "end_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_end_time_map()
-                #     ),
-                # }
-                # object_to_yaml(solution_dict, output_path)
-            else:
-                reason = (
-                    "infeasible" if not iter_report.is_feasible else "no improvement"
-                )
-                logging.info("CP %s -> keep dispatched partial.", reason)
-                last_solution = partial_sol
-                incumbent_job_seq = last_solution.get_last_stage_job_list()
-                incumbent_obj_val = int(dispatch_obj_val)
-                # TODO: uncomment only for debug purpose
-                # job_subset_cnt = len(target_job_subset)
-                # output_path = self.get_file_path_for_subroutine(
-                #     f"_gantt_n{job_subset_cnt}_solution.yaml"
-                # )
-                # solution_dict = {
-                #     "start_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_start_time_map()
-                #     ),
-                #     "end_time_map": tuple_to_pyyaml_key(
-                #         last_solution.get_end_time_map()
-                #     ),
-                # }
-                # object_to_yaml(solution_dict, output_path)
-
-            # ---------- [CP is not better & timeover?] ----------
-            if (not cp_is_better) and float_a_leq_b(
-                _timelimit, iter_report.elapsed_time
-            ):
-                logging.warning(
-                    "CP timeover at this batch -> halt further incremental CP."
-                )
-                halt_incremental_cp_processing = True
-
-            # ---------- [Log snapshot & halt] ----------
-            _log_snapshot(
-                last_solution,
-                target_job_subset,
-                note=f"{len(target_job_subset)}/{job_cnt}",
-                iter_report=iter_report,
-                timestamp=last_timestamp,
-            )
-            if halt_incremental_cp_processing:
-                break
-
-        # ---------- [End] : Dispatch remaining jobs ----------
-        if last_solution is None:
-            last_solution = FlowshopSchedule.from_stage_name_list(self.stage_ids)
-
-        remaining_jobs = [j for j in job_sequence if j not in target_job_subset]
-        if remaining_jobs:
-            logging.info("Dispatch remaining %d jobs and finish.", len(remaining_jobs))
-            for j in remaining_jobs:
-                last_solution.dispatch_job_by_stages(
-                    j,
-                    self.stage_ids,
-                    self.job_2_stage_2_p_dict[j],
-                    after_last=True,
-                )
-            _log_snapshot(
-                last_solution,
-                set(job_sequence),
-                note="Final dispatch",
-                timestamp=sub_timer.elapsed_sec,
-            )
-
-        if error_if_infeasible:
-            self.check_feasibility(last_solution)
-        last_solution_obj_value = self.get_obj_value(last_solution)
+        last_solution_obj_value = self.get_obj_value(result.schedule)
         logging.info(f"BD-CP done with total tardiness {last_solution_obj_value}")
         # Create report for the final solution and register it
         final_report = FsSubroutineReport(
             elapsed_time=sub_timer.elapsed_sec,
             obj_value=float(last_solution_obj_value),
             obj_bound=None,
-            is_init=is_init,
+            is_init=False,
         )
-        was_updated = self.solution_manager.register(final_report, last_solution)
+        was_updated: bool = self.solution_manager.register(
+            final_report, result.schedule
+        )
 
         if was_updated:
             log_time = self.timer.elapsed_sec
@@ -2034,12 +1323,13 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 _last_timestamp_note, obj_value_is_valid=True
             )
             if draw_gantt:
-                self.draw_incumbent_gantt()
+                self.export_incumbent_to_yaml()
 
         # Write the objective store to a YAML file
         # TODO: suffix from output_metadata
-        if sub_obj_store:
-            sub_obj_store.save_yaml(self.get_file_path_for_subroutine("_obj_log.yaml"))
+        result.sub_obj_store.save_yaml(
+            self.get_file_path_for_subroutine("_obj_log.yaml")
+        )
 
     def repeat_while_improvement(self, n_repeats: int, routine_data: DynamicDataObject):
         """
