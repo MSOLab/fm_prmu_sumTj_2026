@@ -368,10 +368,12 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
             raise ValueError(f"Invalid window_size={window_size} for n={n}")
 
         is_timeover = False
+        loop_cnt = 0
 
         # Paper-style outer loop: while TimeLimMH and improved
         # (논문은 improved 플래그로 반복; 여기서는 time limit 안에서 local improvement가 없으면 종료)
         while not is_timeover:
+            logging.info(f"MHX1: starting outer loop iteration {loop_cnt+1}")
             # 논문은 R=1..n-H (1-index) 반복, 그리고 여러 번 R=1로 돌아가는 구조 언급
             # 여기서는 time limit 내에서 한 번 sweep 후, 개선 있으면 다시 sweep
             R = 0
@@ -379,6 +381,7 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
                 if self.get_remaining_time_limit(None) <= 0:
                     is_timeover = True
                     break
+                # logging.info(f"MHX1: processing window starting at R={R+1} / {n - H + 1}")
 
                 A = incumbent_seq[:R]
                 X = incumbent_seq[R : R + H]
@@ -484,6 +487,7 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
                 R += 1
 
             # end sweep over R
+            loop_cnt += 1
             remaining = self.get_remaining_time_limit(None)
             is_timeover = remaining <= 0
 
