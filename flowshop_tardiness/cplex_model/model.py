@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Sequence
 
+from docplex.mp.dvar import Var
 from docplex.mp.linear import LinearExpr
 from docplex.mp.model import Model
 from docplex.mp.solution import SolveSolution
@@ -12,8 +13,11 @@ from docplex.mp.solution import SolveSolution
 class TBB2018Data:
     """Data for permutation flow shop total tardiness MILP."""
 
-    p: list[list[float]]  # p[i][j] processing time at stage i for job j
-    d: list[float]  # d[j] due date for job j
+    p: list[list[int]]
+    """p[i][j] processing time at stage i for job j"""
+
+    d: list[int]
+    """d[j] due date for job j"""
 
     @property
     def m(self) -> int:
@@ -21,9 +25,9 @@ class TBB2018Data:
 
     @property
     def n(self) -> int:
-        if not self.p:
+        if not self.d:
             return 0
-        return len(self.p[0])
+        return len(self.d)
 
     def validate(self) -> None:
         if self.m <= 0:
@@ -46,27 +50,37 @@ class TBB2018Data:
 
 @dataclass
 class TBB2018Vars:
-    # x[j,k] binary: job j assigned to position k
-    x: dict[tuple[int, int], Any]
-    # C[i,k] >= 0: completion time of position k on stage i
-    C: dict[tuple[int, int], Any]
-    # T[k] >= 0: tardiness of position k
-    T: dict[int, Any]
+    """Decision variables for permutation flow shop total tardiness MILP."""
+
+    x: dict[tuple[int, int], Var]
+    """x[j,k] binary: job j assigned to position k"""
+
+    C: dict[tuple[int, int], Var]
+    """C[i,k] >= 0: completion time of position k on stage i"""
+
+    T: dict[int, Var]
+    """T[k] >= 0: tardiness of position k"""
 
 
 class TBB2018MilpModelBuilder:
     """
-    Builds the MILP model (1)-(9) in the uploaded LaTeX:
+    Builds the MILP model in Ta et al. (2018):
       min sum_k T_k
       s.t. assignment constraints on x_{j,k}
            completion time recurrences C_{i,k}
            tardiness definition T_k
     """
 
-    def __init__(self, data: TBB2018Data, model_name: str = "tbb_2018_milp"):
+    def __init__(
+        self,
+        data: TBB2018Data,
+        stage_eat_list: list[int] | None = None,
+        model_name: str = "tbb_2018_milp",
+    ):
         data.validate()
-        self.data = data
-        self.model_name = model_name
+        self.data: TBB2018Data = data
+        self.stage_eat_list: list[int] | None = stage_eat_list
+        self.model_name: str = model_name
 
     def build(
         self,
@@ -75,35 +89,52 @@ class TBB2018MilpModelBuilder:
         mip_gap: float | None = None,
         incumbent_perm: Sequence[int] | None = None,  # list of jobs in positions 0..n-1
     ) -> tuple[Model, TBB2018Vars]:
-        """
-        Returns (model, vars).
+        """Builds and returns the MILP model and its decision variables.
 
-        incumbent_perm (optional):
-          a permutation of jobs (0..n-1) representing positions k=0..n-1.
-          If provided, a MIP start is added: x[perm[k], k] = 1.
+        Args:
+            time_limit_s (float | None, optional): Time limit in seconds.
+                Defaults to None.
+            threads (int | None, optional): Number of threads to use.
+                Defaults to None.
+            mip_gap (float | None, optional): MIP gap tolerance.
+                Defaults to None.
+            incumbent_perm (Sequence[int] | None, optional): a permutation of jobs (0..n-1) representing positions k=0..n-1.
+                If provided, a MIP start is added: x[perm[k], k] = 1.
+                Defaults to None.
+
+        Raises:
+            ValueError: if incumbent_perm is not a valid permutation of 0..n-1
+            ValueError: if incumbent_perm length != n
+
+        Returns:
+            tuple[Model, TBB2018Vars]: the constructed model and its decision variables
         """
-        m, n = self.data.m, self.data.n
-        p, d = self.data.p, self.data.d
+        m: int = self.data.m
+        n: int = self.data.n
+        p: list[list[int]] = self.data.p
+        d: list[int] = self.data.d
 
         mdl = Model(self.model_name)
 
         # ---- decision variables ----
         # x_{j,k} binary
-        x = {
+        x: dict[tuple[int, int], Var] = {
             (j, k): mdl.binary_var(name=f"x_{j}_{k}")
             for j in range(n)
             for k in range(n)
         }
 
         # C_{i,k} continuous >= 0
-        C = {
+        C: dict[tuple[int, int], Var] = {
             (i, k): mdl.continuous_var(lb=0, name=f"C_{i}_{k}")
             for i in range(m)
             for k in range(n)
         }
 
         # T_k continuous >= 0
-        T = {k: mdl.continuous_var(lb=0, name=f"T_{k}") for k in range(n)}
+        T: dict[int, Var] = {
+            k: mdl.continuous_var(lb=0, name=f"T_{k}") for k in range(n)
+        }
 
         vars_ = TBB2018Vars(x=x, C=C, T=T)
 
@@ -174,6 +205,17 @@ class TBB2018MilpModelBuilder:
                 ctname=f"tard_{k}",
             )
 
+        # (Optional) Stage-wise earliest available time constraints
+        # (10) C_{i,1} >= {EAT}_i,  i=1..m
+        # zero-based: C[i,0] >= stage_eat_list[i]
+        if self.stage_eat_list is not None:
+            for i in range(m):
+                stage_eat = self.stage_eat_list[i]
+                mdl.add_constraint(
+                    C[i, 0] >= stage_eat,
+                    ctname=f"stage_{i}_eat",
+                )
+
         # ---- parameters ----
         if time_limit_s is not None:
             mdl.parameters.timelimit = float(time_limit_s)
@@ -203,7 +245,7 @@ class TBB2018MilpModelBuilder:
         sol: SolveSolution, x_vars: dict[tuple[int, int], Any], n: int
     ) -> list[int]:
         """Given a solved model, reconstruct the permutation (job at each position k)."""
-        perm = [-1] * n
+        perm: list[int] = [-1] * n
         for k in range(n):
             chosen = None
             for j in range(n):

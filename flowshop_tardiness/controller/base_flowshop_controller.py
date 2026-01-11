@@ -4,7 +4,13 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from mbls.cpsat import ObjValueBoundStore
-from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria, SubroutineController
+from routix import (
+    DynamicDataObject,
+    ElapsedTimer,
+    StoppingCriteria,
+    SubroutineController,
+)
+from routix.io import object_to_yaml, tuple_to_pyyaml_key
 from routix.util.comparison import float_a_leq_b, float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from schore.schedule_examples.shop.flow import FlowshopSchedule
@@ -24,10 +30,18 @@ class BaseFlowshopController(SubroutineController[StoppingCriteria, Any]):
     """
 
     instance: FlowshopDuedateParameters
+    """The FlowshopDuedateParameters instance being solved."""
+
     shared_param_dict: dict
+
     solution_manager: FsSolutionManager
+    """Solution manager for Hybrid Flow Shop scheduling solutions."""
+
     total_elapsed_time: float
+    """Total elapsed time for the controller."""
+
     method_names_to_run_before_resume: set[str]
+    """Name of methods to run before resuming from a paused state."""
 
     def __init__(
         self,
@@ -75,7 +89,6 @@ class BaseFlowshopController(SubroutineController[StoppingCriteria, Any]):
         )
 
         self.total_elapsed_time = 0.0
-
 
     def set_working_dir(self, dir_path: Path | str):
         super().set_working_dir(dir_path)
@@ -177,6 +190,10 @@ class BaseFlowshopController(SubroutineController[StoppingCriteria, Any]):
                         subroutine_data.get("method", "")
                         in self.method_names_to_run_before_resume
                     ):
+                        # Always run specific initializer methods when resuming
+                        # even if they were already executed before pausing.
+                        # e.g., set_random_seed
+                        # Treat their execution as not consuming the global time limit.
                         e_timer = ElapsedTimer()
                         self._run_flow(subroutine_data)
                         virtual_dt = datetime.datetime.now() - datetime.timedelta(
@@ -201,10 +218,6 @@ class BaseFlowshopController(SubroutineController[StoppingCriteria, Any]):
             self.check_feasibility(incumbent)
         self.release_log_handlers()
         self.total_elapsed_time = self.timer.elapsed_sec
-
-    # -----------------
-    # Objective helpers
-    # -----------------
 
     def get_obj_value(self, schedule: FlowshopSchedule) -> float:
         return float(schedule.get_total_tardiness(self.instance.job_2_duedate_map))
@@ -281,6 +294,43 @@ class BaseFlowshopController(SubroutineController[StoppingCriteria, Any]):
                 raise ValueError(f"Job {j} not found in last stage {last_stage}.")
             obj_value += max(
                 0,
-                i_2_j_2_end_time_map[last_stage][j] - self.instance.job_2_duedate_map[j],
+                i_2_j_2_end_time_map[last_stage][j]
+                - self.instance.job_2_duedate_map[j],
             )
         return float(obj_value)
+
+    # Start visualization
+
+    def export_solution_to_yaml(
+        self,
+        start_time_map: dict[tuple[str, str], int],
+        end_time_map: dict[tuple[str, str], int],
+        output_path: Path | None = None,
+        encoding="utf-8",
+    ):
+        if output_path is None:
+            # Filename suffix should be the same as in fs_single_instance_runner.py line 160
+            output_path = self.get_file_path_for_subroutine("_solution.yaml")
+        from ..io_solution import END_TIME_MAP_KEY, START_TIME_MAP_KEY
+
+        solution_dict = {
+            START_TIME_MAP_KEY: tuple_to_pyyaml_key(start_time_map),
+            END_TIME_MAP_KEY: tuple_to_pyyaml_key(end_time_map),
+        }
+        object_to_yaml(solution_dict, output_path, encoding=encoding)
+
+    def export_schedule_to_yaml(
+        self, schedule: FlowshopSchedule, output_path: Path | None = None
+    ):
+        self.export_solution_to_yaml(
+            schedule.get_start_time_map(),
+            schedule.get_end_time_map(),
+            output_path,
+        )
+
+    def export_incumbent_to_yaml(self, output_path: Path | None = None):
+        incumbent_solution = self.solution_manager.get_incumbent()
+        if isinstance(incumbent_solution, FlowshopSchedule):
+            self.export_schedule_to_yaml(incumbent_solution, output_path)
+
+    # End visualization

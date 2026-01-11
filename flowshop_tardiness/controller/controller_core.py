@@ -316,8 +316,6 @@ class FlowshopTardinessControllerCore(
             self._run_flow(self._subroutine_flow)
         self.post_run_process()
 
-    # Start post-run process
-
     def post_run_process(self) -> None:
         """
         Finalizes the run by checking the feasibility of the incumbent solution

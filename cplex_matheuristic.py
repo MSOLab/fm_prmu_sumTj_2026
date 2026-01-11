@@ -1,5 +1,355 @@
-from flowshop_tardiness.controller.cplex_matheuristic import main
+import logging
+from pathlib import Path
+from typing import Any
+
+import yaml
+from pydantic import ValidationError
+from routix import (
+    DynamicDataObject,
+    ElapsedTimer,
+    StoppingCriteria,
+    SubroutineFlowValidator,
+)
+from routix.io import init_timestamped_working_dir, object_to_yaml
+from routix.type_defs import RunMode
+from schore.parameters_examples.shop.flow import (
+    FlowshopDuedateParameters,
+)
+
+from flowshop_tardiness.controller.cplex_matheuristic import (
+    FlowshopTardinessCplexMatheuristicController,
+)
+from fs_config import MainMetadata
+from output_filenames import OutputFilenames
+from tbb_2018_multi_instance import FsMultiInstanceRunner
+from tbb_2018_multi_scenario import FsMultiScenarioRunner
+from tbb_2018_single_instance import FsSingleInstanceRunner
+
+MAIN_METADATA_FILENAME = "tbb_2018_metadata.yaml"
+
+
+def main():
+    e_timer = ElapsedTimer()
+    prev_flow = None
+    resume_dir = None
+
+    # --- Load and validate metadata ---
+    try:
+        raw_metadata = read_yaml(Path(MAIN_METADATA_FILENAME))
+        config = MainMetadata.model_validate(raw_metadata)
+    except FileNotFoundError:
+        logging.error(f"Metadata file not found at '{MAIN_METADATA_FILENAME}'")
+        return
+    except ValidationError as e:
+        logging.error(f"Metadata validation failed: {e}", exc_info=True)
+        return
+
+    try:
+        run_mode, base_output_dir_path, prev_flow, resume_dir = (
+            determine_run_mode_and_base_dir(config, e_timer)
+        )
+    except FileNotFoundError as e:
+        logging.error(str(e))
+        return
+    except Exception as e:
+        logging.error(f"Failed to determine run mode: {e}", exc_info=True)
+        return
+
+    # --- Setup logging ---
+    log_handlers = add_file_handler(base_output_dir_path / config.scenario_log_filename)
+
+    logging.info(f"Base output directory is: {base_output_dir_path}")
+    if run_mode is RunMode.POST_PROCESS_ONLY:
+        logging.info(
+            "Found valid timestamp. "
+            f"Running in POST_PROCESS_ONLY mode for: {config.analysis_timestamp}"
+        )
+    else:
+        if config.analysis_timestamp:
+            logging.warning(
+                f"Timestamp '{config.analysis_timestamp}' provided, "
+                f"but directory not found at '{base_output_dir_path}'. "
+                "Proceeding with a new FULL_RUN."
+            )
+        else:
+            logging.info(f"Running in {run_mode.name} mode.")
+
+    # --- Load data common to all scenarios ---
+    vrm_common_params_dict = read_yaml(config.vrm_common_params_rel_path)
+
+    # Main metadata & common parameters handling
+    # - If run_mode is full run, dump the metadata and common parameters
+    # - If post-processing-only, load from the dumped files
+    main_metadata_dump_path = base_output_dir_path / MAIN_METADATA_FILENAME
+    vrm_common_params_dump_path = (
+        base_output_dir_path / config.vrm_common_params_rel_path.name
+    )
+    # if run_mode is RunMode.FULL_RUN:
+    if run_mode in {RunMode.FULL_RUN, RunMode.RESUME}:
+        object_to_yaml(config.to_dict(), main_metadata_dump_path)
+        object_to_yaml(vrm_common_params_dict, vrm_common_params_dump_path)
+    elif run_mode is RunMode.POST_PROCESS_ONLY:
+        if not main_metadata_dump_path.is_file():
+            raise FileNotFoundError(
+                f"Metadata file not found at '{main_metadata_dump_path}'"
+            )
+        config = MainMetadata.model_validate(read_yaml(main_metadata_dump_path))
+        # Set config.analysis_timestamp to the one from metadata
+        config.analysis_timestamp = e_timer.get_start_dt_for_dir_name()
+
+        if not vrm_common_params_dump_path.is_file():
+            raise FileNotFoundError(
+                f"Common parameters file not found at '{vrm_common_params_dump_path}'"
+            )
+        vrm_common_params_dict = read_yaml(vrm_common_params_dump_path)
+
+    benchmark_filenames = config.get_benchmark_filename_list()
+    instances = load_list_of_instances(config.input_dir, benchmark_filenames)
+
+    # --- Prepare scenario configurations ---
+    scenario_configs = []
+    for path_config in config.dicts_of_i_o_data_path:
+        subroutine_flow_obj = read_yaml(path_config.subroutine_flow_rel_path)
+        stopping_criteria_dict = read_yaml(path_config.stopping_criteria_rel_path)
+
+        # Validate the flow if FULL_RUN or RESUME
+        validator = SubroutineFlowValidator(
+            FlowshopTardinessCplexMatheuristicController
+        )
+        if run_mode in {RunMode.FULL_RUN, RunMode.RESUME}:
+            try:
+                validator.validate(DynamicDataObject.from_obj(subroutine_flow_obj))
+                logging.info(
+                    f"Subroutine flow validated for scenario {path_config.output_dir}."
+                )
+            except Exception as e:
+                logging.error(
+                    f"Subroutine flow validation failed for scenario {path_config.output_dir}: {e}",
+                    exc_info=True,
+                )
+                return
+        # Validate prefix against previous flow in RESUME mode
+        flow_resume_idx = -1
+        if run_mode == RunMode.RESUME:
+            try:
+                flow_resume_idx = validator.validate_subroutine_flow_prefix(
+                    DynamicDataObject.from_obj(prev_flow),
+                    DynamicDataObject.from_obj(subroutine_flow_obj),
+                )
+                logging.info(
+                    f"Resume prefix validated for scenario {path_config.output_dir}; flow resume index={flow_resume_idx}"
+                )
+            except Exception as e:
+                logging.error(
+                    f"Resume validation failed for scenario {path_config.output_dir}: {e}",
+                    exc_info=True,
+                )
+                return
+        scenario_config_dict = {
+            "subroutine_flow": DynamicDataObject.from_obj(subroutine_flow_obj),
+            "stopping_criteria": StoppingCriteria(stopping_criteria_dict),
+            "output_subdir": path_config.output_dir,
+            "description": path_config.description,
+        }
+        if run_mode == RunMode.RESUME:
+            # In RESUME mode, also provide flow_resume_idx
+            scenario_config_dict["flow_resume_idx"] = flow_resume_idx
+        scenario_configs.append(scenario_config_dict)
+
+    # --- Base output metadata ---
+    base_output_metadata = config.model_dump(
+        include={
+            "result_dir_name",
+            "draw_gantt",
+            "painter_thread_cnt",
+            "result_gantt_filename_format",
+            "draw_progress_plot",
+            "progress_plot_filename_format",
+            "drop_first_values_percent",
+        }
+    )
+    base_output_metadata["start_dt"] = e_timer.start_dt
+    # Provide filename formats
+    base_output_metadata["summary_fn_format"] = OutputFilenames.SUMMARY_FN_FORMAT
+    base_output_metadata["solution_fn_format"] = OutputFilenames.SOLUTION_FN_FORMAT
+    base_output_metadata["obj_log_fn_format"] = OutputFilenames.OBJ_LOG_FN_FORMAT
+    # If running in RESUME mode, include resume info for runners to locate previous artifacts
+    if run_mode == RunMode.RESUME:
+        # Provide resume_root and resume_timestamp so runners can find per-instance files
+        base_output_metadata["resume_root"] = str(resume_dir)
+        # Try to extract timestamp from resume_dir name if possible
+        if resume_dir is not None:
+            base_output_metadata["resume_timestamp"] = resume_dir.name
+        else:
+            base_output_metadata["resume_timestamp"] = None
+    # ask runners to be strict by default when resuming
+    base_output_metadata["resume_strict"] = True
+
+    # --- Create and run the multi-scenario runner ---
+    multi_scenario_runner = FsMultiScenarioRunner(
+        m_i_runner_class=FsMultiInstanceRunner,
+        s_i_runner_class=FsSingleInstanceRunner,
+        instances=instances,
+        shared_param_dict=vrm_common_params_dict,
+        scenario_configs=scenario_configs,
+        output_dir=base_output_dir_path,
+        base_output_metadata=base_output_metadata,
+        mode=run_mode,
+        instance_worker_cnt=config.instance_worker_cnt,
+    )
+    multi_scenario_runner.set_baseline_df(
+        config.baseline_csv_path, config.baseline_column_mapping
+    )
+    logging.info("Starting HFS Multi-Scenario Runner.")
+    multi_scenario_runner.run()
+
+    logging.info(
+        "Finished HFS Multi-Scenario Runner. "
+        f"Total elapsed time: {e_timer.get_formatted_elapsed_time()} seconds."
+    )
+    release_log_handlers(log_handlers)
+
+
+# Helper methods
+
+
+def read_yaml(path: Path) -> Any:
+    try:
+        return yaml.safe_load(path.read_text())
+    except Exception as e:
+        raise RuntimeError(f"Error reading YAML from {path}: {e}")
+
+
+def determine_run_mode_and_base_dir(
+    config: MainMetadata, e_timer: ElapsedTimer
+) -> tuple[RunMode, Path, DynamicDataObject | None, Path | None]:
+    """Determine run mode and base output directory.
+
+    Args:
+        config (MainMetadata): The main metadata configuration.
+        e_timer (ElapsedTimer): The elapsed timer for tracking execution time.
+
+    Raises:
+        FileNotFoundError: If the specified resume or analysis directory does not exist.
+
+    Returns:
+        tuple[RunMode, Path, DynamicDataObject | None, Path | None]: prev_flow and resume_dir are None
+            unless RESUME mode is selected.
+    """
+    run_mode = RunMode.FULL_RUN
+    prev_flow = None
+    _target_path = None
+
+    def new_ts_dir():
+        return init_timestamped_working_dir(
+            base_output_dir=config.output_dir_scenarios, e_timer=e_timer
+        )
+
+    _target_path = config.get_analysis_dir_path()
+    _timestamp = config.analysis_timestamp
+    if _target_path:
+        _timestamp = _target_path.name
+        if not _target_path.exists() or not _target_path.is_dir():
+            raise FileNotFoundError(f"Analysis directory not found: {_target_path}")
+        run_mode = RunMode.POST_PROCESS_ONLY
+        base_output = _target_path
+        e_timer.set_start_dt_from_dir_name(_timestamp)
+        config.analysis_timestamp = _timestamp
+    elif _timestamp:
+        _target_path = config.output_dir_scenarios / _timestamp
+        if not _target_path.exists() or not _target_path.is_dir():
+            raise FileNotFoundError(f"Analysis directory not found: {_target_path}")
+        run_mode = RunMode.POST_PROCESS_ONLY
+        base_output = _target_path
+        e_timer.set_start_dt_from_dir_name(_timestamp)
+    elif config.resume_dir_path:
+        _target_path = Path(config.resume_dir_path)
+        if not _target_path.exists() or not _target_path.is_dir():
+            raise FileNotFoundError(f"Resume directory not found: {_target_path}")
+        # attempt to load prev_flow; propagate errors to caller
+        prev_flow = DynamicDataObject.from_yaml(
+            _target_path / OutputFilenames.SUBROUTINE_FLOW_CACHE_FN
+        )
+        run_mode = RunMode.RESUME
+        logging.info(f"Running in RESUME mode using resume dir: {_target_path}")
+        base_output = new_ts_dir()
+    else:
+        base_output = new_ts_dir()
+
+    return run_mode, base_output, prev_flow, _target_path
+
+
+def add_file_handler(
+    log_path: Path,
+    level=logging.INFO,
+    fmt="%(asctime)s - %(levelname)s - %(message)s",
+) -> list[logging.Handler]:
+    """
+    Set the dual handler for logging.
+    This function configures the logging to handle both console and file outputs.
+    """
+    logger = logging.getLogger()
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename == str(
+            log_path
+        ):
+            return []
+
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setLevel(level)
+    file_handler.setFormatter(logging.Formatter(fmt))
+    logger.addHandler(file_handler)
+
+    return [file_handler]
+
+
+def release_log_handlers(handlers: list[logging.Handler]) -> None:
+    """
+    Reset the log handlers to avoid duplicate logs.
+    This function clears all existing log handlers.
+    """
+    logger = logging.getLogger()
+    for handler in handlers:
+        logger.removeHandler(handler)
+        handler.close()
+
+
+def load_list_of_instances(
+    input_dir_path: Path, benchmark_filenames: list[str]
+) -> list[FlowshopDuedateParameters]:
+    """Load a list of flow shop due date problem instances from the specified directory.
+
+    Args:
+        input_dir_path (Path): Path to the directory containing benchmark files.
+        benchmark_filenames (list[str]): List of benchmark filenames to load.
+
+    Returns:
+        list[FlowshopDuedateParameters]: List of loaded flow shop due date problem instances.
+    """
+    instances = []
+    for benchmark_filename in benchmark_filenames:
+        input_file_path = input_dir_path / benchmark_filename
+        instances.append(load_fs_instance(input_file_path))
+    return instances
+
+
+def load_fs_instance(file_path: Path) -> FlowshopDuedateParameters:
+    try:
+        ins_name = file_path.stem
+        with open(file_path, "r") as f:
+            return FlowshopDuedateParameters.from_vrm_data(ins_name, f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Benchmark file not found: {file_path}")
+    except Exception as e:
+        raise RuntimeError(f"Error reading benchmark file {file_path}: {e}")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    import sys
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+    main()
