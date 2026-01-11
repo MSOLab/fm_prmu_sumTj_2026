@@ -14,6 +14,8 @@ from schore.schedule_examples.shop.flow import FlowshopSchedule
 from flowshop_tardiness.cpsat_model_2.position import BaseModelBuilder, Params, Vars
 from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite
 
+# TODO: add tests for this module
+
 
 class PwCpContext(Protocol):
     """
@@ -400,36 +402,6 @@ class PwCpConstructor:
 
         job_seq: list[str] = [subjob_id_list[idx] for idx in phase1_pi]
 
-        # TODO: uncomment only for debugging
-        # logging.info(phase1_pi)
-        # sub_sched = PermutationFlowshopScheduleLite(
-        #     self.stage_ids,
-        #     job_2_stage_2_p_map=self.job_2_stage_2_p_dict,
-        #     job_2_due_map=self.instance.job_2_duedate_map,
-        # )
-        # Pi1_job_seq = []
-        # for j in phase1_pi:
-        #     Pi1_job_seq.append(subjob_id_list[j])
-        # logging.info(Pi1_job_seq)
-        # sub_sched.extend_jobs(Pi1_job_seq, stage_2_est_map=stage_2_est_map)
-        # best_T_simulated = sub_sched.get_total_tardiness()
-        # if sumTj_offset is not None and sumTj_offset > 0:
-        #     best_T_simulated += sumTj_offset
-        #     logging.info(
-        #         "Simulated total tardiness = %d (%d + %d)",
-        #         best_T_simulated,
-        #         best_T_simulated - sumTj_offset,
-        #         sumTj_offset,
-        #     )
-        # else:
-        #     logging.info("Simulated total tardiness = %d", best_T_simulated)
-        # if best_T_simulated != best_T_solver:
-        #     logging.warning(
-        #         "Discrepancy in total tardiness between CP solver (%d) and simulation (%d).",
-        #         best_T_solver,
-        #         best_T_simulated,
-        #     )
-
         if all_jobs_are_included:
             logging.info("All jobs are included; skip phase 2.")
             return report1, job_seq
@@ -573,7 +545,9 @@ class PwCpConstructor:
                     f"_{job_subset_cnt}_batch_disp_solution.yaml"
                 )
                 self.save_schedule_lite_to_yaml(st.last_solution, batch_sol_output_path)
-                logging.info("Saved batch-dispatched solution to: %s", batch_sol_output_path)
+                logging.info(
+                    "Saved batch-dispatched solution to: %s", batch_sol_output_path
+                )
 
             self._log_snapshot(
                 st.last_solution,
