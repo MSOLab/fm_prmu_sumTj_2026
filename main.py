@@ -196,11 +196,11 @@ def main():
     multi_scenario_runner.set_baseline_df(
         config.baseline_csv_path, config.baseline_column_mapping
     )
-    logging.info("Starting HFS Multi-Scenario Runner.")
+    logging.info("Starting Multi-Scenario Runner.")
     multi_scenario_runner.run()
 
     logging.info(
-        "Finished HFS Multi-Scenario Runner. "
+        "Finished Multi-Scenario Runner. "
         f"Total elapsed time: {e_timer.get_formatted_elapsed_time()} seconds."
     )
     release_log_handlers(log_handlers)

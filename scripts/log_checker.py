@@ -1,4 +1,4 @@
-"""uv run log_checker.py ../Outputs_scenarios/20250923T032521_206759/hfs_multi_scenario_runner.log -o matches.txt"""
+"""uv run log_checker.py ../Outputs_scenarios/20250923T032521_206759/multi_scenario_runner.log -o matches.txt"""
 
 import argparse
 import re
