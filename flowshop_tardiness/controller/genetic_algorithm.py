@@ -36,6 +36,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
     # Start subalgorithm definition
 
     def ga_edd(self, pop_size: int, cross_size: int, mut_size: int):
+        _cross_cnt = int(cross_size / 2)  # two children per crossover
         # Initialize population manager
         self.population_manager = PopulationManager(pop_size, timer=self.timer)
         pop_mgr = self.population_manager
@@ -45,52 +46,64 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         self._initialize_population()
         self._log_best_fitness_to_obj_store("1st")
         pop_mgr.generation = 1
+        record = pop_mgr.get_last_trajectory_record()
+        if record is None:
+            raise RuntimeError("No trajectory record found after initialization.")
+        logging.info(
+            f"Gen {record.generation} at {record.timestamp:.2f}: "
+            f"Best obj (sumTj) = {record.obj_value} by {record.source}"
+        )
 
+        time_over = self.time_is_up()
         # Start main loop
-        while not self.time_is_up():
+        while not time_over:
             pop_mgr.generation += 1
 
             # Crossover
             if len(pop_mgr._population) >= 2:
-                for _ in range(cross_size):
+                for _ in range(_cross_cnt):
                     # Select two parents
                     parent_sols = random.sample(list(pop_mgr._population.keys()), 2)
                     sol1 = parent_sols[0]
                     sol2 = parent_sols[1]
 
-                    # One-point crossover (X1)
-                    child_sol1, child_sol2 = self._crossover_one_point(sol1, sol2)
+                    cross_type = random.choice(["X1", "LOX"])
+                    if cross_type == "X1":
+                        # One-point crossover (X1)
+                        child_sol1, child_sol2 = self._crossover_one_point(sol1, sol2)
 
-                    # Optional sanity checks (can be commented out for performance)
-                    # assert set(child_sol1) == job_set, (
-                    #     "Invalid child solution generated."
-                    # )
-                    # assert set(child_sol2) == job_set, (
-                    #     "Invalid child solution generated."
-                    # )
-                    # assert len(set(child_sol1)) == len(child_sol1), (
-                    #     "Duplicate jobs in child solution."
-                    # )
-                    # assert len(set(child_sol2)) == len(child_sol2), (
-                    #     "Duplicate jobs in child solution."
-                    # )
+                        # Optional sanity checks (can be commented out for performance)
+                        # assert set(child_sol1) == job_set, (
+                        #     "Invalid child solution generated."
+                        # )
+                        # assert set(child_sol2) == job_set, (
+                        #     "Invalid child solution generated."
+                        # )
+                        # assert len(set(child_sol1)) == len(child_sol1), (
+                        #     "Duplicate jobs in child solution."
+                        # )
+                        # assert len(set(child_sol2)) == len(child_sol2), (
+                        #     "Duplicate jobs in child solution."
+                        # )
+                    else:
+                        # Linear order crossover (LOX)
+                        child_sol1, child_sol2 = self._crossover_linear_order(
+                            sol1, sol2
+                        )
 
-                    # Linear order crossover (LOX)
-                    child_sol3, child_sol4 = self._crossover_linear_order(sol1, sol2)
-
-                    # Optional sanity checks (can be commented out for performance)
-                    # assert set(child_sol3) == job_set, (
-                    #     "Invalid child solution generated."
-                    # )
-                    # assert set(child_sol4) == job_set, (
-                    #     "Invalid child solution generated."
-                    # )
-                    # assert len(set(child_sol3)) == len(child_sol3), (
-                    #     "Duplicate jobs in child solution."
-                    # )
-                    # assert len(set(child_sol4)) == len(child_sol4), (
-                    #     "Duplicate jobs in child solution."
-                    # )
+                        # Optional sanity checks (can be commented out for performance)
+                        # assert set(child_sol1) == job_set, (
+                        #     "Invalid child solution generated."
+                        # )
+                        # assert set(child_sol2) == job_set, (
+                        #     "Invalid child solution generated."
+                        # )
+                        # assert len(set(child_sol1)) == len(child_sol1), (
+                        #     "Duplicate jobs in child solution."
+                        # )
+                        # assert len(set(child_sol2)) == len(child_sol2), (
+                        #     "Duplicate jobs in child solution."
+                        # )
 
                     pop_mgr.add_individual(
                         child_sol1, self._evaluate(child_sol1), source="X1"
@@ -98,15 +111,21 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     pop_mgr.add_individual(
                         child_sol2, self._evaluate(child_sol2), source="X1"
                     )
-                    pop_mgr.add_individual(
-                        child_sol3, self._evaluate(child_sol3), source="LOX"
-                    )
-                    pop_mgr.add_individual(
-                        child_sol4, self._evaluate(child_sol4), source="LOX"
-                    )
-                    if self.time_is_up():
-                        self._log_best_fitness_to_obj_store("TIME UP")
+                    time_over = self.time_is_up()
+                    if time_over:
                         break
+
+            if time_over:
+                updated = self._log_best_fitness_to_obj_store("TIME UP")
+                if updated:
+                    record = pop_mgr.get_last_trajectory_record()
+                    if record is None:
+                        raise RuntimeError("No trajectory record found after update.")
+                    logging.info(
+                        f"Gen {record.generation} at {record.timestamp:.2f}: "
+                        f"Best obj (sumTj) = {record.obj_value} by {record.source}"
+                    )
+                break
 
             # Mutation
             for _ in range(mut_size):
@@ -126,18 +145,47 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
 
                 child_fitness = self._evaluate(child_sol)
                 pop_mgr.add_individual(child_sol, child_fitness, source=mutation_type)
-                if self.time_is_up():
-                    self._log_best_fitness_to_obj_store("TIME UP")
+                time_over = self.time_is_up()
+                if time_over:
                     break
+
+            if time_over:
+                updated = self._log_best_fitness_to_obj_store("TIME UP")
+                if updated:
+                    record = pop_mgr.get_last_trajectory_record()
+                    if record is None:
+                        raise RuntimeError("No trajectory record found after update.")
+                    logging.info(
+                        f"Gen {record.generation} at {record.timestamp:.2f}: "
+                        f"Best obj (sumTj) = {record.obj_value} by {record.source}"
+                    )
+                break
 
             # Elitist replacement
             pop_mgr.elitist_replace()
-            self._log_best_fitness_to_obj_store(str(pop_mgr.generation))
+            updated = self._log_best_fitness_to_obj_store(str(pop_mgr.generation))
+            if updated:
+                record = pop_mgr.get_last_trajectory_record()
+                if record is None:
+                    raise RuntimeError("No trajectory record found after update.")
+                logging.info(
+                    f"Gen {record.generation} at {record.timestamp:.2f}: "
+                    f"Best obj (sumTj) = {record.obj_value} by {record.source}"
+                )
+
+            # Check time limit for next generation
+            time_over = self.time_is_up()
 
         # Wrap up
         # Update objective store
         timestamp_obj_value_list = pop_mgr.get_best_obj_series()
         for timestamp, obj_value in timestamp_obj_value_list:
+            last_obj_value = self.obj_store.get_last_obj_value()
+            if last_obj_value is None or obj_value < last_obj_value:
+                logging.info(
+                    f"Gen {record.generation} at {record.timestamp:.2f}: "
+                    f"Best obj (sumTj) = {record.obj_value} by {record.source}"
+                )
             self.obj_store.add_obj_value(
                 timestamp=timestamp,
                 value=obj_value,
@@ -338,18 +386,29 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
 
     # Start logging helper methods
 
-    def _log_best_fitness_to_obj_store(self, timestamp_note: str) -> None:
+    def _log_best_fitness_to_obj_store(self, timestamp_note: str) -> bool:
+        """Log the best fitness in the population manager to the objective store.
+
+        Args:
+            timestamp_note (str): Note to associate with the timestamp in the objective store.
+
+        Returns:
+            bool: True if the best fitness was updated, False otherwise.
+        """
+        return_val = False
+
         log_time = self.timer.elapsed_sec
         obj_value = self.population_manager.get_best_fitness()
         if obj_value is not None:
+            last_obj_value = self.obj_store.get_last_obj_value()
+            if last_obj_value is None or obj_value < last_obj_value:
+                return_val = True
             self.obj_store.add_obj_value(log_time, obj_value, is_maximize=False)
             self.obj_store.add_last_timestamp_note(
                 timestamp_note,
                 obj_value_is_valid=True,
             )
-            logging.info(
-                f"Gen {self.population_manager.generation}: Best obj (sumTj) = {obj_value}"
-            )
+        return return_val
 
     def _dispatch_permutation(self, job_sequence: list[str]) -> FlowshopSchedule:
         """Create a permutation flow shop schedule by serial dispatch."""

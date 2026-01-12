@@ -22,6 +22,11 @@ class PopulationManager:
     def get_best_fitness(self) -> float | None:
         return self.best_fitness
 
+    def get_last_trajectory_record(self) -> TrajectoryRecord | None:
+        if not self._trajectory:
+            return None
+        return self._trajectory[-1]
+
     def get_best_obj_series(self) -> list[tuple[float, float]]:
         return [(record.timestamp, record.obj_value) for record in self._trajectory]
 
