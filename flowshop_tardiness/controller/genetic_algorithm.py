@@ -74,7 +74,6 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     if cross_type == "X1":
                         # One-point crossover (X1)
                         child_sol1, child_sol2 = self._crossover_one_point(sol1, sol2)
-
                         # Optional sanity checks (can be commented out for performance)
                         # assert set(child_sol1) == job_set, (
                         #     "Invalid child solution generated."
@@ -93,7 +92,6 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                         child_sol1, child_sol2 = self._crossover_linear_order(
                             sol1, sol2
                         )
-
                         # Optional sanity checks (can be commented out for performance)
                         # assert set(child_sol1) == job_set, (
                         #     "Invalid child solution generated."
@@ -109,10 +107,10 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                         # )
 
                     pop_mgr.add_individual(
-                        child_sol1, self._evaluate(child_sol1), source="X1"
+                        child_sol1, self._evaluate(child_sol1), source=cross_type
                     )
                     pop_mgr.add_individual(
-                        child_sol2, self._evaluate(child_sol2), source="X1"
+                        child_sol2, self._evaluate(child_sol2), source=cross_type
                     )
                     time_over = self.time_is_up()
                     if time_over:
@@ -326,6 +324,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         fill_jobs1 = [
             j for j in parent_b if j not in used_mid1
         ]  # A1 \cup A3 in order of B
+        # Optional sanity check (can be commented out for performance)
         # if len(fill_jobs1) != len(outside_positions):
         #     raise RuntimeError("LOX internal error for O1 (size mismatch).")
 
@@ -343,6 +342,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         fill_jobs2 = [
             j for j in parent_a if j not in used_mid2
         ]  # B1 \cup B3 in order of A
+        # Optional sanity check (can be commented out for performance)
         # if len(fill_jobs2) != len(outside_positions):
         #     raise RuntimeError("LOX internal error for O2 (size mismatch).")
 
