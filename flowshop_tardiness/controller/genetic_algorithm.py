@@ -58,12 +58,15 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         # Start main loop
         while not time_over:
             pop_mgr.generation += 1
+            P_prev = pop_mgr.get_this_population_list()
+            if not P_prev:
+                raise RuntimeError("Population is empty, cannot proceed with GA.")
 
             # Crossover
-            if len(pop_mgr._population) >= 2:
+            if len(P_prev) >= 2:
                 for _ in range(_cross_cnt):
                     # Select two parents
-                    parent_sols = random.sample(list(pop_mgr._population.keys()), 2)
+                    parent_sols = random.sample(P_prev, 2)
                     sol1 = parent_sols[0]
                     sol2 = parent_sols[1]
 
@@ -128,38 +131,40 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                 break
 
             # Mutation
-            for _ in range(mut_size):
-                if not pop_mgr._population:
-                    raise RuntimeError("Population is empty, cannot perform mutation.")
-                parent_sol = random.choice(list(pop_mgr._population.keys()))
-                mutation_type = random.choice(
-                    [
-                        "FI",
-                        "BI",
-                    ]
-                )
-                if mutation_type == "FI":
-                    child_sol = self._mutate_forward_insertion(parent_sol)
-                else:  # backward_insertion
-                    child_sol = self._mutate_backward_insertion(parent_sol)
-
-                child_fitness = self._evaluate(child_sol)
-                pop_mgr.add_individual(child_sol, child_fitness, source=mutation_type)
-                time_over = self.time_is_up()
-                if time_over:
-                    break
-
-            if time_over:
-                updated = self._log_best_fitness_to_obj_store("TIME UP")
-                if updated:
-                    record = pop_mgr.get_last_trajectory_record()
-                    if record is None:
-                        raise RuntimeError("No trajectory record found after update.")
-                    logging.info(
-                        f"Gen {record.generation} at {record.timestamp:.2f}: "
-                        f"Best obj (sumTj) = {record.obj_value} by {record.source}"
+            if P_prev:
+                for _ in range(mut_size):
+                    parent_sol = random.choice(P_prev)
+                    mutation_type = random.choice(
+                        [
+                            "FI",
+                            "BI",
+                        ]
                     )
-                break
+                    if mutation_type == "FI":
+                        child_sol = self._mutate_forward_insertion(parent_sol)
+                    else:  # backward_insertion
+                        child_sol = self._mutate_backward_insertion(parent_sol)
+
+                    pop_mgr.add_individual(
+                        child_sol, self._evaluate(child_sol), source=mutation_type
+                    )
+                    time_over = self.time_is_up()
+                    if time_over:
+                        break
+
+                if time_over:
+                    updated = self._log_best_fitness_to_obj_store("TIME UP")
+                    if updated:
+                        record = pop_mgr.get_last_trajectory_record()
+                        if record is None:
+                            raise RuntimeError(
+                                "No trajectory record found after update."
+                            )
+                        logging.info(
+                            f"Gen {record.generation} at {record.timestamp:.2f}: "
+                            f"Best obj (sumTj) = {record.obj_value} by {record.source}"
+                        )
+                    break
 
             # Elitist replacement
             pop_mgr.elitist_replace()

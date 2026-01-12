@@ -16,6 +16,9 @@ class PopulationManager:
 
     # Start getters
 
+    def get_this_population_list(self) -> list[tuple[str, ...]]:
+        return list(self._population.keys())
+
     def get_best_solution(self) -> tuple[str, ...] | None:
         return self.best_sol
 
