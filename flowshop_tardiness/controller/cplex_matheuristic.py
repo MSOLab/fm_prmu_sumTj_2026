@@ -95,6 +95,7 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
         self,
         job_subsequence: list[str] | None = None,
         stage_eat_dict: dict[str, int] | None = None,
+        alpha: float | None = None,
         computational_time: float | None = None,
         solver_thread_cnt: int = 1,
         mip_gap: float | None = None,
@@ -128,7 +129,7 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
         else:
             stage_eat_list = None
         builder = TBB2018MilpModelBuilder(
-            data, stage_eat_list=stage_eat_list, model_name="milp_subseq"
+            data, stage_eat_list=stage_eat_list, alpha=alpha, model_name="milp_subseq"
         )
         timelimit: float = self.get_remaining_time_limit(computational_time)
 
@@ -373,19 +374,20 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
         # Paper-style outer loop: while TimeLimMH and improved
         # (논문은 improved 플래그로 반복; 여기서는 time limit 안에서 local improvement가 없으면 종료)
         while not is_timeover:
-            logging.info(f"MHX1: starting outer loop iteration {loop_cnt+1}")
+            logging.info(f"MHX1: starting outer loop iteration {loop_cnt + 1}")
             # 논문은 R=1..n-H (1-index) 반복, 그리고 여러 번 R=1로 돌아가는 구조 언급
             # 여기서는 time limit 내에서 한 번 sweep 후, 개선 있으면 다시 sweep
             R = 0
             while R <= n - H:
+                # If R > n - H, end sweep
                 if self.get_remaining_time_limit(None) <= 0:
                     is_timeover = True
                     break
                 # logging.info(f"MHX1: processing window starting at R={R+1} / {n - H + 1}")
 
-                A = incumbent_seq[:R]
-                X = incumbent_seq[R : R + H]
-                B = incumbent_seq[R + H :]
+                A = incumbent_seq[:R]  # First R jobs
+                X = incumbent_seq[R : R + H]  # Next H jobs (window)
+                B = incumbent_seq[R + H :]  # Remaining jobs
 
                 # --------------------
                 # 1) Improve A with neighborhoods (no EAT)
@@ -406,6 +408,7 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
                 rep_x, sched_x = self._solve_milp(
                     job_subsequence=X,
                     stage_eat_dict=stage_eat_A,
+                    alpha=alpha,
                     computational_time=None,
                     solver_thread_cnt=solver_thread_cnt,
                     mip_gap=None,
@@ -479,12 +482,10 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
                 # Paper-style R update rule
                 # If improved, jump ahead by (H-1) when allowed, then always R += 1
                 if improved_this_R:
-                    # 0-indexed translation of the paper's condition:
-                    # if (R + H) <= (n - H) then R <- R + H - 1
                     if (R + H) <= (n - H):
-                        R = R + H - 1
-
-                R += 1
+                        R = R + H
+                else:
+                    R += 1
 
             # end sweep over R
             loop_cnt += 1

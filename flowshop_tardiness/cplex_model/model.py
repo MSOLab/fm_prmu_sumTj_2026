@@ -75,11 +75,13 @@ class TBB2018MilpModelBuilder:
         self,
         data: TBB2018Data,
         stage_eat_list: list[int] | None = None,
+        alpha: float | None = None,
         model_name: str = "tbb_2018_milp",
     ):
         data.validate()
         self.data: TBB2018Data = data
         self.stage_eat_list: list[int] | None = stage_eat_list
+        self.alpha: float | None = alpha
         self.model_name: str = model_name
 
     def build(
@@ -138,8 +140,19 @@ class TBB2018MilpModelBuilder:
 
         vars_ = TBB2018Vars(x=x, C=C, T=T)
 
-        # ---- objective (1): min sum_k T_k ----
-        mdl.minimize(mdl.sum(T[k] for k in range(n)))
+        # ---- (1) objective ----
+        # If alpha is none, min sum_k T_k
+        # If 0 < alpha <= 1, min alpha * sum_k T_k + (1 - alpha) * makespan
+        if self.alpha is None:
+            mdl.minimize(mdl.sum(T[k] for k in range(n)))
+        else:
+            if not (0.0 < self.alpha <= 1.0):
+                raise ValueError("alpha must be in (0,1] if provided.")
+            makespan_expr = C[m - 1, n - 1]
+            mdl.minimize(
+                self.alpha * mdl.sum(T[k] for k in range(n))
+                + (1.0 - self.alpha) * makespan_expr
+            )
 
         # ---- constraints ----
         # (2) sum_k x_{j,k} = 1  for all j
