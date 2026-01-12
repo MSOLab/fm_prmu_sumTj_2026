@@ -15,8 +15,8 @@ from xlsxwriter.worksheet import Worksheet
 
 from fs_config import BaselineColumnMapping
 from output_filenames import OutputFilenames
-from tbb_2018_multi_instance import FsMultiInstanceRunner
-from tbb_2018_single_instance import FsSingleInstanceRunner
+from tbb_2018_mhx1_multi_instance import FsMultiInstanceRunner
+from tbb_2018_mhx1_single_instance import FsSingleInstanceRunner
 
 
 class FsMultiScenarioRunner(
@@ -690,5 +690,5 @@ if __name__ == "__main__":
         repo_root / "resources/vrm_ref/2023IJoC.csv",
         BaselineColumnMapping(instance="Instance", obj_val="BKS", obj_bound="LB"),
     )
-    logging.info("Starting HFS Multi-Scenario Runner.")
+    logging.info("Starting Multi-Scenario Runner.")
     multi_scenario_runner.run()

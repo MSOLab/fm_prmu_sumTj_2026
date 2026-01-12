@@ -10,7 +10,7 @@ from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
 from flowshop_tardiness.io_solution import get_end_time_dict, get_start_time_dict
 from scripts.process_logs import process_scenario
-from tbb_2018_single_instance import FsSingleInstanceRunner
+from tbb_2018_mhx1_single_instance import FsSingleInstanceRunner
 
 
 class FsMultiInstanceRunner(

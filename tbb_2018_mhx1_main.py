@@ -21,11 +21,11 @@ from flowshop_tardiness.controller.cplex_matheuristic import (
 )
 from fs_config import MainMetadata
 from output_filenames import OutputFilenames
-from tbb_2018_multi_instance import FsMultiInstanceRunner
-from tbb_2018_multi_scenario import FsMultiScenarioRunner
-from tbb_2018_single_instance import FsSingleInstanceRunner
+from tbb_2018_mhx1_multi_instance import FsMultiInstanceRunner
+from tbb_2018_mhx1_multi_scenario import FsMultiScenarioRunner
+from tbb_2018_mhx1_single_instance import FsSingleInstanceRunner
 
-MAIN_METADATA_FILENAME = "tbb_2018_metadata.yaml"
+MAIN_METADATA_FILENAME = "tbb_2018_mhx1_metadata.yaml"
 
 
 def main():
@@ -200,11 +200,11 @@ def main():
     multi_scenario_runner.set_baseline_df(
         config.baseline_csv_path, config.baseline_column_mapping
     )
-    logging.info("Starting HFS Multi-Scenario Runner.")
+    logging.info("Starting Multi-Scenario Runner.")
     multi_scenario_runner.run()
 
     logging.info(
-        "Finished HFS Multi-Scenario Runner. "
+        "Finished Multi-Scenario Runner. "
         f"Total elapsed time: {e_timer.get_formatted_elapsed_time()} seconds."
     )
     release_log_handlers(log_handlers)
