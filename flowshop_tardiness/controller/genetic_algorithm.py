@@ -135,6 +135,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     break
                 is_optimal = this_obj_value == 0
                 if is_optimal:
+                    last_obj_value = this_obj_value
                     logging.info("GA-EDD: reached optimal solution (obj=0).")
                     break
 
@@ -177,6 +178,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     break
                 is_optimal = this_obj_value == 0
                 if is_optimal:
+                    last_obj_value = this_obj_value
                     logging.info("GA-EDD: reached optimal solution (obj=0).")
                     break
 
@@ -197,6 +199,9 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
 
             # Check time limit for next generation
             is_timeover = self.time_is_up()
+            is_optimal = last_obj_value == 0
+            if is_optimal:
+                logging.info("GA-EDD: reached optimal solution (obj=0).")
 
         # Wrap up
         if last_obj_value is not None:
