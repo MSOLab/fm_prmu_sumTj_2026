@@ -44,7 +44,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
 
         # Initialize population
         self._initialize_population()
-        self._log_best_fitness_to_obj_store("1st")
+        # self._log_best_fitness_to_obj_store("1st")
         pop_mgr.generation = 1
         record = pop_mgr.get_last_trajectory_record()
         if record is None:
@@ -53,6 +53,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             f"Gen {record.generation} at {record.timestamp:.2f}: "
             f"Best obj (sumTj) = {record.obj_value} by {record.source}"
         )
+        last_obj_value = record.obj_value
 
         time_over = self.time_is_up()
         # Start main loop
@@ -65,6 +66,9 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             # Crossover
             if len(P_prev) >= 2:
                 for _ in range(_cross_cnt):
+                    time_over = self.time_is_up()
+                    if time_over:
+                        break
                     # Select two parents
                     parent_sols = random.sample(P_prev, 2)
                     sol1 = parent_sols[0]
@@ -112,25 +116,29 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     pop_mgr.add_individual(
                         child_sol2, self._evaluate(child_sol2), source=cross_type
                     )
-                    time_over = self.time_is_up()
-                    if time_over:
-                        break
 
-            if time_over:
-                updated = self._log_best_fitness_to_obj_store("TIME UP")
-                if updated:
-                    record = pop_mgr.get_last_trajectory_record()
-                    if record is None:
-                        raise RuntimeError("No trajectory record found after update.")
-                    logging.info(
-                        f"Gen {record.generation} at {record.timestamp:.2f}: "
-                        f"Best obj (sumTj) = {record.obj_value} by {record.source}"
-                    )
-                break
+                this_obj_value = pop_mgr.get_best_fitness()
+                if time_over:
+                    # updated = self._log_best_fitness_to_obj_store("TIME UP")
+                    if last_obj_value != this_obj_value:
+                        record = pop_mgr.get_last_trajectory_record()
+                        if record is None:
+                            raise RuntimeError(
+                                "No trajectory record found after update."
+                            )
+                        logging.info(
+                            f"Gen {record.generation} at {record.timestamp:.2f}: "
+                            f"Best obj (sumTj) = {record.obj_value} by {record.source}"
+                        )
+                        last_obj_value = this_obj_value
+                    break
 
             # Mutation
             if P_prev:
                 for _ in range(mut_size):
+                    time_over = self.time_is_up()
+                    if time_over:
+                        break
                     parent_sol = random.choice(P_prev)
                     mutation_type = random.choice(
                         [
@@ -146,13 +154,11 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     pop_mgr.add_individual(
                         child_sol, self._evaluate(child_sol), source=mutation_type
                     )
-                    time_over = self.time_is_up()
-                    if time_over:
-                        break
 
+                this_obj_value = pop_mgr.get_best_fitness()
                 if time_over:
-                    updated = self._log_best_fitness_to_obj_store("TIME UP")
-                    if updated:
+                    # updated = self._log_best_fitness_to_obj_store("TIME UP")
+                    if last_obj_value != this_obj_value:
                         record = pop_mgr.get_last_trajectory_record()
                         if record is None:
                             raise RuntimeError(
@@ -162,12 +168,15 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                             f"Gen {record.generation} at {record.timestamp:.2f}: "
                             f"Best obj (sumTj) = {record.obj_value} by {record.source}"
                         )
+                        last_obj_value = this_obj_value
                     break
 
             # Elitist replacement
             pop_mgr.elitist_replace()
-            updated = self._log_best_fitness_to_obj_store(str(pop_mgr.generation))
-            if updated:
+
+            # Log best fitness if improved
+            this_obj_value = pop_mgr.get_best_fitness()
+            if last_obj_value != this_obj_value:
                 record = pop_mgr.get_last_trajectory_record()
                 if record is None:
                     raise RuntimeError("No trajectory record found after update.")
@@ -175,39 +184,41 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     f"Gen {record.generation} at {record.timestamp:.2f}: "
                     f"Best obj (sumTj) = {record.obj_value} by {record.source}"
                 )
+                last_obj_value = this_obj_value
 
             # Check time limit for next generation
             time_over = self.time_is_up()
 
         # Wrap up
-        # Update objective store
-        timestamp_obj_value_list = pop_mgr.get_best_obj_series()
-        for timestamp, obj_value in timestamp_obj_value_list:
-            last_obj_value = self.obj_store.get_last_obj_value()
-            if last_obj_value is None or obj_value < last_obj_value:
-                logging.info(
-                    f"Gen {record.generation} at {record.timestamp:.2f}: "
-                    f"Best obj (sumTj) = {record.obj_value} by {record.source}"
+        if last_obj_value is not None:
+            # Update objective store
+            timestamp_obj_value_list = pop_mgr.get_best_obj_series()
+            for timestamp, obj_value in timestamp_obj_value_list:
+                self.obj_store.add_obj_value(
+                    timestamp=timestamp,
+                    value=obj_value,
+                    is_maximize=False,
                 )
-            self.obj_store.add_obj_value(
-                timestamp=timestamp,
-                value=obj_value,
-                is_maximize=False,
+            log_time = self.timer.elapsed_sec
+            self.obj_store.add_obj_value(log_time, last_obj_value, is_maximize=None)
+            _last_timestamp_note = self._get_call_context_of_current_method()
+            self.obj_store.add_last_timestamp_note(
+                _last_timestamp_note, obj_value_is_valid=True
             )
 
-        # Register final solution
-        obj_value = pop_mgr.get_best_fitness()
-        last_job_seq = pop_mgr.get_best_solution()
-        report = FsSubroutineReport(
-            elapsed_time=self.timer.elapsed_sec,
-            obj_value=obj_value,
-            obj_bound=None,
-            is_init=False,
-        )
-        if last_job_seq is None:
-            raise RuntimeError("No best solution found in population manager.")
-        last_schedule = self._dispatch_permutation(list(last_job_seq))
-        self.solution_manager.register(report, last_schedule)
+            # Register final solution
+            obj_value = pop_mgr.get_best_fitness()
+            last_job_seq = pop_mgr.get_best_solution()
+            report = FsSubroutineReport(
+                elapsed_time=self.timer.elapsed_sec,
+                obj_value=obj_value,
+                obj_bound=None,
+                is_init=False,
+            )
+            if last_job_seq is None:
+                raise RuntimeError("No best solution found in population manager.")
+            last_schedule = self._dispatch_permutation(list(last_job_seq))
+            self.solution_manager.register(report, last_schedule)
 
     # End subalgorithm definition
 
