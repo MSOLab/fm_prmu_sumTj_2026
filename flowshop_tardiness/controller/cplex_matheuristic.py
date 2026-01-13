@@ -372,13 +372,14 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
             raise ValueError(f"Invalid window_size={window_size} for n={n}")
 
         is_timeover = False
+        is_optimal = False
         loop_cnt = 0
         last_obj_value: float | None = None
         last_schedule: FlowshopSchedule | None = None
 
         # Paper-style outer loop: while TimeLimMH and improved
         # (논문은 improved 플래그로 반복; 여기서는 time limit 안에서 local improvement가 없으면 종료)
-        while not is_timeover:
+        while not (is_timeover or is_optimal):
             logging.info(f"MHX1: starting outer loop iteration {loop_cnt + 1}")
             # 논문은 R=1..n-H (1-index) 반복, 그리고 여러 번 R=1로 돌아가는 구조 언급
             # 여기서는 time limit 내에서 한 번 sweep 후, 개선 있으면 다시 sweep
@@ -473,6 +474,10 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
                         self.obj_store.add_obj_value(
                             log_time, cand_obj, is_maximize=False
                         )
+                if cand_obj == 0:
+                    is_optimal = True
+                    logging.info("MHX1: reached optimal solution (obj=0).")
+                    break
 
                 # Paper-style R update rule
                 # If improved, jump ahead by (H-1) when allowed, then always R += 1

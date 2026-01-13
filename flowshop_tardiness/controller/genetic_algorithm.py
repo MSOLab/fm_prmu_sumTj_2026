@@ -55,9 +55,10 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         )
         last_obj_value = record.obj_value
 
-        time_over = self.time_is_up()
+        is_timeover: bool = self.time_is_up()
+        is_optimal: bool = last_obj_value == 0
         # Start main loop
-        while not time_over:
+        while not (is_timeover or is_optimal):
             pop_mgr.generation += 1
             P_prev = pop_mgr.get_this_population_list()
             if not P_prev:
@@ -66,8 +67,8 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             # Crossover
             if len(P_prev) >= 2:
                 for _ in range(_cross_cnt):
-                    time_over = self.time_is_up()
-                    if time_over:
+                    is_timeover = self.time_is_up()
+                    if is_timeover:
                         break
                     # Select two parents
                     parent_sols = random.sample(P_prev, 2)
@@ -118,7 +119,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     )
 
                 this_obj_value = pop_mgr.get_best_fitness()
-                if time_over:
+                if is_timeover:
                     # updated = self._log_best_fitness_to_obj_store("TIME UP")
                     if last_obj_value != this_obj_value:
                         record = pop_mgr.get_last_trajectory_record()
@@ -132,12 +133,16 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                         )
                         last_obj_value = this_obj_value
                     break
+                is_optimal = this_obj_value == 0
+                if is_optimal:
+                    logging.info("GA-EDD: reached optimal solution (obj=0).")
+                    break
 
             # Mutation
             if P_prev:
                 for _ in range(mut_size):
-                    time_over = self.time_is_up()
-                    if time_over:
+                    is_timeover = self.time_is_up()
+                    if is_timeover:
                         break
                     parent_sol = random.choice(P_prev)
                     mutation_type = random.choice(
@@ -156,7 +161,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     )
 
                 this_obj_value = pop_mgr.get_best_fitness()
-                if time_over:
+                if is_timeover:
                     # updated = self._log_best_fitness_to_obj_store("TIME UP")
                     if last_obj_value != this_obj_value:
                         record = pop_mgr.get_last_trajectory_record()
@@ -169,6 +174,10 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                             f"Best obj (sumTj) = {record.obj_value} by {record.source}"
                         )
                         last_obj_value = this_obj_value
+                    break
+                is_optimal = this_obj_value == 0
+                if is_optimal:
+                    logging.info("GA-EDD: reached optimal solution (obj=0).")
                     break
 
             # Elitist replacement
@@ -187,7 +196,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                 last_obj_value = this_obj_value
 
             # Check time limit for next generation
-            time_over = self.time_is_up()
+            is_timeover = self.time_is_up()
 
         # Wrap up
         if last_obj_value is not None:
