@@ -4,11 +4,13 @@ import argparse
 import logging
 import random
 from pathlib import Path
-from typing import Sequence
+from typing import Iterable, Sequence
 
 from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedule
+
+from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite
 
 from ..cplex_model.model import TBB2018Data, TBB2018MilpModelBuilder
 from ..report import FsSubroutineReport
@@ -46,13 +48,12 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
 
     # Start solution <-> job permutation
 
-    def _perm_indices_from_schedule(self, schedule: FlowshopSchedule) -> list[int]:
-        """Extract permutation (job indices) from a permutation flowshop schedule."""
-        stage_2_seq = schedule.get_stage_2_job_list_map()
-        first_stage = self.instance.stage_id_list[0]
-        job_seq = stage_2_seq[first_stage]
-        job_id_to_idx = {jid: idx for idx, jid in enumerate(self.instance.job_id_list)}
-        return [job_id_to_idx[j] for j in job_seq]
+    def _evaluate(self, solution: Iterable[str]) -> int:
+        schedule = PermutationFlowshopScheduleLite(
+            self.stage_ids, self.job_2_stage_2_p_dict, self.instance.job_2_duedate_map
+        )
+        schedule.extend_jobs(solution)
+        return schedule.get_total_tardiness()
 
     def _dispatch_permutation(self, job_sequence: list[str]) -> FlowshopSchedule:
         """Create a permutation flow shop schedule by serial dispatch."""
@@ -272,11 +273,11 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
 
         # Objective time series logs (only record if improving)
         log_time = self.timer.elapsed_sec
-        self.obj_store.add_obj_value(log_time, report.obj_value, is_maximize=False)
+        self.obj_store.add_obj_value(log_time, report.obj_value, is_maximize=None)
         if report.obj_bound is not None:
             # For minimization, higher lower-bound is better
             self.obj_store.add_obj_bound(
-                log_time, float(report.obj_bound), is_maximize=False
+                log_time, float(report.obj_bound), is_maximize=None
             )
 
         self.obj_store.add_last_timestamp_note(
@@ -317,17 +318,19 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
         was_updated = self.solution_manager.register(report, schedule)
 
         if was_updated:
-            log_time = self.timer.elapsed_sec
-            self.obj_store.add_obj_value(log_time, obj_value, is_maximize=False)
-            _last_timestamp_note = self._get_call_context_of_current_method()
-            self.obj_store.add_last_timestamp_note(
-                _last_timestamp_note, obj_value_is_valid=True
-            )
             logging.info(f"New incumbent by EDD initialization: obj={obj_value}")
             if error_if_infeasible:
                 self.check_feasibility(schedule)
             if draw_gantt:
                 self.export_incumbent_to_yaml()
+
+        # Final logs
+        log_time = self.timer.elapsed_sec
+        self.obj_store.add_obj_value(log_time, obj_value, is_maximize=None)
+        _last_timestamp_note = self._get_call_context_of_current_method()
+        self.obj_store.add_last_timestamp_note(
+            _last_timestamp_note, obj_value_is_valid=True
+        )
 
     # Start MH_X1 method & helpers
 
@@ -370,6 +373,8 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
 
         is_timeover = False
         loop_cnt = 0
+        last_obj_value: float | None = None
+        last_schedule: FlowshopSchedule | None = None
 
         # Paper-style outer loop: while TimeLimMH and improved
         # (논문은 improved 플래그로 반복; 여기서는 time limit 안에서 local improvement가 없으면 종료)
@@ -441,9 +446,7 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
                 cand_seq = A + X + B
                 if len(cand_seq) != n:
                     raise RuntimeError("MHX1 internal error: sequence length mismatch.")
-
-                cand_schedule = self._dispatch_permutation(cand_seq)
-                cand_obj = self.get_obj_value(cand_schedule)
+                cand_obj = self._evaluate(cand_seq)
 
                 inc_obj = self.solution_manager.best_obj_value
                 if inc_obj is None:
@@ -453,31 +456,23 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
 
                 # strictly improve incumbent by true objective (sum tardiness)
                 if cand_obj < float(inc_obj):
+                    last_obj_value = cand_obj
+                    incumbent_seq = cand_seq
+                    improved_this_R = True
                     report = FsSubroutineReport(
                         elapsed_time=sub_timer.elapsed_sec,
                         obj_value=cand_obj,
                         obj_bound=None,
                         is_init=False,
                     )
-                    was_updated = self.solution_manager.register(report, cand_schedule)
-
+                    last_schedule = self._dispatch_permutation(cand_seq)
+                    was_updated = self.solution_manager.register(report, last_schedule)
                     if was_updated:
-                        improved_this_R = True
-                        incumbent_seq = cand_seq
-                        n = len(incumbent_seq)  # unchanged but safe
-
                         # logs
                         log_time = self.timer.elapsed_sec
                         self.obj_store.add_obj_value(
                             log_time, cand_obj, is_maximize=False
                         )
-                        self.obj_store.add_last_timestamp_note(
-                            self._get_call_context_of_current_method(),
-                            obj_value_is_valid=True,
-                        )
-
-                        if error_if_infeasible:
-                            self.check_feasibility(cand_schedule)
 
                 # Paper-style R update rule
                 # If improved, jump ahead by (H-1) when allowed, then always R += 1
@@ -491,6 +486,19 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
             loop_cnt += 1
             remaining = self.get_remaining_time_limit(None)
             is_timeover = remaining <= 0
+
+        # end outer loop
+        if error_if_infeasible:
+            self.check_feasibility(last_schedule)
+
+        # Final logs
+        if last_obj_value is not None:
+            log_time = self.timer.elapsed_sec
+            self.obj_store.add_obj_value(log_time, last_obj_value, is_maximize=None)
+            self.obj_store.add_last_timestamp_note(
+                self._get_call_context_of_current_method(),
+                obj_value_is_valid=True,
+            )
 
     # -------------------------
     # MHX1 neighborhood helpers
