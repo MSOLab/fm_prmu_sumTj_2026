@@ -91,6 +91,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             is_initial_solution (bool, optional): If True, marks this run as producing the initial solution (affects summary/logging). Defaults to False.
             draw_gantt (bool, optional): If True, draws the Gantt chart of the solution after solving. Defaults to False.
         """
+        sub_timer = ElapsedTimer()
         if self.base_cp_model_is_set:
             self.cp_model.delete_added_constraints()
         else:
@@ -140,18 +141,22 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 error_if_infeasible=True,
                 draw_gantt=draw_gantt,
             )
-        incumbent_schedule = self.solution_manager.get_incumbent()
-        if isinstance(incumbent_schedule, FlowshopSchedule):
-            obj_value = self.get_obj_value(incumbent_schedule)
 
+        # Create report and register the new solution
+        obj_value = self.obj_store.get_last_obj_value()
+        report = FsSubroutineReport(
+            elapsed_time=sub_timer.elapsed_sec,
+            obj_value=obj_value,
+            obj_bound=None,
+            is_init=True,
+        )
+        incumbent_schedule = self.solution_manager.get_incumbent()
+        if obj_value is not None and incumbent_schedule is not None:
+            _ = self.solution_manager.register(report, incumbent_schedule)
+
+            # Log
             log_time = self.timer.elapsed_sec
-            last_obj_value = self.obj_store.get_last_obj_value()
-            best_obj_value = (
-                obj_value
-                if last_obj_value is None or obj_value < last_obj_value
-                else last_obj_value
-            )
-            self.add_obj_value_log(log_time, best_obj_value, is_maximize=None)
+            self.add_obj_value_log(log_time, obj_value, is_maximize=None)
             _last_timestamp_note = self._get_call_context_of_current_method()
             self.obj_store.add_last_timestamp_note(
                 _last_timestamp_note, obj_value_is_valid=True
