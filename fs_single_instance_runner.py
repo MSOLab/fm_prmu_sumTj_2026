@@ -74,15 +74,12 @@ class FsSingleInstanceRunner(
             adjusted_timelimit = self.stopping_criteria.timelimit_n_by_m_multiplier * (
                 n * m
             )
-            if (
-                not hasattr(self.stopping_criteria, "timelimit")
-                or self.stopping_criteria.timelimit is None
-            ):
-                self.stopping_criteria.timelimit = adjusted_timelimit
-            else:
-                self.stopping_criteria.timelimit = min(
-                    self.stopping_criteria.timelimit, adjusted_timelimit
-                )
+            # Override the timelimit
+            logging.info(
+                f"Adjusting timelimit for instance '{self.name}' with n={n}, m={m}: "
+                f"new timelimit = {adjusted_timelimit} seconds."
+            )
+            self.stopping_criteria.timelimit = adjusted_timelimit
 
     # Start abstract methods
 
