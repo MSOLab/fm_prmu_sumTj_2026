@@ -1,6 +1,5 @@
 import logging
 import math
-import random
 import time
 from collections import defaultdict
 from typing import Callable, Sequence
@@ -1299,7 +1298,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 else last_obj_value
             )
             self.add_obj_value_log(log_time, best_obj_value, is_maximize=None)
-            self.add_obj_value_log(log_time, obj_value, is_maximize=None)
             _last_timestamp_note = self._get_call_context_of_current_method()
             self.obj_store.add_last_timestamp_note(
                 _last_timestamp_note, obj_value_is_valid=True
