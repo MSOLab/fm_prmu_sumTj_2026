@@ -14,8 +14,6 @@ from schore.schedule_examples.shop.flow import FlowshopSchedule
 from flowshop_tardiness.cpsat_model_2.position import BaseModelBuilder, Params, Vars
 from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite
 
-# TODO: add tests for this module
-
 
 class PwCpContext(Protocol):
     """
