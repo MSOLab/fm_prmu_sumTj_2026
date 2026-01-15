@@ -929,30 +929,3 @@ class FlowshopTardinessControllerCore(
             draw_gantt=draw_gantt,
         )
         self.cp_model.delete_added_constraints()
-
-    def _fix_job_profile_except_selected(
-        self,
-        rescheduled_jobs: set[str],
-    ) -> None:
-        """
-        Helper to add the CP model constraints that enforce precedences
-        for the profile-fixed jobs.
-
-        Args:
-            rescheduled_jobs (set[str]]): set of jobs excluded from profile-fixing
-                (i.e., they will be re-optimized).
-
-        Raises:
-            ValueError: If there is no incumbent solution.
-        """
-        incumbent_solution = self.solution_manager.get_incumbent()
-        if incumbent_solution is None:
-            raise ValueError("No incumbent solution for partial profile-fixing.")
-        current_job_seq = incumbent_solution.get_last_stage_job_list()
-        profile_fixed_job_seq = [
-            j for j in current_job_seq if j not in rescheduled_jobs
-        ]
-
-        self.cp_model.add_indirect_precedence_constraints_by_sequence(
-            profile_fixed_job_seq
-        )

@@ -135,7 +135,7 @@ def collect_rho_sequence_for_instance(instance_dir: Path) -> pd.DataFrame | None
 
     METADATA.assert_reactive_loop_report_columns(set(df.columns))
 
-    # iteration 순서대로 정렬
+    # sort rows by iteration count in ascending order
     df = df.sort_values("iterCount").reset_index(drop=True)
     return df
 

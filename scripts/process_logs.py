@@ -1,3 +1,4 @@
+import ast
 import json
 import logging
 import re
@@ -14,9 +15,11 @@ DEFAULT_RESULTS_DIR = "results"
 # Try to import constants from output_filenames
 try:
     from output_filenames import OutputFilenames
+
     OBJ_LOG_FN_FORMAT = OutputFilenames.OBJ_LOG_FN_FORMAT
 except ImportError:
     OBJ_LOG_FN_FORMAT = "{}_obj_log.yaml"
+
 
 def parse_controller_log(log_path: Path) -> list[dict]:
     records = []
@@ -31,16 +34,21 @@ def parse_controller_log(log_path: Path) -> list[dict]:
             match = pattern.search(line)
             if match:
                 try:
-                    data = eval(match.group(1))
-                    if "method" in data and "start_sec" in data and "elapsed_sec" in data:
-                        # Ensure numeric types
+                    data = ast.literal_eval(match.group(1))
+                    if (
+                        isinstance(data, dict)
+                        and "method" in data
+                        and "start_sec" in data
+                        and "elapsed_sec" in data
+                    ):
                         data["start_sec"] = float(data["start_sec"])
                         data["elapsed_sec"] = float(data["elapsed_sec"])
                         data["end_sec"] = data["start_sec"] + data["elapsed_sec"]
                         records.append(data)
-                except Exception:
+                except (ValueError, SyntaxError, TypeError):
                     continue
     return records
+
 
 def parse_obj_log(yaml_path: Path) -> dict:
     if not yaml_path.exists():
@@ -58,9 +66,16 @@ def parse_obj_log(yaml_path: Path) -> dict:
             logging.warning(f"Failed to read yaml {yaml_path}: {e}")
             return {"data": {}, "notes": {}}
 
-def get_obj_value_for_method(method_prefix: str, method_name: str, obj_data: dict, obj_notes: dict, prev_obj_value):
+
+def get_obj_value_for_method(
+    method_prefix: str,
+    method_name: str,
+    obj_data: dict,
+    obj_notes: dict,
+    prev_obj_value,
+):
     relevant_times = []
-    # Prefix match (e.g., "6-" matches "6-bd_cp")
+    # Prefix match (e.g., "6-" matches "6-pw_cp")
     for time_str, note in obj_notes.items():
         if note.startswith(method_prefix):
             relevant_times.append(time_str)
@@ -80,12 +95,17 @@ def get_obj_value_for_method(method_prefix: str, method_name: str, obj_data: dic
 
     return val
 
+
 def _is_missing_obj_value(val):
-    if val is None: return True
-    if isinstance(val, float) and (pd.isna(val) or val == float('nan')): return True
+    if val is None:
+        return True
+    if isinstance(val, float) and (pd.isna(val) or val == float("nan")):
+        return True
     s_val = str(val).strip()
-    if s_val.lower() == "nan" or s_val == "": return True
+    if s_val.lower() == "nan" or s_val == "":
+        return True
     return False
+
 
 def get_methods_from_flow(scenario_dir: Path) -> list[tuple[str, str]]:
     flow_path = scenario_dir / "subroutine_flow.yaml"
@@ -99,14 +119,15 @@ def get_methods_from_flow(scenario_dir: Path) -> list[tuple[str, str]]:
             if isinstance(flow, list):
                 methods = []
                 for i, item in enumerate(flow):
-                    prefix = f"{i+1}-"
-                    m_name = item.get('method', 'unknown')
+                    prefix = f"{i + 1}-"
+                    m_name = item.get("method", "unknown")
                     methods.append((prefix, m_name))
                 return methods
     except Exception as e:
         logging.error(f"Error parsing flow {flow_path}: {e}")
         return []
     return []
+
 
 def process_instance(instance_dir: Path, methods_list: list[tuple[str, str]]):
     instance_id = instance_dir.name
@@ -127,7 +148,9 @@ def process_instance(instance_dir: Path, methods_list: list[tuple[str, str]]):
                     method_end_times[prefix] = r["end_sec"]
                     break
 
-    obj_log_path = instance_dir / DEFAULT_RESULTS_DIR / OBJ_LOG_FN_FORMAT.format(instance_id)
+    obj_log_path = (
+        instance_dir / DEFAULT_RESULTS_DIR / OBJ_LOG_FN_FORMAT.format(instance_id)
+    )
     if not obj_log_path.exists():
         obj_log_path = instance_dir / OBJ_LOG_FN_FORMAT.format(instance_id)
 
@@ -143,7 +166,9 @@ def process_instance(instance_dir: Path, methods_list: list[tuple[str, str]]):
         in_notes = any(note.startswith(method_prefix) for note in obj_notes.values())
 
         if in_notes:
-            obj_val = get_obj_value_for_method(method_prefix, method_name, obj_data, obj_notes, current_obj_value)
+            obj_val = get_obj_value_for_method(
+                method_prefix, method_name, obj_data, obj_notes, current_obj_value
+            )
             final_end_sec = end_sec
             final_obj_val = obj_val
         else:
@@ -155,7 +180,7 @@ def process_instance(instance_dir: Path, methods_list: list[tuple[str, str]]):
                     break
 
             if not successor_in_notes:
-                final_end_sec = end_sec # Keep end_sec if it was recorded
+                final_end_sec = end_sec  # Keep end_sec if it was recorded
                 final_obj_val = None
             else:
                 final_end_sec = end_sec
@@ -164,15 +189,18 @@ def process_instance(instance_dir: Path, methods_list: list[tuple[str, str]]):
         if not _is_missing_obj_value(final_obj_val):
             current_obj_value = final_obj_val
 
-        csv_rows.append({
-            "method_name": method_name,
-            "method_end_sec": final_end_sec,
-            "objective_value": final_obj_val
-        })
+        csv_rows.append(
+            {
+                "method_name": method_name,
+                "method_end_sec": final_end_sec,
+                "objective_value": final_obj_val,
+            }
+        )
 
     df = pd.DataFrame(csv_rows)
     df.to_csv(instance_dir / "method_end_time_and_obj_value.csv", index=False)
     return df
+
 
 def process_scenario(scenario_dir: Path):
     if not scenario_dir.exists():
@@ -188,7 +216,9 @@ def process_scenario(scenario_dir: Path):
 
     summary_rows = []
 
-    instance_dirs = [p for p in scenario_dir.iterdir() if p.is_dir() and p.name.isdigit()]
+    instance_dirs = [
+        p for p in scenario_dir.iterdir() if p.is_dir() and p.name.isdigit()
+    ]
     instance_dirs.sort(key=lambda p: int(p.name))
 
     for instance_dir in instance_dirs:
@@ -218,12 +248,14 @@ def process_scenario(scenario_dir: Path):
         summary_df.to_csv(out_path, index=False)
         logging.info(f"Summary saved to: {out_path}")
 
+
 def main():
     cwd = Path.cwd()
     if (cwd / "subroutine_flow.yaml").exists():
         process_scenario(cwd)
     else:
         print("Run this script from a scenario output directory, or import it.")
+
 
 if __name__ == "__main__":
     main()

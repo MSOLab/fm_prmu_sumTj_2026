@@ -55,18 +55,8 @@ class PwCpContext(Protocol):
         log_level_obj_bound: int = logging.INFO,
     ) -> CpsatSolverReport: ...
 
-    def get_job_sequence_from_solver(self, params: Params, vars: Vars) -> list[str]: ...
-
-    # schedule build
-    def create_schedule_from_sequence(
-        self, params: Params, j_name_sequence: list[str]
-    ) -> FlowshopSchedule: ...
-
     # optional
     def set_sumTj_lower_bound(self, mdl, vars: Vars, bound: float | None) -> None: ...
-    def add_obj_value_log(self, ts: float, value: float, is_maximize=None) -> None: ...
-    @property
-    def obj_store(self): ...
     def export_solution_to_yaml(
         self,
         start_time_map: dict[tuple[str, str], int],
@@ -75,7 +65,6 @@ class PwCpContext(Protocol):
         encoding="utf-8",
     ) -> None: ...
     def get_file_path_for_subroutine(self, suffix: str): ...
-    def _get_call_context_of_current_method(self) -> str: ...
 
 
 @dataclass
@@ -370,7 +359,7 @@ class PwCpConstructor:
             )
             if not getattr(report1, "is_feasible", False):
                 logging.info("No solution from phase 1 CP; skip phase 2.")
-                return report1, []
+                return report1, subjob_id_list
 
             best_sumTj = int(ctx.solver.Value(vars1.total_tardiness))
             phase1_pi: list[int] = [
@@ -399,36 +388,6 @@ class PwCpConstructor:
             phase1_pi = init_pi_hint
 
         job_seq: list[str] = [subjob_id_list[idx] for idx in phase1_pi]
-
-        # TODO: uncomment only for debugging
-        # logging.info(phase1_pi)
-        # sub_sched = PermutationFlowshopScheduleLite(
-        #     self.stage_ids,
-        #     job_2_stage_2_p_map=self.job_2_stage_2_p_dict,
-        #     job_2_due_map=self.instance.job_2_duedate_map,
-        # )
-        # Pi1_job_seq = []
-        # for j in phase1_pi:
-        #     Pi1_job_seq.append(subjob_id_list[j])
-        # logging.info(Pi1_job_seq)
-        # sub_sched.extend_jobs(Pi1_job_seq, stage_2_est_map=stage_2_est_map)
-        # best_T_simulated = sub_sched.get_total_tardiness()
-        # if sumTj_offset is not None and sumTj_offset > 0:
-        #     best_T_simulated += sumTj_offset
-        #     logging.info(
-        #         "Simulated total tardiness = %d (%d + %d)",
-        #         best_T_simulated,
-        #         best_T_simulated - sumTj_offset,
-        #         sumTj_offset,
-        #     )
-        # else:
-        #     logging.info("Simulated total tardiness = %d", best_T_simulated)
-        # if best_T_simulated != best_T_solver:
-        #     logging.warning(
-        #         "Discrepancy in total tardiness between CP solver (%d) and simulation (%d).",
-        #         best_T_solver,
-        #         best_T_simulated,
-        #     )
 
         if all_jobs_are_included:
             logging.info("All jobs are included; skip phase 2.")
@@ -555,11 +514,10 @@ class PwCpConstructor:
 
             if not getattr(iter_report, "is_feasible", False):
                 logging.info(
-                    "(batch %d/%d) Sub-CP infeasible -> dispatch remaining jobs.",
+                    "(batch %d/%d) no solution from Sub-CP -> dispatch remaining jobs.",
                     bidx + 1,
                     job_sublist_cnt,
                 )
-                break
 
             # Update state
             st.target_job_subset.update(added_job_sublist)
@@ -573,7 +531,9 @@ class PwCpConstructor:
                     f"_{job_subset_cnt}_batch_disp_solution.yaml"
                 )
                 self.save_schedule_lite_to_yaml(st.last_solution, batch_sol_output_path)
-                logging.info("Saved batch-dispatched solution to: %s", batch_sol_output_path)
+                logging.info(
+                    "Saved batch-dispatched solution to: %s", batch_sol_output_path
+                )
 
             self._log_snapshot(
                 st.last_solution,

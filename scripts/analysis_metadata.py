@@ -16,7 +16,7 @@ class AnalysisMetadata:
         ("3-initialize_by_edd", "initialize_by_edd"),
         ("4-initialize_by_nehms", "initialize_by_nehms"),
         ("5-set_cp_model_as_base_cp_model", "set_cp_model_as_base_cp_model"),
-        ("6-bd_cp", "bd_cp"),
+        ("6-pw_cp", "pw_cp"),
         ("7-repeat_while_improvement", "repeat_while_improvement"),
         ("8-solve_base_cp_model", "solve_base_cp_model"),
     )

@@ -237,6 +237,9 @@ class PermutationFlowshopScheduleLite:
                             d_j - self._stage_2_job_2_end_map[this_i][this_j]
                         )
                         dist_to_next_i = due_date_room if due_date_room > 0 else 0
+                    else:
+                        # If no due date and last stage, its completion time should not be changed
+                        dist_to_next_i = 0
 
                 # New end time calculation
                 dist_to_next = None

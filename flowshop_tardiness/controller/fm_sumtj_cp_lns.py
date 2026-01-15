@@ -1,6 +1,5 @@
 import logging
 import math
-import random
 import time
 from collections import defaultdict
 from typing import Callable, Sequence
@@ -91,6 +90,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             is_initial_solution (bool, optional): If True, marks this run as producing the initial solution (affects summary/logging). Defaults to False.
             draw_gantt (bool, optional): If True, draws the Gantt chart of the solution after solving. Defaults to False.
         """
+        sub_timer = ElapsedTimer()
         if self.base_cp_model_is_set:
             self.cp_model.delete_added_constraints()
         else:
@@ -141,6 +141,26 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 draw_gantt=draw_gantt,
             )
 
+        # Create report and register the new solution
+        obj_value = self.obj_store.get_last_obj_value()
+        report = FsSubroutineReport(
+            elapsed_time=sub_timer.elapsed_sec,
+            obj_value=obj_value,
+            obj_bound=None,
+            is_init=True,
+        )
+        incumbent_schedule = self.solution_manager.get_incumbent()
+        if obj_value is not None and incumbent_schedule is not None:
+            _ = self.solution_manager.register(report, incumbent_schedule)
+
+            # Log
+            log_time = self.timer.elapsed_sec
+            self.add_obj_value_log(log_time, obj_value, is_maximize=None)
+            _last_timestamp_note = self._get_call_context_of_current_method()
+            self.obj_store.add_last_timestamp_note(
+                _last_timestamp_note, obj_value_is_valid=True
+            )
+
     # Helper methods
 
     def get_dispatched_schedule(self, job_sequence: list[str]) -> FlowshopSchedule:
@@ -180,7 +200,13 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         # Log
         log_time = self.timer.elapsed_sec
-        self.add_obj_value_log(log_time, obj_value, is_maximize=False)
+        last_obj_value = self.obj_store.get_last_obj_value()
+        best_obj_value = (
+            obj_value
+            if last_obj_value is None or obj_value < last_obj_value
+            else last_obj_value
+        )
+        self.add_obj_value_log(log_time, best_obj_value, is_maximize=None)
         _last_timestamp_note = self._get_call_context_of_current_method()
         self.obj_store.add_last_timestamp_note(
             _last_timestamp_note, obj_value_is_valid=True
@@ -340,7 +366,13 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         # Log
         log_time = self.timer.elapsed_sec
-        self.add_obj_value_log(log_time, obj_value, is_maximize=False)
+        last_obj_value = self.obj_store.get_last_obj_value()
+        best_obj_value = (
+            obj_value
+            if last_obj_value is None or obj_value < last_obj_value
+            else last_obj_value
+        )
+        self.add_obj_value_log(log_time, best_obj_value, is_maximize=None)
         _last_timestamp_note = self._get_call_context_of_current_method()
         self.obj_store.add_last_timestamp_note(
             _last_timestamp_note, obj_value_is_valid=True
@@ -788,7 +820,13 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         was_updated = self.solution_manager.register(report, schedule)
 
         log_time = self.timer.elapsed_sec
-        self.add_obj_value_log(log_time, obj_value, is_maximize=False)
+        last_obj_value = self.obj_store.get_last_obj_value()
+        best_obj_value = (
+            obj_value
+            if last_obj_value is None or obj_value < last_obj_value
+            else last_obj_value
+        )
+        self.add_obj_value_log(log_time, best_obj_value, is_maximize=None)
         _last_timestamp_note = self._get_call_context_of_current_method()
         self.obj_store.add_last_timestamp_note(
             _last_timestamp_note, obj_value_is_valid=True
@@ -1106,82 +1144,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             if draw_gantt:
                 self.export_incumbent_to_yaml()
 
-    # Subroutine: job block neighbor search
-
-    def job_block_ns(
-        self,
-        rho: float,
-        computational_time: float,
-        solver_thread_cnt: int,
-        no_improvement_timelimit: float | None = None,
-        error_if_infeasible: bool = False,
-        draw_gantt: bool = False,
-    ) -> None:
-        self.fix_profile_solve_reset(
-            lambda: self.apply_job_block_operator(rho),
-            computational_time,
-            solver_thread_cnt,
-            no_improvement_timelimit=no_improvement_timelimit,
-            obj_value_is_valid=True,
-            obj_bound_is_valid=False,
-            error_if_infeasible=error_if_infeasible,
-            draw_gantt=draw_gantt,
-        )
-
-    def apply_job_block_operator(
-        self, rho: float, randomize_selection: bool = True
-    ) -> None:
-        if rho <= 0:
-            raise ValueError(f"Invalid value for rho {rho}; it must be positive.")
-        if rho > 1:
-            raise ValueError(f"Invalid value for rho {rho}; it must be at most 1.")
-        logging.info(f"Applying job block operator with rho={rho}")
-        if not self.solution_manager.has_incumbent():
-            raise ValueError("No incumbent solution available for job block operator.")
-        incumbent_solution = self.solution_manager.get_incumbent()
-        if incumbent_solution is None:
-            raise ValueError("No incumbent solution to select job block.")
-
-        job_sequence = incumbent_solution.get_last_stage_job_list()
-        sched_job_cnt = len(job_sequence)
-        if sched_job_cnt == 0:
-            raise ValueError("Incumbent solution has no scheduled jobs.")
-        logging.info(f"Current job sequence: {job_sequence}")
-        num_to_select = max(1, int(math.ceil(rho * sched_job_cnt)))
-
-        # Choose an operation
-        if randomize_selection:
-            seed_job = random.choice(job_sequence)
-        else:
-            # if not random, choose center operation
-            seed_job = job_sequence[sched_job_cnt // 2]
-        # Select (num_to_select - 1) more jobs; if reached the end, continue from the first element
-        selected_jobs: list[str] = [seed_job]
-        seed_job_idx = job_sequence.index(seed_job)
-        logging.info(
-            "Seed job for block operator: %s (index %d)", seed_job, seed_job_idx
-        )
-        job_cnt_until_last = len(job_sequence) - seed_job_idx
-        logging.info(
-            "Jobs from seed to end: %d, need to select total %d jobs.",
-            job_cnt_until_last,
-            num_to_select,
-        )
-
-        # Select a contiguous block of num_to_select jobs, wrapping around if needed
-        selected_jobs.extend(
-            job_sequence[(seed_job_idx + 1 + i) % sched_job_cnt]
-            for i in range(num_to_select - 1)
-        )
-        logging.info(
-            f"job block operator selected {len(selected_jobs)} jobs"
-            f" (target={num_to_select})"
-        )
-        logging.info(f"Selected jobs: {selected_jobs}")
-
-        # Profile out-of-block operations
-        self._fix_job_profile_except_selected(set(selected_jobs))
-
     # Subroutine: lower bound by preemptive scheduling of the last stage only
 
     def compute_preemptive_last_stage_lb(
@@ -1244,8 +1206,20 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
             # Log
             log_time = self.timer.elapsed_sec
-            self.add_obj_value_log(log_time, best_obj_value, is_maximize=False)
-            self.add_obj_bound_log(log_time, obj_bound, is_maximize=False)
+            last_obj_value = self.obj_store.get_last_obj_value()
+            best_obj_value = (
+                best_obj_value
+                if last_obj_value is None or best_obj_value < last_obj_value
+                else last_obj_value
+            )
+            self.add_obj_value_log(log_time, best_obj_value, is_maximize=None)
+            last_obj_bound = self.obj_store.get_last_obj_bound()
+            best_obj_bound = (
+                obj_bound
+                if last_obj_bound is None or obj_bound > last_obj_bound
+                else last_obj_bound
+            )
+            self.add_obj_bound_log(log_time, best_obj_bound, is_maximize=None)
             _last_timestamp_note = self._get_call_context_of_current_method()
             self.obj_store.add_last_timestamp_note(
                 _last_timestamp_note, obj_value_is_valid=True, obj_bound_is_valid=True
@@ -1254,7 +1228,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             if was_updated and draw_gantt:
                 self.export_incumbent_to_yaml()
 
-    def bd_cp(
+    def pw_cp(
         self,
         solver_thread_cnt: int,
         added_batch_size: int = 1,
@@ -1302,12 +1276,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             error_if_infeasible=error_if_infeasible,
             draw_gantt=draw_gantt,
         )
-        last_solution_obj_value = self.get_obj_value(result.schedule)
-        logging.info(f"BD-CP done with total tardiness {last_solution_obj_value}")
+        obj_value = self.get_obj_value(result.schedule)
+        logging.info(f"PW-CP done with total tardiness {obj_value}")
         # Create report for the final solution and register it
         final_report = FsSubroutineReport(
             elapsed_time=sub_timer.elapsed_sec,
-            obj_value=float(last_solution_obj_value),
+            obj_value=float(obj_value),
             obj_bound=None,
             is_init=False,
         )
@@ -1317,7 +1291,13 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         if was_updated:
             log_time = self.timer.elapsed_sec
-            self.add_obj_value_log(log_time, last_solution_obj_value, is_maximize=None)
+            last_obj_value = self.obj_store.get_last_obj_value()
+            best_obj_value = (
+                obj_value
+                if last_obj_value is None or obj_value < last_obj_value
+                else last_obj_value
+            )
+            self.add_obj_value_log(log_time, best_obj_value, is_maximize=None)
             _last_timestamp_note = self._get_call_context_of_current_method()
             self.obj_store.add_last_timestamp_note(
                 _last_timestamp_note, obj_value_is_valid=True

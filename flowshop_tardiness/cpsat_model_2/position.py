@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from mbls.cpsat import CustomCpModel
 from ortools.sat.python.cp_model import CpModel, IntVar
-from routix import ElapsedTimer
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
 
