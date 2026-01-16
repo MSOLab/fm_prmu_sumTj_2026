@@ -7,3 +7,4 @@
   swap_trials: 100
   fi_trials: 100
   bi_trials: 100
+  solver_thread_cnt: 8
