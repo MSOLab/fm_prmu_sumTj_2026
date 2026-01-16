@@ -90,7 +90,6 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             is_initial_solution (bool, optional): If True, marks this run as producing the initial solution (affects summary/logging). Defaults to False.
             draw_gantt (bool, optional): If True, draws the Gantt chart of the solution after solving. Defaults to False.
         """
-        sub_timer = ElapsedTimer()
         if self.base_cp_model_is_set:
             self.cp_model.delete_added_constraints()
         else:
@@ -118,8 +117,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         # self.cp_model.export_to_file(
         #     self.get_file_path_for_subroutine(model_file_suffix + ".mps").as_posix()
         # )
-        if is_initial_solution:
-            self.solve_current_cp_remaining_time_limit(
+        _should_be_init: bool = self.solution_manager.get_incumbent() is None
+        _is_init: bool = _should_be_init or is_initial_solution
+
+        if _is_init:
+            report, solution = self.solve_current_cp_remaining_time_limit(
                 computational_time,
                 solver_thread_cnt,
                 cp_model_presolve=self.cp_model_presolve,
@@ -130,8 +132,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 draw_gantt=draw_gantt,
             )
         else:
-            # If it is not an initial solution, apply the incumbent solution as a hint
-            self.solve_with_initial_solution(
+            # If not for an initial solution, apply the incumbent solution as a hint
+            report, solution = self.solve_with_initial_solution(
                 computational_time,
                 solver_thread_cnt,
                 cp_model_presolve=self.cp_model_presolve,
@@ -141,25 +143,31 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 draw_gantt=draw_gantt,
             )
 
-        # Create report and register the new solution
-        obj_value = self.obj_store.get_last_obj_value()
-        report = FsSubroutineReport(
-            elapsed_time=sub_timer.elapsed_sec,
-            obj_value=obj_value,
-            obj_bound=None,
-            is_init=True,
-        )
-        incumbent_schedule = self.solution_manager.get_incumbent()
-        if obj_value is not None and incumbent_schedule is not None:
-            _ = self.solution_manager.register(report, incumbent_schedule)
+        # If feasible, register report & solution
+        if report.is_feasible:
+            _ = self.solution_manager.register(report, solution)
 
-            # Log
-            log_time = self.timer.elapsed_sec
+        # Log (time, objective value & bound)
+        log_time = self.timer.elapsed_sec
+        _last_timestamp_note = self._get_call_context_of_current_method()
+
+        obj_value = self.obj_store.get_last_obj_value()
+        obj_value_is_valid = False
+        if obj_value is not None:
             self.add_obj_value_log(log_time, obj_value, is_maximize=None)
-            _last_timestamp_note = self._get_call_context_of_current_method()
-            self.obj_store.add_last_timestamp_note(
-                _last_timestamp_note, obj_value_is_valid=True
-            )
+            obj_value_is_valid = True
+
+        obj_bound = self.obj_store.get_last_obj_bound()
+        obj_bound_is_valid = False
+        if obj_bound is not None:
+            self.add_obj_bound_log(log_time, obj_bound, is_maximize=None)
+            obj_bound_is_valid = True
+
+        self.obj_store.add_last_timestamp_note(
+            _last_timestamp_note,
+            obj_value_is_valid=obj_value_is_valid,
+            obj_bound_is_valid=obj_bound_is_valid,
+        )
 
     # Helper methods
 
@@ -1202,6 +1210,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 obj_bound=obj_bound,
                 is_init=True,
             )
+            sub_timer.reset()
             was_updated = self.solution_manager.register(report, best_schedule)
 
             # Log

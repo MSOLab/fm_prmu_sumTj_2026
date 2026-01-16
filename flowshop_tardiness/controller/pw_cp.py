@@ -296,6 +296,7 @@ class PwCpConstructor:
         Returns:
             tuple[CpsatSolverReport, list[str]]: Solver report and job sequence.
         """
+        sub_timer = ElapsedTimer()
         if solver_thread_cnt is None:
             solver_thread_cnt = 1
         st = self._require_state()
@@ -375,7 +376,7 @@ class PwCpConstructor:
                 "Skip CP solving in phase 1: total tardiness of given subsequence is zero."
             )
             report_obj_val = sumTj_offset if sumTj_offset is not None else 0
-            elapsed_time = st.timer.elapsed_sec
+            elapsed_time = sub_timer.elapsed_sec
             report1 = CpsatSolverReport(
                 elapsed_time=elapsed_time,
                 obj_value=report_obj_val,

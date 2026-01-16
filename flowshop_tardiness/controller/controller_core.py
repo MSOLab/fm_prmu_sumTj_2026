@@ -477,22 +477,20 @@ class FlowshopTardinessControllerCore(
             random_seed=self.random_seed,
         )
         self.solver = configure_solver(solve_cfg)
-        self.obj_value_recorder = ObjectiveValueRecorder(
+        obj_value_recorder = ObjectiveValueRecorder(
             e_timer,
             print_on_record=print_on_obj_value_update,
             log_level_on_record=log_level_obj_value,
         )
 
-        self.obj_bound_recorder = ObjectiveBoundRecorder(
+        obj_bound_recorder = ObjectiveBoundRecorder(
             e_timer,
             print_on_record=print_on_obj_bound_update,
             log_level_on_record=log_level_obj_bound,
         )
-        self.solver.best_bound_callback = self.obj_bound_recorder
+        self.solver.best_bound_callback = obj_bound_recorder
 
-        cp_solver_status = self.solver.solve(
-            mdl, solution_callback=self.obj_value_recorder
-        )
+        cp_solver_status = self.solver.solve(mdl, solution_callback=obj_value_recorder)
         cpsat_status = CpsatStatus.from_cp_solver_status(cp_solver_status)
         elapsed_time = self.solver.wall_time
         if cpsat_status.is_feasible:
@@ -518,7 +516,7 @@ class FlowshopTardinessControllerCore(
             """
             return_list: list[tuple[float, float]] = []
             list_by_value_recorder: list[tuple[float, ValueBoundPair]] = (
-                self.obj_value_recorder.entries
+                obj_value_recorder.entries
             )
             for entry in list_by_value_recorder:
                 return_list.append((entry[0], entry[1].value))
@@ -550,7 +548,7 @@ class FlowshopTardinessControllerCore(
             timestamp_2_bound_map: dict[float, float] = {}
 
             list_by_bound_recorder: list[tuple[float, float]] = (
-                self.obj_bound_recorder.elapsed_time_and_bound
+                obj_bound_recorder.elapsed_time_and_bound
             )
             for b_entry in list_by_bound_recorder:
                 timestamp = b_entry[0]
@@ -560,7 +558,7 @@ class FlowshopTardinessControllerCore(
                 timestamp_2_bound_map[timestamp] = bound
 
             list_by_value_recorder: list[tuple[float, ValueBoundPair]] = (
-                self.obj_value_recorder.entries
+                obj_value_recorder.entries
             )
             for v_entry in list_by_value_recorder:
                 timestamp = v_entry[0]
@@ -620,7 +618,7 @@ class FlowshopTardinessControllerCore(
         is_initial_solution: bool = False,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
-    ):
+    ) -> tuple[FsCpsatSolverReport, FlowshopSchedule | None]:
         if not self.base_cp_model_is_set:
             raise RuntimeError(
                 "Base CP model is not set. Call set_cp_model_as_base_cp_model() first."
@@ -668,12 +666,11 @@ class FlowshopTardinessControllerCore(
                 obj_bound=report_updates.get("obj_bound"),
             )
 
+        solution: FlowshopSchedule | None = None
         if fs_solver_report.obj_value is None:
             if obj_value_is_valid:
                 logging.warning("Failed to find a valid objective value.")
-                return
         else:
-            solution: FlowshopSchedule | None = None
             if fs_solver_report.is_feasible:
                 solution = self.create_schedule_from_params_and_vars(
                     params=self.params,
@@ -712,10 +709,11 @@ class FlowshopTardinessControllerCore(
                             obj_bound_records=fs_solver_report.obj_bound_records,
                             is_init=fs_solver_report.is_init,
                         )
-                # Register the solution
-                was_updated = self.solution_manager.register(fs_solver_report, solution)
-                if was_updated and draw_gantt:
-                    self.export_incumbent_to_yaml()
+            else:
+                logging.warning(
+                    "No feasible solution found in the current CP model solving."
+                )
+        return fs_solver_report, solution
 
     def solve_with_initial_solution(
         self,
@@ -727,7 +725,7 @@ class FlowshopTardinessControllerCore(
         obj_bound_is_valid: bool = False,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
-    ):
+    ) -> tuple[FsCpsatSolverReport, FlowshopSchedule | None]:
         if not self.base_cp_model_is_set:
             raise RuntimeError(
                 "Base CP model is not set. Call set_cp_model_as_base_cp_model() first."
@@ -747,7 +745,7 @@ class FlowshopTardinessControllerCore(
                 self.cp_model, self.params, self.vars, incumbent_solution
             )
 
-        self.solve_current_cp_remaining_time_limit(
+        return self.solve_current_cp_remaining_time_limit(
             computational_time,
             solver_thread_cnt,
             no_improvement_timelimit=no_improvement_timelimit,
@@ -885,47 +883,3 @@ class FlowshopTardinessControllerCore(
         mdl.add(vars.total_tardiness >= int_bound)
 
     # End model modification methods
-
-    # Helper method for LNS-CP
-
-    def fix_profile_solve_reset(
-        self,
-        profile_fixing_method: Callable,
-        computational_time: float,
-        solver_thread_cnt: int,
-        no_improvement_timelimit: float | None = None,
-        obj_value_is_valid: bool = False,
-        obj_bound_is_valid: bool = False,
-        error_if_infeasible: bool = False,
-        draw_gantt: bool = False,
-    ):
-        """Apply the profile-fixing method, solve, and reset the model.
-
-        Args:
-            profile_fixing_method (Callable): A callable that fixes a profile of the CP model
-                by adding constraints to the current CP model.
-            computational_time (float): The maximum computational time in seconds.
-            solver_thread_cnt (int): The number of parallel workers (i.e. threads) to use during search.
-            no_improvement_timelimit (float | None, optional): If there is no improvement in this
-                amount of time, the search will be stopped. If None, no timeout is set.
-                Defaults to None.
-            obj_value_is_valid (bool, optional): If True, adds the objective value log.
-                Defaults to False.
-            obj_bound_is_valid (bool, optional): If True, adds the objective bound log.
-                Defaults to False.
-            error_if_infeasible (bool, optional): If True, checks the feasibility of the solution.
-                Defaults to False.
-            draw_gantt (bool, optional): If True, draws the Gantt chart of the solution.
-                Defaults to False.
-        """
-        profile_fixing_method()
-        self.solve_with_initial_solution(
-            computational_time,
-            solver_thread_cnt,
-            no_improvement_timelimit=no_improvement_timelimit,
-            obj_value_is_valid=obj_value_is_valid,
-            obj_bound_is_valid=obj_bound_is_valid,
-            error_if_infeasible=error_if_infeasible,
-            draw_gantt=draw_gantt,
-        )
-        self.cp_model.delete_added_constraints()
