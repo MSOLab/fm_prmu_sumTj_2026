@@ -83,7 +83,9 @@ class PermutationFlowshopSubseqEvaluator:
             tot = self._timing_stats[k]
             cnt = self._timing_counts.get(k, 0)
             avg = tot / cnt if cnt else 0.0
-            timing_str += f"\n{k:30s} total={tot:10.6f}s  cnt={cnt:6d}  avg={avg:10.6f}s"
+            timing_str += (
+                f"\n{k:30s} total={tot:10.6f}s  cnt={cnt:6d}  avg={avg:10.6f}s"
+            )
         timing_str += "\n==================================="
         logging.info(timing_str)
 
@@ -331,8 +333,8 @@ class PermutationFlowshopSubseqEvaluator:
         pi: Sequence[int],
         subseq: Sequence[int] | int,
         tie_breaker: str = "default",
-    ) -> tuple[int, int]:
-        """Return (best_pos, best_total_tardiness) for inserting subseq into pi.
+    ) -> tuple[list[int], int]:
+        """Return (list of best_pos, best_total_tardiness) for inserting subseq into pi.
 
         Args:
             pi (Sequence[int]): permutation without the subseq jobs
@@ -345,7 +347,7 @@ class PermutationFlowshopSubseqEvaluator:
             ValueError: no insertion positions evaluated
 
         Returns:
-            tuple[int, int]: (best_pos, best_total_tardiness)
+            tuple[list[int], int]: (best_pos_list, best_total_tardiness)
         """
         _subseq: Sequence[int]
         if isinstance(subseq, int):
@@ -370,7 +372,7 @@ class PermutationFlowshopSubseqEvaluator:
         # (2) position loop
         if timing_enabled:
             t0 = time.perf_counter()
-        best_pos = 0
+        best_pos_list: list[int] = [0]
         best_obj_vals: ObjValVector | None = None
         L = len(pi)
         for pos in range(L + 1):
@@ -397,9 +399,10 @@ class PermutationFlowshopSubseqEvaluator:
                 counts["eval_total_tardiness"] += 1
 
             if best_obj_vals is None or obj_vals < best_obj_vals:
-                best_pos = pos
+                best_pos_list = [pos]
                 best_obj_vals = obj_vals
-
+            elif obj_vals == best_obj_vals:
+                best_pos_list.append(pos)
         if timing_enabled:
             stats["pos_loop_total"] += time.perf_counter() - t0
             counts["pos_loop_total"] += 1
@@ -409,4 +412,4 @@ class PermutationFlowshopSubseqEvaluator:
 
         if best_obj_vals is None:
             raise ValueError("No insertion positions evaluated.")
-        return best_pos, best_obj_vals.obj1_val
+        return best_pos_list, best_obj_vals.obj1_val

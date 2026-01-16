@@ -117,14 +117,22 @@ benchmark_filename_format: "{}.txt"
 
 # Scenario configurations
 dicts_of_i_o_data_path:
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20260105.yaml"
+  #   output_dir : "output_600s/20260105"
+  #   description: "repeat (PW-CP, II(1), II'(2))"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20260116.yaml"
+  #   output_dir : "output_600s/20260116"
+  #   description: "repeat (PW-CP, II(1), II'(2)) single thread"
+  # - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
+  #   subroutine_flow_rel_path: "configs_600s/subroutine_flow_20260116-2.yaml"
+  #   output_dir : "output_600s/20260116-2"
+  #   description: "repeat (PW-CP, IIr(1), IIr'(2)) -> baseCP(w=1)"
   - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-    subroutine_flow_rel_path: "configs_600s/subroutine_flow_20260105.yaml"
-    output_dir : "output_600s/20260105"
-    description: "repeat (PW-CP, II(1), II'(2))"
-  - stopping_criteria_rel_path: "configs_600s/stopping_criteria.yaml"
-    subroutine_flow_rel_path: "configs_600s/subroutine_flow_20260116.yaml"
-    output_dir : "output_600s/20260116"
-    description: "repeat (PW-CP, II(1), II'(2)) single thread"
+    subroutine_flow_rel_path: "configs_600s/subroutine_flow_20260116-3.yaml"
+    output_dir : "output_600s/20260116-3"
+    description: "repeat (PW-CP, IIr(1), IIr'(2), SWAP) -> baseCP(w=1)"
 
 # Output and Logging configuration
 output_dir_scenarios: "Outputs_scenarios"
@@ -132,7 +140,7 @@ scenario_log_filename: "multi_scenario_runner.log"
 result_dir_name: "results"
 
 # Execution configuration
-instance_worker_cnt: 12
+instance_worker_cnt: 4
 
 # Analysis and plotting options
 draw_gantt: false

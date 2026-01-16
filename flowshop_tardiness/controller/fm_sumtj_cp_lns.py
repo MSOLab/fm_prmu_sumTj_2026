@@ -1,3 +1,4 @@
+import random
 import logging
 import math
 import time
@@ -739,23 +740,24 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         ] = (evaluator, job_id_to_idx, idx_to_job_id)
         return self._new_acc_cache
 
-    def _get_best_pos_and_metric_new_acc(
+    def _get_best_pos_list_and_metric_new_acc(
         self,
         seq_now: list[str],
         job_id_seq: Sequence[str] | str,
         tie_breaker: str = "default",
-    ) -> tuple[int, ScheduleMetric]:
+    ) -> tuple[list[int], ScheduleMetric]:
         """
         Evaluate insertion of job_id into seq_now using NEW acceleration
         (Fernandez-Viagas et al., 2020) evaluator.
 
         Args:
-            seq_now: current sequence of job IDs (strings)
-            job_id_seq: job ID (string) or sequence of job IDs to insert
-            tie_breaker: tie breaking strategy
+            seq_now (list[str]): current sequence of job IDs
+            job_id_seq (Sequence[str] | str): job ID (string) or sequence of job IDs to insert
+            tie_breaker (str, optional): tie breaking strategy.
+                Defaults to "default".
 
         Returns:
-            (best_pos, ScheduleMetric) for the best insertion position.
+            tuple[list[int], ScheduleMetric]: list of best insertion positions & ScheduleMetric
         """
         _job_id_seq: Sequence[str]
         if isinstance(job_id_seq, str):
@@ -770,21 +772,24 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         sigma_idx_seq = [job_id_to_idx[job_id] for job_id in _job_id_seq]
 
         # NEW evaluator returns best position and best objective1 value (sumTj)
-        best_pos, _ = evaluator.get_best_position(
+        best_pos_list, _ = evaluator.get_best_position(
             pi_idx, sigma_idx_seq, tie_breaker=tie_breaker
         )
 
         # Build resulting sequence and compute ScheduleMetric using existing method
-        new_seq = seq_now[:best_pos] + list(_job_id_seq) + seq_now[best_pos:]
+        _first_best_pos = best_pos_list[0]
+        new_seq = (
+            seq_now[:_first_best_pos] + list(_job_id_seq) + seq_now[_first_best_pos:]
+        )
         metric = self._compute_schedule_metric_from_sequence(new_seq)
 
-        return best_pos, metric
+        return best_pos_list, metric
 
     def _run_neh_edd(
         self,
         method_name: str,
         tie_breaker: str,
-        first_improvement: bool = False,
+        random_among_best_pos: bool = False,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ) -> None:
@@ -806,9 +811,13 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         # 2) NEH insertion by EDD order with NEW acceleration evaluation
         for j in job_sequence:
-            pos, _ = self._get_best_pos_and_metric_new_acc(
+            pos_list, _ = self._get_best_pos_list_and_metric_new_acc(
                 seq, j, tie_breaker=tie_breaker
             )
+            if random_among_best_pos and len(pos_list) > 1:
+                pos = random.choice(pos_list)
+            else:
+                pos = pos_list[0]
             seq.insert(pos, j)
 
         # 3) Build schedule once and register/log
@@ -844,51 +853,54 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             self.export_incumbent_to_yaml()
 
     def initialize_by_nehedd(
-        self, error_if_infeasible: bool = False, draw_gantt: bool = False
+        self, error_if_infeasible: bool = False, draw_gantt: bool = False, random_among_best_pos: bool = False
     ) -> None:
         self._run_neh_edd(
             "NEHedd",
             "default",
+            random_among_best_pos=random_among_best_pos,
             error_if_infeasible=error_if_infeasible,
             draw_gantt=draw_gantt,
         )
 
     def initialize_by_nehms(
-        self, error_if_infeasible: bool = False, draw_gantt: bool = False
+        self, error_if_infeasible: bool = False, draw_gantt: bool = False, random_among_best_pos: bool = False
     ) -> None:
         self._run_neh_edd(
             "makespan",
             "makespan",
+            random_among_best_pos=random_among_best_pos,
             error_if_infeasible=error_if_infeasible,
             draw_gantt=draw_gantt,
         )
 
-    def initialize_by_nehm(
-        self, error_if_infeasible: bool = False, draw_gantt: bool = False
-    ) -> None:
-        self._run_neh_edd(
-            "NEH-M",
-            "NEH-M",
-            error_if_infeasible=error_if_infeasible,
-            draw_gantt=draw_gantt,
-        )
+    # def initialize_by_nehm(
+    #     self, error_if_infeasible: bool = False, draw_gantt: bool = False
+    # ) -> None:
+    #     self._run_neh_edd(
+    #         "NEH-M",
+    #         "NEH-M",
+    #         error_if_infeasible=error_if_infeasible,
+    #         draw_gantt=draw_gantt,
+    #     )
 
-    def initialize_by_neh_it1(
-        self, error_if_infeasible: bool = False, draw_gantt: bool = False
-    ) -> None:
-        self._run_neh_edd(
-            "NEH-IT1",
-            "NEH-IT1",
-            error_if_infeasible=error_if_infeasible,
-            draw_gantt=draw_gantt,
-        )
+    # def initialize_by_neh_it1(
+    #     self, error_if_infeasible: bool = False, draw_gantt: bool = False
+    # ) -> None:
+    #     self._run_neh_edd(
+    #         "NEH-IT1",
+    #         "NEH-IT1",
+    #         error_if_infeasible=error_if_infeasible,
+    #         draw_gantt=draw_gantt,
+    #     )
 
-    def improve_job_seq_by_insertion_single_pass(
+    def _improve_job_seq_by_insertion_single_pass(
         self,
         job_seq: list[str],
         subseq_size: int | None = None,
         tie_breaker: str = "default",
         first_improvement: bool = False,
+        random_among_best_pos: bool = False,
     ) -> list[str]:
         """Perform a single pass of insertion-based improvement on the job sequence.
 
@@ -901,6 +913,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             first_improvement (bool, optional): Whether to stop at the first improvement found.
                 Defaults to False.
                 If subseq_size > 1, this is forced to True.
+            random_among_best_pos (bool, optional): If True, randomly select among
+                equally good insertion positions.
+                Defaults to False.
 
         Raises:
             ValueError: If job_seq length <= 1.
@@ -974,7 +989,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             # B) get best position timer
             if timing_enabled:
                 t0 = time.perf_counter()
-            pos, after_metric = self._get_best_pos_and_metric_new_acc(
+            pos_list, after_metric = self._get_best_pos_list_and_metric_new_acc(
                 profile_fixed, j_subseq, tie_breaker=tie_breaker
             )
             if timing_enabled:
@@ -996,7 +1011,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             if after_is_better:
                 if timing_enabled:
                     t0 = time.perf_counter()
-
+                if random_among_best_pos and len(pos_list) > 1:
+                    pos: int = random.choice(pos_list)
+                else:
+                    pos = pos_list[0]
                 incumbent_seq = (
                     profile_fixed[:pos] + list(j_subseq) + profile_fixed[pos:]
                 )
@@ -1031,6 +1049,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         tie_breaker: str = "default",
         max_passes: int | None = None,
         first_improvement: bool = False,
+        random_among_best_pos: bool = False,
+        update_if_equal_obj: bool = False,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ) -> None:
@@ -1070,18 +1090,20 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             f"Initial: total tardiness {best_metric.sumTj}, makespan {best_metric.makespan} (criteria: {best_crit1}, {best_crit2})."
         )
 
-        improved_globally = False
+        improved_globally: bool = False
+        updated_but_equal: bool = False
         passes = 0
         # list of (global elapsed time, obj value)
         obj_value_log: list[tuple[float, float]] = []
         while max_passes is None or passes < max_passes:
             passes += 1
 
-            seq_after = self.improve_job_seq_by_insertion_single_pass(
+            seq_after = self._improve_job_seq_by_insertion_single_pass(
                 seq_before,
                 subseq_size=subseq_size,
                 tie_breaker=tie_breaker,
                 first_improvement=first_improvement,
+                random_among_best_pos=random_among_best_pos,
             )
             after_metric = self._compute_schedule_metric_from_sequence(seq_after)
             crit1, crit2 = self._tie_crit_from_tm(after_metric, tie_breaker)
@@ -1091,17 +1113,21 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             after_is_better = (crit1 < best_crit1) or (
                 crit1 == best_crit1 and crit2 < best_crit2
             )
-            if after_is_better:
+            after_is_same: bool = (crit1 == best_crit1) and (crit2 == best_crit2)
+            if after_is_better or (update_if_equal_obj and after_is_same):
                 seq_before = list(seq_after)
                 best_metric = after_metric
                 best_crit1 = crit1
                 best_crit2 = crit2
-                logging.info(
-                    f"Pass {passes}: improved to total tardiness {best_metric.sumTj}."
-                )
-                improved_globally = True
-                obj_value_log.append((self.timer.elapsed_sec, best_metric.sumTj))
-            else:
+                if after_is_better:
+                    improved_globally = True
+                    logging.info(
+                        f"Pass {passes}: improved to total tardiness {best_metric.sumTj}."
+                    )
+                    obj_value_log.append((self.timer.elapsed_sec, best_metric.sumTj))
+                else:
+                    updated_but_equal = True
+            if not after_is_better:
                 logging.info(f"Pass {passes}: no improvement, stopping.")
                 break
             if self.time_is_up():
@@ -1139,7 +1165,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             obj_bound=None,
             is_init=False,
         )
-        was_updated = self.solution_manager.register(report, schedule)
+        was_updated = self.solution_manager.register(
+            report, schedule, update_if_equal_obj=updated_but_equal
+        )
 
         if was_updated:
             log_time = self.timer.elapsed_sec
@@ -1320,14 +1348,134 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             self.get_file_path_for_subroutine("_obj_log.yaml")
         )
 
-    def repeat_while_improvement(self, n_repeats: int, routine_data: DynamicDataObject):
+    def swap_ls(self, trial_count: int, update_if_equal_obj: bool = False):
+        if self.solution_manager.incumbent_solution is None:
+            raise RuntimeError("No incumbent solution to improve.")
+
+        sub_timer = ElapsedTimer()
+
+        # Incumbent job sequence
+        seq_before = self.solution_manager.incumbent_solution.get_last_stage_job_list()
+        metric_before = self._compute_schedule_metric_from_sequence(seq_before)
+        job_cnt = len(seq_before)
+        if job_cnt <= 1:
+            logging.info("Swap LS skipped: only one or zero jobs.")
+            return
+
+        rng = random.Random(getattr(self, "random_seed", None))
+        seq_after, metric_after = self._try_swap(
+            seq_before, trial_count, rng, update_if_equal_obj
+        )
+
+        if (not update_if_equal_obj) and metric_after.sumTj >= metric_before.sumTj:
+            logging.info(
+                "Swap LS: no improvement found "
+                f"(total tardiness {metric_before.sumTj} -> {metric_after.sumTj})."
+            )
+            return
+
+        # If different sequence, build schedule and register
+        if seq_after != seq_before:
+            obj_value = metric_after.sumTj
+            if obj_value < metric_before.sumTj:
+                logging.info(f"Swap LS: total tardiness improved to {obj_value}.")
+            else:
+                logging.info(
+                    f"Swap LS: total tardiness unchanged at {obj_value} but force-accepted."
+                )
+            # Create report for the solution and register it
+            report = FsSubroutineReport(
+                elapsed_time=sub_timer.elapsed_sec,
+                obj_value=obj_value,
+                obj_bound=None,
+                is_init=False,
+            )
+            schedule = self.get_dispatched_schedule(seq_after)
+            was_updated = self.solution_manager.register(
+                report, schedule, update_if_equal_obj=update_if_equal_obj
+            )
+
+            if was_updated:
+                log_time = self.timer.elapsed_sec
+                last_obj_value = self.obj_store.get_last_obj_value()
+                best_obj_value = (
+                    obj_value
+                    if last_obj_value is None or obj_value < last_obj_value
+                    else last_obj_value
+                )
+                self.add_obj_value_log(log_time, best_obj_value, is_maximize=None)
+                _last_timestamp_note = self._get_call_context_of_current_method()
+                self.obj_store.add_last_timestamp_note(
+                    _last_timestamp_note, obj_value_is_valid=True
+                )
+        else:
+            logging.info("Swap LS: no change in job sequence after swap attempts.")
+
+    def _try_swap(
+        self,
+        job_sequence: list[str],
+        trial_count: int,
+        rng: random.Random,
+        update_if_equal_obj: bool = False,
+    ) -> tuple[list[str], ScheduleMetric]:
+        """
+        Attempts to improve the job sequence by swapping pairs of jobs.
+
+        Args:
+            job_sequence (list[str]): The current sequence of jobs.
+            trial_count (int): The number of swap attempts to make.
+            rng (random.Random): A random number generator instance.
+
+        Returns:
+            tuple[list[str], ScheduleMetric]: The improved job sequence and its schedule metric after attempting swaps.
+        """
+        if trial_count <= 0 or len(job_sequence) < 2:
+            return job_sequence, self._compute_schedule_metric_from_sequence(
+                job_sequence
+            )
+        n = len(job_sequence)
+
+        best_seq: list[str] = list(job_sequence)
+        best_metric = self._compute_schedule_metric_from_sequence(best_seq)
+        improved = False
+        for _ in range(trial_count):
+            cand_seq = list(best_seq)
+            i, j = rng.sample(range(n), 2)
+            # swap
+            cand_seq[i], cand_seq[j] = cand_seq[j], cand_seq[i]
+            cand_metric = self._compute_schedule_metric_from_sequence(cand_seq)
+            if (cand_metric.sumTj < best_metric.sumTj) or (
+                update_if_equal_obj and cand_metric.sumTj == best_metric.sumTj
+            ):
+                best_seq = cand_seq
+                best_metric = cand_metric
+                improved = True
+
+        if improved:
+            logging.info(f"Swap improvement: new total tardiness {best_metric.sumTj}.")
+        return best_seq, best_metric
+
+    def repeat_while_improvement(
+        self,
+        n_repeats: int,
+        routine_data: DynamicDataObject,
+        max_no_improve: int | None = None,
+    ):
         """
         Repeats the execution of a routine a specified number of times.
 
         Args:
             n_repeats (int): Number of times to repeat the routine.
             routine_data (DynamicDataObject): The routine data to be executed.
+            max_no_improve (int | None, optional): Maximum number of consecutive
+                non-improving iterations before stopping.
+                If 0, stops after the first non-improving iteration.
+                If None or negative, treated as 0.
+                Defaults to None.
         """
+        _max_no_improve: int = (
+            0 if max_no_improve is None or max_no_improve < 0 else max_no_improve
+        )
 
         subroutine_name = "reps"  # TODO: define how to manage this
         incumbent_sol = self.solution_manager.get_incumbent()
@@ -1336,6 +1484,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         else:
             obj_before = self.get_obj_value(incumbent_sol)
 
+        no_improve_count = 0
         for i in range(n_repeats):
             if self.is_stopping_condition():
                 logging.info(
@@ -1354,12 +1503,18 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 obj_after = self.get_obj_value(incumbent_sol)
 
             if float_a_stl_b(obj_after, obj_before):
+                no_improve_count = 0
                 logging.info(
                     f"[Repeat] Improvement observed ({obj_before} -> {obj_after}). Continuing."
                 )
                 obj_before = obj_after
             else:
                 logging.info(
-                    f"[Repeat] No improvement observed ({obj_before} -> {obj_after}). Stopping repeats."
+                    f"[Repeat] No improvement observed ({obj_before} -> {obj_after})."
                 )
-                break
+                no_improve_count += 1
+                if no_improve_count > _max_no_improve:
+                    logging.info(
+                        f"[Repeat] Max no-improve reached ({_max_no_improve}). Stopping repeats."
+                    )
+                    break
