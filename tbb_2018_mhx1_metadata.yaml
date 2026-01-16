@@ -128,7 +128,7 @@ scenario_log_filename: "multi_scenario_runner.log"
 result_dir_name: "results"
 
 # Execution configuration
-instance_worker_cnt: 4
+instance_worker_cnt: 12
 
 # Analysis and plotting options
 draw_gantt: false
