@@ -6,7 +6,7 @@ import random
 from pathlib import Path
 from typing import Sequence
 
-from routix import DynamicDataObject, StoppingCriteria
+from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedule
 
@@ -36,6 +36,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
     # Start subalgorithm definition
 
     def ga_edd(self, pop_size: int, cross_size: int, mut_size: int):
+        sub_timer = ElapsedTimer()
         _cross_cnt = int(cross_size / 2)  # two children per crossover
         # Initialize population manager
         self.population_manager = PopulationManager(pop_size, timer=self.timer)
@@ -224,7 +225,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             obj_value = pop_mgr.get_best_fitness()
             last_job_seq = pop_mgr.get_best_solution()
             report = FsSubroutineReport(
-                elapsed_time=self.timer.elapsed_sec,
+                elapsed_time=sub_timer.elapsed_sec,
                 obj_value=obj_value,
                 obj_bound=None,
                 is_init=False,

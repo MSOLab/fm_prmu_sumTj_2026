@@ -354,6 +354,7 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
             fi_trials: number of forward insertion trials per iteration.
             error_if_infeasible: if True, raise when decoded schedule is infeasible.
         """
+        sub_timer = ElapsedTimer()
         rng = random.Random(
             getattr(self, "random_seed", None)
         )  # fallback; seed는 ctrl.set_random_seed로 통제
@@ -460,11 +461,12 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
                     incumbent_seq = cand_seq
                     improved_this_R = True
                     report = FsSubroutineReport(
-                        elapsed_time=self.timer.elapsed_sec,
+                        elapsed_time=sub_timer.elapsed_sec,
                         obj_value=cand_obj,
                         obj_bound=None,
                         is_init=False,
                     )
+                    sub_timer.reset()
                     last_schedule = self._dispatch_permutation(cand_seq)
                     was_updated = self.solution_manager.register(report, last_schedule)
                     if was_updated:
@@ -494,6 +496,16 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
         # end outer loop
         if error_if_infeasible:
             self.check_feasibility(last_schedule)
+
+        last_report = FsSubroutineReport(
+            elapsed_time=sub_timer.elapsed_sec,
+            obj_value=cand_obj,
+            obj_bound=None,
+            is_init=False,
+        )
+        sub_timer.reset()
+        last_schedule = self._dispatch_permutation(cand_seq)
+        was_updated = self.solution_manager.register(last_report, last_schedule)
 
         # Final logs
         if last_obj_value is not None:
