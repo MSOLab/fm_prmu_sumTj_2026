@@ -24,6 +24,6 @@
       first_improvement: true
       random_among_best_pos: true
       update_if_equal_obj: true
-# - method: solve_base_cp_model
-#   computational_time: null
-#   solver_thread_cnt: 1
+- method: solve_base_cp_model
+  computational_time: null
+  solver_thread_cnt: 1
