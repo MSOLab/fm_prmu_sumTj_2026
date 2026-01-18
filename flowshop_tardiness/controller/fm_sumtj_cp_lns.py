@@ -1342,11 +1342,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             if draw_gantt:
                 self.export_incumbent_to_yaml()
 
-        # Write the objective store to a YAML file
-        # TODO: suffix from output_metadata
-        result.sub_obj_store.save_yaml(
-            self.get_file_path_for_subroutine("_obj_log.yaml")
-        )
+            # If improved, write the objective store to a YAML file
+            # TODO: suffix from output_metadata
+            result.sub_obj_store.save_yaml(
+                self.get_file_path_for_subroutine("_obj_log.yaml")
+            )
 
     def swap_ls(self, trial_count: int, update_if_equal_obj: bool = False):
         if self.solution_manager.incumbent_solution is None:
