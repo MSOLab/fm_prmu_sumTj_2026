@@ -144,9 +144,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 draw_gantt=draw_gantt,
             )
 
-        # If feasible, register report & solution
-        if report.is_feasible:
-            _ = self.solution_manager.register(report, solution)
+        # Register report & solution
+        self.solution_manager.register(report, solution)
 
         # Log (time, objective value & bound)
         log_time = self.timer.elapsed_sec
