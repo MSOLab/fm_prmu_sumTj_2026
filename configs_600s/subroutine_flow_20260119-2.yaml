@@ -1,0 +1,27 @@
+- method: set_random_seed
+  seed: 42
+- method: compute_preemptive_last_stage_lb
+- method: initialize_by_edd
+- method: initialize_by_nehms
+- method: set_cp_model_as_base_cp_model
+- method: repeat_while_improvement
+  n_repeats: 99
+  routine_data:
+    - method: pw_cp
+      added_batch_size: 5
+      profile_fixed_cnt: 0
+      step_size_on_improve: 5
+      step_size_on_no_improve: 3
+      max_time_per_add: 5
+      solver_thread_cnt: 1
+    - method: improve_by_insertion
+      subseq_size: 1
+      tie_breaker: "default"
+      first_improvement: false
+    - method: improve_by_insertion
+      subseq_size: 2
+      tie_breaker: "default"
+      first_improvement: true
+- method: solve_base_cp_model
+  computational_time: null
+  solver_thread_cnt: 1
