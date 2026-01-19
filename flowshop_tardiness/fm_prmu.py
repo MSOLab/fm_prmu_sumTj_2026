@@ -345,6 +345,24 @@ class PermutationFlowshopScheduleLite:
             # )
         return total_tardiness
 
+    def get_stage_2_cj_map(self, job_name: str | None) -> dict[str, int]:
+        """Get the completion time of a job at each stage.
+
+        Args:
+            job_name (str | None): The name of the job. If None, returns an empty dictionary.
+
+        Returns:
+            dict[str, int]: Map from stage names to completion times for the specified job.
+        """
+        return_map: dict[str, int] = {}
+        if job_name is None:
+            return return_map
+
+        for stage_name in self._stage_name_list:
+            Ci: int = self._stage_2_job_2_end_map[stage_name][job_name]
+            return_map[stage_name] = Ci
+        return return_map
+
     def get_stage_2_makespan_map(self) -> dict[str, int]:
         """
         Get the completion time of the last job at each stage.
@@ -353,14 +371,10 @@ class PermutationFlowshopScheduleLite:
             dict[str, int]: A dictionary mapping stage names to their respective makespans.
         """
         return_map: dict[str, int] = {}
-        for stage_name in self._stage_name_list:
-            if self._job_seq:
-                last_job_name: str = self._job_seq[-1]
-                Ci: int = self._stage_2_job_2_end_map[stage_name][last_job_name]
-            else:
-                Ci = 0
-            return_map[stage_name] = Ci
-        return return_map
+        if not self._job_seq:
+            return return_map
+        last_job_name: str = self._job_seq[-1]
+        return self.get_stage_2_cj_map(last_job_name)
 
     def get_end_time_map(self) -> dict[tuple[str, str], int]:
         """

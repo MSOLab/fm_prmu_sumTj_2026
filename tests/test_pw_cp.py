@@ -1,15 +1,12 @@
-import logging
-import math
-from unittest.mock import MagicMock, Mock, ANY
+from unittest.mock import MagicMock
 
 import pytest
 from mbls.cpsat import CpsatSolverReport, CpsatStatus
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
-from schore.schedule_examples.shop.flow import FlowshopSchedule
 
 from flowshop_tardiness.controller.pw_cp import PwCpConstructor, PwCpContext, PwCpResult
 from flowshop_tardiness.cpsat_model_2.position import Params, Vars
-from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite
+
 
 @pytest.fixture
 def mock_context():
@@ -26,8 +23,10 @@ def mock_context():
     p_manager = MagicMock()
     # returns { (stage, job): value }
     p_manager.stage_job_2_value_map.return_value = {
-        ("S1", "J1"): 5, ("S1", "J2"): 4,
-        ("S2", "J1"): 3, ("S2", "J2"): 6
+        ("S1", "J1"): 5,
+        ("S1", "J2"): 4,
+        ("S2", "J1"): 3,
+        ("S2", "J2"): 6,
     }
     ctx.instance.p_manager = p_manager
 
@@ -43,24 +42,23 @@ def mock_context():
     ctx.instance.get_subinstance.side_effect = get_subinstance_mock
 
     ctx.stage_ids = ("S1", "S2")
-    ctx.job_2_stage_2_p_dict = {
-        "J1": {"S1": 5, "S2": 3},
-        "J2": {"S1": 4, "S2": 6}
-    }
+    ctx.job_2_stage_2_p_dict = {"J1": {"S1": 5, "S2": 3}, "J2": {"S1": 4, "S2": 6}}
 
     ctx.params = MagicMock(spec=Params)
     ctx.solver = MagicMock()
 
     # Setup methods
     ctx.get_remaining_time_limit.return_value = 100.0
-    
+
     # Use real logic for get_obj_value and check_feasibility
     def get_obj_value_real(schedule):
         return schedule.get_total_tardiness(ctx.instance.job_2_duedate_map)
+
     ctx.get_obj_value.side_effect = get_obj_value_real
-    
+
     def check_feasibility_real(schedule):
         return get_obj_value_real(schedule)
+
     ctx.check_feasibility.side_effect = check_feasibility_real
 
     ctx.solution_manager = MagicMock()
@@ -73,22 +71,25 @@ def mock_context():
         obj_bound=0,
         status=CpsatStatus.OPTIMAL,
         obj_value_records=[],
-        obj_bound_records=[]
+        obj_bound_records=[],
     )
 
     return ctx
+
 
 @pytest.fixture
 def pw_cp(mock_context):
     return PwCpConstructor(mock_context)
 
+
 def test_initialization(pw_cp, mock_context):
     assert pw_cp.ctx == mock_context
     assert pw_cp._st is None
 
+
 def test_run_basic_flow(pw_cp, mock_context):
     """Test a simple run with a small batch of jobs."""
-    # Use jobs that are NOT J1, J2 to avoid conflict with mock_context defaults if any, 
+    # Use jobs that are NOT J1, J2 to avoid conflict with mock_context defaults if any,
     # but run() clears state so it should be fine.
     job_sequence = ["J1", "J2"]
 
@@ -108,17 +109,28 @@ def test_run_basic_flow(pw_cp, mock_context):
     pw_cp.builder.build.side_effect = build_side_effect
 
     # Mock solver values: ctx.solver.Value(vars.pi[k]) should return j (index)
-    mock_context.solver.Value.side_effect = lambda x: x # vars.pi[k] is k
+    mock_context.solver.Value.side_effect = lambda x: x  # vars.pi[k] is k
 
     result = pw_cp.run(
-        job_sequence=job_sequence,
-        added_batch_size=2,
-        solver_thread_cnt=1
+        job_sequence=job_sequence, added_batch_size=2, solver_thread_cnt=1
     )
 
     assert isinstance(result, PwCpResult)
+    # With batch=2, all 2 jobs are added, CP runs once.
+    # Logic:
+    #  batch 1: remaining=[J1,J2], added=[J1,J2]
+    #  solve -> returns J1,J2 (because mock identity)
+    #  improved=False (base=J1,J2)
+    #  step_size=1 (default no improve)
+    #  pf=[J1]. overflow=1. commit J1.
+    #  remaining=[J2].
+    #  batch 2: remaining=[J2], added=[J2].
+    #  solve -> J2.
+    #  commit J2.
+    #  finish.
     assert len(result.schedule.get_last_stage_job_list()) == 2
     assert mock_context.solve_cp_model_2.call_count >= 1
+
 
 def test_run_two_batches(pw_cp, mock_context):
     """Test running with batch size smaller than job list."""
@@ -139,36 +151,63 @@ def test_run_two_batches(pw_cp, mock_context):
     mock_context.solver.Value.side_effect = lambda x: x
 
     result = pw_cp.run(
-        job_sequence=job_sequence,
-        added_batch_size=1, 
-        solver_thread_cnt=1
+        job_sequence=job_sequence, added_batch_size=1, solver_thread_cnt=1
     )
 
     assert isinstance(result, PwCpResult)
     assert len(result.schedule.get_last_stage_job_list()) == 2
     assert mock_context.solve_cp_model_2.call_count >= 2
 
+
 def test_log_snapshot(pw_cp, mock_context):
-    """Test _log_snapshot functionality via run state."""
+    """Test that _log_snapshot actually records objective values in sub_obj_store."""
+
     job_sequence = ["J1"]
-    
+
+    # Correctly mock builder to return iterable j_list and valid variables
+    def build_side_effect(sub_instance, **kwargs):
+        m_mdl = MagicMock()
+        m_params = MagicMock(spec=Params)
+        m_params.j_list = list(range(len(sub_instance.job_id_list)))  # [0]
+        m_vars = MagicMock(spec=Vars)
+        m_vars.total_tardiness = MagicMock()
+        m_vars.sum_latest_completion = MagicMock()
+        m_vars.pi = {0: 0}
+
+        return m_mdl, m_params, m_vars
+
     pw_cp.builder = MagicMock()
-    pw_cp.builder.build.return_value = (MagicMock(), MagicMock(), MagicMock())
-    # satisfy PwCpConstructor._solve_cp_model_lexico_for_batch requirements if called
-    
-    # We just want to see if run() completes and log_snapshot was called internally
+    pw_cp.builder.build.side_effect = build_side_effect
+
+    # Solver value mock needs to return an int (the index)
+    mock_context.solver.Value.return_value = 0
+
     result = pw_cp.run(job_sequence, added_batch_size=1)
-    assert result.last_obj_value >= 0
+
+    # Verify that log entries exist in the store
+    assert len(result.sub_obj_store.obj_value_series) > 0
+
+    # Verify valid objective value
+    assert result.sub_obj_store.get_last_obj_value() >= 0
+
 
 def test_solver_infeasible(pw_cp, mock_context):
     """Test handling when solver returns infeasible."""
     job_sequence = ["J1"]
 
+    # Configure mock
+    def build_side_effect(sub_instance, **kwargs):
+        m_mdl = MagicMock()
+        m_params = MagicMock(spec=Params)
+        m_params.j_list = [0]
+        m_vars = MagicMock(spec=Vars)
+        m_vars.pi = {0: 0}
+        m_vars.total_tardiness = MagicMock()
+        m_vars.sum_latest_completion = MagicMock()
+        return m_mdl, m_params, m_vars
+
     pw_cp.builder = MagicMock()
-    m_mdl, m_params, m_vars = MagicMock(), MagicMock(), MagicMock()
-    m_params.j_list = [0]
-    m_vars.pi = {0: 0}
-    pw_cp.builder.build.return_value = (m_mdl, m_params, m_vars)
+    pw_cp.builder.build.side_effect = build_side_effect
 
     # Return infeasible report
     mock_context.solve_cp_model_2.return_value = CpsatSolverReport(
@@ -177,7 +216,7 @@ def test_solver_infeasible(pw_cp, mock_context):
         obj_bound=None,
         status=CpsatStatus.INFEASIBLE,
         obj_value_records=[],
-        obj_bound_records=[]
+        obj_bound_records=[],
     )
 
     result = pw_cp.run(job_sequence, added_batch_size=1)

@@ -91,6 +91,7 @@ class BaseModelBuilder:
         stage_2_est_map: dict[str, int] | None = None,
         stage_2_lct_map: dict[str, int] | None = None,
         sumTj_offset: int | None = None,
+        profile_fixed_job_list: list[str] | None = None,
     ) -> tuple[CustomCpModel, Params, Vars]:
         mdl = CustomCpModel()
         params: Params = self._make_params(
@@ -102,6 +103,11 @@ class BaseModelBuilder:
         self._define_objectives(
             mdl, instance, params, vars, sumTj_offset=sumTj_offset
         )  # only defines vars + equalities
+        if profile_fixed_job_list is not None:
+            # Add profile-fixing constraints
+            self._add_profile_fixing_constraints(
+                mdl, instance, params, vars, profile_fixed_job_list
+            )
 
         return mdl, params, vars
 
@@ -324,3 +330,55 @@ class BaseModelBuilder:
         sumCi = mdl.new_int_var(0, S_ub, "sum_latest_completion")
         mdl.add(sumCi == sum(vars.op_end[i, params.j_last] for i in params.i_list))
         vars.sum_latest_completion = sumCi
+
+    def _add_profile_fixing_constraints(
+        self,
+        mdl: CpModel,
+        instance: FlowshopDuedateParameters,
+        params: Params,
+        vars: Vars,
+        profile_fixed_job_list: list[str],
+    ) -> None:
+        """
+        Add profile-fixing constraints to the model.
+        Jobs in profile_fixed_job_list should maintain their relative order in the solution.
+
+        Example:
+            If all job list = ['JobA', 'JobB', 'JobC'] and profile_fixed_job_list = ['JobA', 'JobC'],
+            possible sequences are:
+                - ['JobB', 'JobA', 'JobC']
+                - ['JobA', 'JobB', 'JobC']
+                - ['JobA', 'JobC', 'JobB']
+            but not:
+                - ['JobC', 'JobA', 'JobB']
+
+        Args:
+            mdl (CpModel): model to which constraints are added
+            instance (FlowshopDuedateParameters): instance parameters
+            params (Params): parameters of the model
+            vars (Vars): variables of the model
+            profile_fixed_job_list (list[str]): List of job names to fix the profile
+        """
+        if len(profile_fixed_job_list) < 2:
+            # No need to add constraints if less than 2 jobs are specified
+            return
+
+        job_name_2_j_map = params.job_name_2_j_map
+        j_list = params.j_list
+
+        # Variable for positions of jobs
+        pi_inv = {
+            j: mdl.new_int_var(params.j_first, params.j_last, f"pi_inv_{j}")
+            for j in j_list
+        }
+        # Define inverse mapping constraints
+        pi_list = [vars.pi[k] for k in j_list]
+        pi_inv_list = [pi_inv[j] for j in j_list]
+        mdl.add_inverse(pi_list, pi_inv_list)
+
+        # Convert job names to job indices
+        fixed_job_indices = [job_name_2_j_map[name] for name in profile_fixed_job_list]
+
+        # Add constraints to maintain relative order
+        for j, jp in zip(fixed_job_indices[:-1], fixed_job_indices[1:]):
+            mdl.add(pi_inv[j] < pi_inv[jp])

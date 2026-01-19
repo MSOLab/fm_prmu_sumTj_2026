@@ -853,7 +853,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             self.export_incumbent_to_yaml()
 
     def initialize_by_nehedd(
-        self, error_if_infeasible: bool = False, draw_gantt: bool = False, random_among_best_pos: bool = False
+        self,
+        error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
+        random_among_best_pos: bool = False,
     ) -> None:
         self._run_neh_edd(
             "NEHedd",
@@ -864,7 +867,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         )
 
     def initialize_by_nehms(
-        self, error_if_infeasible: bool = False, draw_gantt: bool = False, random_among_best_pos: bool = False
+        self,
+        error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
+        random_among_best_pos: bool = False,
     ) -> None:
         self._run_neh_edd(
             "makespan",
@@ -1265,10 +1271,13 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             if was_updated and draw_gantt:
                 self.export_incumbent_to_yaml()
 
+    # Subroutine: Prefix-window CP
+
     def pw_cp(
         self,
         solver_thread_cnt: int,
-        added_batch_size: int = 1,
+        added_batch_size: int | None = None,
+        profile_fixed_cnt: int | None = None,
         max_time_per_add: float | None = None,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
@@ -1289,6 +1298,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         """
         sub_timer = ElapsedTimer()
 
+        if added_batch_size is None:
+            added_batch_size = 1
+        if profile_fixed_cnt is None:
+            profile_fixed_cnt = 0
+
         # Job sequence from the incumbent solution
         incumbent_sol = self.solution_manager.get_incumbent()
         if incumbent_sol is None:
@@ -1308,6 +1322,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         result: PwCpResult = constructor.run(
             job_sequence,
             added_batch_size=added_batch_size,
+            profile_fixed_cnt=profile_fixed_cnt,
             solver_thread_cnt=solver_thread_cnt,
             max_time_per_add=max_time_per_add,
             error_if_infeasible=error_if_infeasible,
