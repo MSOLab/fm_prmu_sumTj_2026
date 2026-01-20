@@ -20,12 +20,12 @@ from flowshop_tardiness.controller.genetic_algorithm import (
     FlowshopTardinessGeneticAlgorithmController,
 )
 from fs_config import MainMetadata
+from ga_ctrlr_multi_instance import FsMultiInstanceRunner
+from ga_ctrlr_multi_scenario import FsMultiScenarioRunner
+from ga_ctrlr_single_instance import FsSingleInstanceRunner
 from output_filenames import OutputFilenames
-from tbb_2018_gaedd_multi_instance import FsMultiInstanceRunner
-from tbb_2018_gaedd_multi_scenario import FsMultiScenarioRunner
-from tbb_2018_gaedd_single_instance import FsSingleInstanceRunner
 
-MAIN_METADATA_FILENAME = "tbb_2018_gaedd_metadata.yaml"
+MAIN_METADATA_FILENAME = "ga_ctrlr_metadata.yaml"
 
 def main():
     e_timer = ElapsedTimer()

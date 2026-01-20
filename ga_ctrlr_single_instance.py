@@ -13,7 +13,9 @@ from schore.parameters_examples.shop.flow import (
 )
 from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedule
 
-from flowshop_tardiness.controller.genetic_algorithm import FlowshopTardinessGeneticAlgorithmController
+from flowshop_tardiness.controller.genetic_algorithm import (
+    FlowshopTardinessGeneticAlgorithmController,
+)
 from flowshop_tardiness.fs_input_summary import FsInputSummary
 from flowshop_tardiness.fs_io_summary import FsIoSummary
 from flowshop_tardiness.io_solution import END_TIME_MAP_KEY, START_TIME_MAP_KEY
@@ -24,7 +26,9 @@ from flowshop_tardiness.report.fs_subroutine_report_statistics import (
 
 
 class FsSingleInstanceRunner(
-    SingleInstanceRunner[FlowshopDuedateParameters, FlowshopTardinessGeneticAlgorithmController]
+    SingleInstanceRunner[
+        FlowshopDuedateParameters, FlowshopTardinessGeneticAlgorithmController
+    ]
 ):
     # Optional member variables for RunMode.RESUME
     resume_start_time_map: dict | None = None
@@ -46,9 +50,7 @@ class FsSingleInstanceRunner(
         output_metadata: dict[str, Any],
         mode: RunMode = RunMode.FULL_RUN,
     ):
-        _stopping_criteria = StoppingCriteria.from_dict(
-            stopping_criteria.to_obj()
-        )
+        _stopping_criteria = StoppingCriteria.from_dict(stopping_criteria.to_obj())
         super().__init__(
             instance=instance,
             shared_param_dict=shared_param_dict,

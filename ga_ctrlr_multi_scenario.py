@@ -14,9 +14,9 @@ from xlsxwriter import Workbook
 from xlsxwriter.worksheet import Worksheet
 
 from fs_config import BaselineColumnMapping
+from ga_ctrlr_multi_instance import FsMultiInstanceRunner
+from ga_ctrlr_single_instance import FsSingleInstanceRunner
 from output_filenames import OutputFilenames
-from tbb_2018_gaedd_multi_instance import FsMultiInstanceRunner
-from tbb_2018_gaedd_single_instance import FsSingleInstanceRunner
 
 
 class FsMultiScenarioRunner(

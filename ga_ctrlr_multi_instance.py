@@ -9,8 +9,8 @@ from routix.type_defs import RunMode
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
 from flowshop_tardiness.io_solution import get_end_time_dict, get_start_time_dict
+from ga_ctrlr_single_instance import FsSingleInstanceRunner
 from scripts.process_logs import process_scenario
-from tbb_2018_gaedd_single_instance import FsSingleInstanceRunner
 
 
 class FsMultiInstanceRunner(
@@ -347,16 +347,16 @@ if __name__ == "__main__":
 
     shared_param_dict = {"horizon": 100000}
     subroutine_flow = DynamicDataObject.from_sequence(
-            [
-                {"method": "set_random_seed", "seed": 0},
-                {
-                    "method": "ga_edd",
-                    "pop_size": 150,
-                    "cross_size": 200,
-                    "mut_size": 100,
-                },
-            ]
-        )
+        [
+            {"method": "set_random_seed", "seed": 0},
+            {
+                "method": "ga_edd",
+                "pop_size": 150,
+                "cross_size": 200,
+                "mut_size": 100,
+            },
+        ]
+    )
     stopping_criteria = StoppingCriteria.from_dict({"timelimit": 60})
     output_dir = repo_root / "Outputs/multiInsRunnerMain"
     output_metadata: dict[str, Any] = {}
