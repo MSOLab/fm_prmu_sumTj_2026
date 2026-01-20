@@ -4,12 +4,15 @@ import argparse
 import logging
 import random
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedule
 
+from flowshop_tardiness.controller.flowshop_batch_eval import (
+    PermutationFlowshopSubseqEvaluator,
+)
 from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite
 from flowshop_tardiness.report import FsSubroutineReport
 
@@ -18,6 +21,9 @@ from .base_flowshop_controller import BaseFlowshopController
 
 
 class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
+    pop_mgr: PopulationManager
+    """Population manager for genetic algorithm."""
+
     def __init__(
         self,
         instance: FlowshopDuedateParameters,
@@ -33,21 +39,33 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         )
         self.method_names_to_run_before_resume = {"set_random_seed"}
 
-    # Start subalgorithm definition
+    # Start subalgorithm definition: GA_EDD by Ta et al. (2018)
 
     def ga_edd(self, pop_size: int, cross_size: int, mut_size: int):
+        """Genetic Algorithm with EDD initialization for Flowshop Tardiness by Ta et al. (2018).
+
+        Args:
+            pop_size (int): Population size
+            cross_size (int): Number of crossovers per generation
+            mut_size (int): Number of mutations per generation
+
+        Raises:
+            RuntimeError: If no trajectory record found after initialization.
+            RuntimeError: If population is empty during main loop.
+            RuntimeError: If no trajectory record found after update.
+            RuntimeError: If no best solution found in population manager.
+        """
         sub_timer = ElapsedTimer()
         _cross_cnt = int(cross_size / 2)  # two children per crossover
         # Initialize population manager
-        self.population_manager = PopulationManager(pop_size, timer=self.timer)
-        pop_mgr = self.population_manager
+        self.pop_mgr = PopulationManager(pop_size, timer=self.timer)
         # job_set = set(self.instance.job_id_list)  # for sanity check
 
         # Initialize population
         self._initialize_population()
         # self._log_best_fitness_to_obj_store("1st")
-        pop_mgr.generation = 1
-        record = pop_mgr.get_last_trajectory_record()
+        self.pop_mgr.generation = 1
+        record = self.pop_mgr.get_last_trajectory_record()
         if record is None:
             raise RuntimeError("No trajectory record found after initialization.")
         logging.info(
@@ -60,8 +78,8 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         is_optimal: bool = last_obj_value == 0
         # Start main loop
         while not (is_timeover or is_optimal):
-            pop_mgr.generation += 1
-            P_prev = pop_mgr.get_this_population_list()
+            self.pop_mgr.generation += 1
+            P_prev = self.pop_mgr.get_this_population_list()
             if not P_prev:
                 raise RuntimeError("Population is empty, cannot proceed with GA.")
 
@@ -112,18 +130,18 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                         #     "Duplicate jobs in child solution."
                         # )
 
-                    pop_mgr.add_individual(
+                    self.pop_mgr.add_individual(
                         child_sol1, self._evaluate(child_sol1), source=cross_type
                     )
-                    pop_mgr.add_individual(
+                    self.pop_mgr.add_individual(
                         child_sol2, self._evaluate(child_sol2), source=cross_type
                     )
 
-                this_obj_value = pop_mgr.get_best_fitness()
+                this_obj_value = self.pop_mgr.get_best_fitness()
                 if is_timeover:
                     # updated = self._log_best_fitness_to_obj_store("TIME UP")
                     if last_obj_value != this_obj_value:
-                        record = pop_mgr.get_last_trajectory_record()
+                        record = self.pop_mgr.get_last_trajectory_record()
                         if record is None:
                             raise RuntimeError(
                                 "No trajectory record found after update."
@@ -158,15 +176,15 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     else:  # backward_insertion
                         child_sol = self._mutate_backward_insertion(parent_sol)
 
-                    pop_mgr.add_individual(
+                    self.pop_mgr.add_individual(
                         child_sol, self._evaluate(child_sol), source=mutation_type
                     )
 
-                this_obj_value = pop_mgr.get_best_fitness()
+                this_obj_value = self.pop_mgr.get_best_fitness()
                 if is_timeover:
                     # updated = self._log_best_fitness_to_obj_store("TIME UP")
                     if last_obj_value != this_obj_value:
-                        record = pop_mgr.get_last_trajectory_record()
+                        record = self.pop_mgr.get_last_trajectory_record()
                         if record is None:
                             raise RuntimeError(
                                 "No trajectory record found after update."
@@ -184,12 +202,12 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     break
 
             # Elitist replacement
-            pop_mgr.elitist_replace()
+            self.pop_mgr.elitist_replace()
 
             # Log best fitness if improved
-            this_obj_value = pop_mgr.get_best_fitness()
+            this_obj_value = self.pop_mgr.get_best_fitness()
             if last_obj_value != this_obj_value:
-                record = pop_mgr.get_last_trajectory_record()
+                record = self.pop_mgr.get_last_trajectory_record()
                 if record is None:
                     raise RuntimeError("No trajectory record found after update.")
                 logging.info(
@@ -207,7 +225,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         # Wrap up
         if last_obj_value is not None:
             # Update objective store
-            timestamp_obj_value_list = pop_mgr.get_best_obj_series()
+            timestamp_obj_value_list = self.pop_mgr.get_best_obj_series()
             for timestamp, obj_value in timestamp_obj_value_list:
                 self.obj_store.add_obj_value(
                     timestamp=timestamp,
@@ -222,8 +240,8 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             )
 
             # Register final solution
-            obj_value = pop_mgr.get_best_fitness()
-            last_job_seq = pop_mgr.get_best_solution()
+            obj_value = self.pop_mgr.get_best_fitness()
+            last_job_seq = self.pop_mgr.get_best_solution()
             report = FsSubroutineReport(
                 elapsed_time=sub_timer.elapsed_sec,
                 obj_value=obj_value,
@@ -235,7 +253,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             last_schedule = self._dispatch_permutation(list(last_job_seq))
             self.solution_manager.register(report, last_schedule)
 
-    # End subalgorithm definition
+    # End subalgorithm definition: GA_EDD by Ta et al. (2018)
 
     # Start subalgorithm helper methods
 
@@ -260,25 +278,33 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             solutions.add(tuple(random.sample(job_ids, k=n)))
         return list(solutions)
 
-    def _initialize_population(self) -> None:
-        mgr = self.population_manager
-        # Initialize population
-        edd_solution = self._build_edd_solution()
+    def _initialize_population(self, add_neh_edd_sol: bool = False) -> None:
+        mgr = self.pop_mgr
 
         # One solution by EDD
+        edd_solution = self._build_edd_solution()
         edd_fitness = self._evaluate(edd_solution)
-        self.population_manager.add_individual(
-            edd_solution, edd_fitness, source="EDD_INIT"
-        )
+        self.pop_mgr.add_individual(edd_solution, edd_fitness, source="EDD_INIT")
+        random_sol_cnt = mgr.pop_size - 1
+
+        # Optional NEH-EDD solution
+        if add_neh_edd_sol:
+            neh_edd_solution = self._build_neh_edd_solution()
+            neh_edd_fitness = self._evaluate(neh_edd_solution)
+            self.pop_mgr.add_individual(
+                neh_edd_solution, neh_edd_fitness, source="NEH_EDD_INIT"
+            )
+            random_sol_cnt -= 1
 
         # Remaining solution by random permutations
-        random_solutions = self._get_random_solutions(mgr.pop_size - 1)
+        random_solutions = self._get_random_solutions(random_sol_cnt)
         for sol in random_solutions:
             fitness = self._evaluate(sol)
-            self.population_manager.add_individual(sol, fitness, source="RAND_INIT")
+            self.pop_mgr.add_individual(sol, fitness, source="RAND_INIT")
 
+    @staticmethod
     def _crossover_one_point(
-        self, parent_a: tuple[str, ...], parent_b: tuple[str, ...]
+        parent_a: tuple[str, ...], parent_b: tuple[str, ...]
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """
         X1: one-point crossover (paper definition).
@@ -310,8 +336,9 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
 
         return o1, o2
 
+    @staticmethod
     def _crossover_linear_order(
-        self, parent_a: tuple[str, ...], parent_b: tuple[str, ...]
+        parent_a: tuple[str, ...], parent_b: tuple[str, ...]
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """
         LOX: linear order crossover (paper definition).
@@ -333,7 +360,9 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             raise ValueError("Parents must have the same length.")
         if n <= 2:
             # LOX needs meaningful middle; fallback to X1-style behavior
-            return self._crossover_one_point(parent_a, parent_b)
+            return FlowshopTardinessGeneticAlgorithmController._crossover_one_point(
+                parent_a, parent_b
+            )
 
         a = random.randrange(0, n - 1)
         b = random.randrange(a + 1, n)  # middle is [a, b)
@@ -379,7 +408,8 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
 
         return o1, o2
 
-    def _mutate_forward_insertion(self, solution: tuple[str, ...]) -> tuple[str, ...]:
+    @staticmethod
+    def _mutate_forward_insertion(solution: tuple[str, ...]) -> tuple[str, ...]:
         """
         Forward insertion (FI):
         choose i < j, remove job at i and insert it at j.
@@ -396,7 +426,8 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         sol.insert(j, job)
         return tuple(sol)
 
-    def _mutate_backward_insertion(self, solution: tuple[str, ...]) -> tuple[str, ...]:
+    @staticmethod
+    def _mutate_backward_insertion(solution: tuple[str, ...]) -> tuple[str, ...]:
         """
         Backward insertion (BI):
         choose i > j, remove job at i and insert it at j.
@@ -429,7 +460,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         return_val = False
 
         log_time = self.timer.elapsed_sec
-        obj_value = self.population_manager.get_best_fitness()
+        obj_value = self.pop_mgr.get_best_fitness()
         if obj_value is not None:
             last_obj_value = self.obj_store.get_last_obj_value()
             if last_obj_value is None or obj_value < last_obj_value:
@@ -475,6 +506,722 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         return schedule
 
     # End logging helper methods
+
+    # Start subalgorithm definition: GAPR by Vallada and Ruiz (2010)
+
+    def gapr(
+        self,
+        P_size: int | None = None,
+        div: float | None = None,
+        pressure: float | None = None,
+        P_m: float | None = None,
+        P_ls: float | None = None,
+    ):
+        """Genetic Algorithm with Path Relinking for Flowshop Tardiness by Vallada and Ruiz (2010).
+
+        Args:
+            P_size (int | None, optional): Population size.
+                If None, defaults to 30. Defaults to None.
+            Div (float | None, optional): Diversity threshold.
+                If None, defaults to 0.4. Defaults to None.
+            Pressure (float | None, optional): Pressure for the selection.
+                If None, defaults to 0.3 (30% in the paper). Defaults to None.
+            P_m (float | None, optional): Mutation probability.
+                If None, defaults to 0.02. Defaults to None.
+            P_ls (float | None, optional): Local search probability.
+                If None, defaults to 0.15. Defaults to None.
+        """
+        # --- defaults ---
+        if P_size is None:
+            P_size = 30
+        if div is None:
+            div = 0.4
+        if pressure is None:
+            pressure = 0.3
+        if P_m is None:
+            P_m = 0.02
+        if P_ls is None:
+            P_ls = 0.15
+
+        _pressure = self._normalize_pressure(pressure)
+
+        sub_timer = ElapsedTimer()
+        logging.info(
+            "Starting GAPR method with parameters: "
+            f"P_size={P_size}, Div={div}, Pressure={_pressure}, P_m={P_m}, P_ls={P_ls}"
+        )
+        # Statistics
+        stats: dict[str, Any] = {
+            "gen_start": 1,
+            "gen_end": 1,
+            "restart_cnt": 0,
+            "restart_keep_best_cnt": 0,
+            "div_check_cnt": 0,
+            "div_below_cnt": 0,
+            "op_children_generated": 0,  # OP에서 생성한 child 수 (보통 2씩)
+            "children_added_cnt": 0,  # pop에 실제 add_individual 한 child 수(중복 제외)
+            "children_dup_rejected_cnt": 0,
+            "ls_attempted_cnt": 0,  # p_ls 통과해서 LS 수행한 횟수
+            "ls_improved_cnt": 0,  # LS로 개선된 해가 나온 횟수
+            "pr_called_cnt": 0,
+            "pr_candidates_generated": 0,  # bidirectional에서 나온 candidate 개수
+            "pr_added_cnt": 0,
+            "pr_dup_rejected_cnt": 0,
+            "elitist_replace_cnt": 0,
+            "best_update_cnt": 0,
+            "best_by_source": {},  # source별 best 갱신 횟수 카운팅 (OP/PR/...)
+        }
+
+        # Initialize population manager
+        self.pop_mgr = PopulationManager(P_size, timer=self.timer)
+
+        # Build initial population
+        self._initialize_population(add_neh_edd_sol=True)
+
+        self.pop_mgr.generation = 1
+        record = self.pop_mgr.get_last_trajectory_record()
+        if record is None:
+            raise RuntimeError("No trajectory record found after initialization.")
+        logging.info(
+            f"GAPR Gen {record.generation} at {record.timestamp:.2f}: "
+            f"Best obj (sumTj) = {record.obj_value} by {record.source}"
+        )
+        last_obj_value = record.obj_value
+
+        # Track duplicates using current population content
+        pop_set: set[tuple[str, ...]] = self.pop_mgr.get_population_set()
+
+        # PR 'marked' control (to reduce repeated PR pairs)
+        marked: set[tuple[str, ...]] = set()
+
+        is_timeover: bool = self.time_is_up()
+        is_optimal: bool = last_obj_value == 0
+
+        # ---------------- main loop (steady-state style) ----------------
+        while not (is_timeover or is_optimal):
+            self.pop_mgr.generation += 1
+            stats["gen_end"] += 1
+            P_prev = self.pop_mgr.get_this_population_list()
+            if not P_prev:
+                raise RuntimeError("Population is empty, cannot proceed with GAPR.")
+
+            # Refresh population set (in case elitist_replace changed membership)
+            pop_set = set(P_prev)
+
+            # 1) Diversity check & restart if needed
+            stats["div_check_cnt"] += 1
+            div_value = self._compute_population_diversity(P_prev)
+            if div_value < div:
+                stats["div_below_cnt"] += 1
+                stats["restart_cnt"] += 1
+                if True:  # keep_best=True를 쓰고 있으니
+                    stats["restart_keep_best_cnt"] += 1
+                self._restart_population_gapr(P_size=P_size, keep_best=True)
+                marked.clear()
+                P_prev = self.pop_mgr.get_this_population_list()
+                pop_set = set(P_prev)
+
+            # 2) Parent selection (tournament with pressure)
+            parent1 = self._tournament_select(P_prev, _pressure)
+            parent2 = self._tournament_select(P_prev, _pressure)
+            # ensure distinct parents when possible
+            if len(P_prev) >= 2:
+                _guard = 0
+                while parent2 == parent1 and _guard < 10:
+                    parent2 = self._tournament_select(P_prev, _pressure)
+                    _guard += 1
+
+            # 3) Crossover (fixed OP) - ALWAYS (GAPR style)
+            children: list[tuple[str, ...]]
+            if len(P_prev) >= 2:
+                c1, c2 = self._crossover_order_based(parent1, parent2)
+                children = [c1, c2]
+                child_source = "OP"
+                stats["op_children_generated"] += 2
+            else:
+                # degenerate case (shouldn't happen with P_size>=2)
+                children = [parent1]
+                child_source = "OP"
+
+            # 4) Mutation (insertion-based, probability P_m)
+            mutated_children: list[tuple[str, ...]] = []
+            for ch in children:
+                mutated_children.append(self._mutate_insertion_per_gene(ch, P_m))
+
+            # 5) Local search with probability P_ls (light insertion LS)
+            improved_children: list[tuple[str, ...]] = []
+            for ch in mutated_children:
+                before = ch
+                after = self._maybe_local_search_insertion(ch, P_ls)
+                stats["ls_attempted_cnt"] += 1
+                if after != before:
+                    stats["ls_improved_cnt"] += 1
+                improved_children.append(after)
+
+            # 6) Acceptance: add if not duplicate, then elitist_replace keeps best P_size
+            accepted_any = False
+            for ch in improved_children:
+                is_timeover = self.time_is_up()
+                if is_timeover:
+                    break
+                if ch in pop_set:
+                    stats["children_dup_rejected_cnt"] += 1
+                    continue
+                fit = self._evaluate(ch)
+                self.pop_mgr.add_individual(ch, fit, source=child_source)
+                pop_set.add(ch)
+                accepted_any = True
+                stats["children_added_cnt"] += 1
+
+            # Maintain population size
+            if accepted_any:
+                self.pop_mgr.elitist_replace()
+                stats["elitist_replace_cnt"] += 1
+
+            # 7) Log best fitness if improved
+            this_obj_value = self.pop_mgr.get_best_fitness()
+            if this_obj_value is None:
+                raise RuntimeError("No best fitness found in population manager.")
+            if this_obj_value != last_obj_value:
+                record = self.pop_mgr.get_last_trajectory_record()
+                if record is None:
+                    raise RuntimeError("No trajectory record found after update.")
+                logging.info(
+                    f"GAPR Gen {record.generation} at {record.timestamp:.2f}: "
+                    f"Best obj (sumTj) = {record.obj_value} by {record.source}"
+                )
+                last_obj_value = this_obj_value
+                stats["best_update_cnt"] += 1
+                src = record.source if record else "UNKNOWN"
+                stats["best_by_source"][src] = stats["best_by_source"].get(src, 0) + 1
+
+            # 8) Path Relinking (GAPR): apply every generation (PR=1)
+            if (not is_timeover) and len(P_prev) >= 2:
+                # pick two unmarked individuals by tournament selection (PR type 1)
+                a, b = self._select_pr_pair_pr1(P_prev, _pressure, marked)
+                # perform bidirectional PR and inject best candidates
+                stats["pr_called_cnt"] += 1
+                pr_candidates = self._path_relink_bidirectional_best(a, b)
+                stats["pr_candidates_generated"] += len(pr_candidates)
+
+                for cand in pr_candidates:
+                    is_timeover = self.time_is_up()
+                    if is_timeover:
+                        break
+                    if cand in pop_set:
+                        stats["pr_dup_rejected_cnt"] += 1
+                        continue
+                    fit = self._evaluate(cand)
+                    self.pop_mgr.add_individual(cand, fit, source="PR")
+                    pop_set.add(cand)
+                    stats["pr_added_cnt"] += 1
+                self.pop_mgr.elitist_replace()
+                stats["elitist_replace_cnt"] += 1
+                marked.add(a)
+                marked.add(b)
+
+            # termination checks
+            is_timeover = self.time_is_up()
+            is_optimal = last_obj_value == 0
+            if is_optimal:
+                logging.info("GAPR: reached optimal solution (obj=0).")
+
+        # Gather statistics
+        elapsed = sub_timer.elapsed_sec
+        best_obj = self.pop_mgr.get_best_fitness()
+        pop_size_final = len(self.pop_mgr.get_this_population_list())
+
+        logging.info("===== GAPR Summary =====")
+        logging.info(
+            "gens: %d -> %d (total %d), elapsed: %.2fs, best_obj: %s, pop_size_final: %d",
+            stats["gen_start"],
+            stats["gen_end"],
+            stats["gen_end"] - stats["gen_start"] + 1,
+            elapsed,
+            str(best_obj),
+            pop_size_final,
+        )
+        logging.info(
+            "restart: %d (keep_best: %d), div_checks: %d, div_below: %d",
+            stats["restart_cnt"],
+            stats["restart_keep_best_cnt"],
+            stats["div_check_cnt"],
+            stats["div_below_cnt"],
+        )
+        logging.info(
+            "OP children generated: %d, children added: %d, dup rejected: %d, elitist_replace calls: %d",
+            stats["op_children_generated"],
+            stats["children_added_cnt"],
+            stats["children_dup_rejected_cnt"],
+            stats["elitist_replace_cnt"],
+        )
+        logging.info(
+            "LS called: %d, LS improved: %d (P_ls=%.3f)",
+            stats["ls_attempted_cnt"],
+            stats["ls_improved_cnt"],
+            P_ls,
+        )
+        logging.info(
+            "PR called: %d, PR candidates: %d, PR added: %d, PR dup rejected: %d",
+            stats["pr_called_cnt"],
+            stats["pr_candidates_generated"],
+            stats["pr_added_cnt"],
+            stats["pr_dup_rejected_cnt"],
+        )
+        logging.info(
+            "Best updates: %d, by source: %s",
+            stats["best_update_cnt"],
+            stats["best_by_source"],
+        )
+        logging.info("========================")
+
+        # Wrap up
+        if last_obj_value is not None:
+            # Update objective store
+            timestamp_obj_value_list = self.pop_mgr.get_best_obj_series()
+            for timestamp, obj_value in timestamp_obj_value_list:
+                self.obj_store.add_obj_value(
+                    timestamp=timestamp,
+                    value=obj_value,
+                    is_maximize=False,
+                )
+            log_time = self.timer.elapsed_sec
+            self.obj_store.add_obj_value(log_time, last_obj_value, is_maximize=None)
+            _last_timestamp_note = self._get_call_context_of_current_method()
+            self.obj_store.add_last_timestamp_note(
+                _last_timestamp_note, obj_value_is_valid=True
+            )
+
+            # Register final solution
+            obj_value = self.pop_mgr.get_best_fitness()
+            last_job_seq = self.pop_mgr.get_best_solution()
+            report = FsSubroutineReport(
+                elapsed_time=sub_timer.elapsed_sec,
+                obj_value=obj_value,
+                obj_bound=None,
+                is_init=False,
+            )
+            if last_job_seq is None:
+                raise RuntimeError("No best solution found in population manager.")
+            last_schedule = self._dispatch_permutation(list(last_job_seq))
+            self.solution_manager.register(report, last_schedule)
+
+    # End subalgorithm definition: GAPR by Vallada and Ruiz (2010)
+
+    # Start NEHedd helper (not used in GA-EDD)
+
+    def _build_neh_edd_solution(self) -> tuple[str, ...]:
+        # 1) EDD order
+        edd_sequence = self._build_edd_solution()
+
+        return_seq: list[str] = [edd_sequence[0]]
+        # 2) NEH insertion by EDD order with NEW acceleration evaluation
+        for j in edd_sequence[1:]:
+            pos_list = self._get_best_pos_list_and_metric_new_acc(return_seq, j)
+            pos = pos_list[0]
+            return_seq.insert(pos, j)
+
+        return tuple(return_seq)
+
+    def _get_best_pos_list_and_metric_new_acc(
+        self,
+        seq_now: list[str],
+        job_id_seq: Sequence[str] | str,
+    ) -> list[int]:
+        """
+        Evaluate insertion of job_id into seq_now using NEW acceleration
+        (Fernandez-Viagas et al., 2020) evaluator.
+
+        Args:
+            seq_now (list[str]): current sequence of job IDs
+            job_id_seq (Sequence[str] | str): job ID (string) or sequence of job IDs to insert
+
+        Returns:
+            tuple[list[int], int]: list of best insertion positions & objective value
+        """
+        _job_id_seq: Sequence[str]
+        if isinstance(job_id_seq, str):
+            _job_id_seq = [job_id_seq]
+        else:
+            _job_id_seq = job_id_seq
+
+        evaluator, job_id_to_idx, _ = self._get_new_acc_evaluator()
+
+        # convert current sequence to index sequence
+        pi_idx = [job_id_to_idx[j] for j in seq_now]
+        sigma_idx_seq = [job_id_to_idx[job_id] for job_id in _job_id_seq]
+
+        # NEW evaluator returns best position and best objective1 value (sumTj)
+        best_pos_list, _ = evaluator.get_best_position(pi_idx, sigma_idx_seq)
+        return best_pos_list
+
+    def _get_new_acc_evaluator(self):
+        """
+        Build (and cache) a PermutationFlowshopSubseqEvaluator that uses 0-based
+        integer job indices internally.
+
+        Returns:
+            (evaluator, job_id_to_idx, idx_to_job_id)
+        """
+        # cache on controller instance to avoid rebuilding on every call
+        if hasattr(self, "_new_acc_cache") and self._new_acc_cache is not None:
+            return self._new_acc_cache
+
+        job_ids: list[str] = list(self.instance.job_id_list)
+        stage_ids: list[str] = list(self.stage_ids)
+
+        job_id_to_idx: dict[str, int] = {jid: k for k, jid in enumerate(job_ids)}
+        idx_to_job_id: dict[int, str] = {k: jid for jid, k in job_id_to_idx.items()}
+
+        m = len(stage_ids)
+        n = len(job_ids)
+
+        # Build p[m][n] aligned with (stage_idx, job_idx)
+        p = [[0] * n for _ in range(m)]
+        for i, stage_id in enumerate(stage_ids):
+            for jid in job_ids:
+                j = job_id_to_idx[jid]
+                p[i][j] = int(self.stage_2_job_2_p_dict[stage_id][jid])
+
+        # Build due[n]
+        due = [0] * n
+        for jid in job_ids:
+            j = job_id_to_idx[jid]
+            due[j] = int(self.instance.job_2_duedate_map[jid])
+
+        evaluator = PermutationFlowshopSubseqEvaluator(p, due)
+
+        self._new_acc_cache: tuple[
+            PermutationFlowshopSubseqEvaluator, dict[str, int], dict[int, str]
+        ] = (evaluator, job_id_to_idx, idx_to_job_id)
+        return self._new_acc_cache
+
+    # End NEHedd helper (not used in GA-EDD)
+
+    # Start GAPR helper methods
+
+    @staticmethod
+    def _normalize_pressure(pressure: float) -> float:
+        """Normalize pressure into [0, 1].
+
+        Args:
+            pressure (float): Input pressure value, which can be a fraction (e.g., 0.3) or a percentage (e.g., 30).
+
+        Returns:
+            float:
+              - If user passes 0.3, keep 0.3 (30%).
+              - If user passes 30, interpret as 30% => 0.3.
+        """
+        if pressure > 1.0:
+            return pressure / 100.0
+        return max(0.0, min(1.0, pressure))
+
+    def _tournament_select(
+        self, population: list[tuple[str, ...]], pressure: float
+    ) -> tuple[str, ...]:
+        """n-tournament selection with pressure fraction.
+
+        Args:
+            population (list[tuple[str, ...]]): Current population of solutions.
+            pressure (float): Normalized pressure for the selection.
+
+        Raises:
+            ValueError: If the population is empty.
+            RuntimeError: If tournament selection fails.
+
+        Returns:
+            tuple[str, ...]: Selected solution.
+        """
+        if not population:
+            raise ValueError("Population is empty.")
+        k = max(2, int((len(population) * pressure) + 0.999999))  # ceil
+        k = min(k, len(population))
+        sample = (
+            random.sample(population, k=k) if k < len(population) else list(population)
+        )
+
+        # choose best (min objective) among sample
+        best = None
+        best_fit = None
+        for sol in sample:
+            fit = self._evaluate(sol)
+            if best_fit is None or fit < best_fit:
+                best_fit = fit
+                best = sol
+        if best is None:
+            raise RuntimeError("Tournament selection failed.")
+        return best
+
+    @staticmethod
+    def _crossover_order_based(
+        parent_a: tuple[str, ...], parent_b: tuple[str, ...]
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """OP (order-based) crossover.
+
+        Implementation (standard OBX-style):
+        - Select a random subset of positions S.
+        - Child1: copy genes from parent_a at S, then fill remaining positions
+          with genes from parent_b in their order, skipping those already used.
+        - Child2: symmetric (swap roles).
+        """
+        n = len(parent_a)
+        if n != len(parent_b):
+            raise ValueError("Parents must have the same length.")
+        if n <= 2:
+            return parent_a, parent_b
+
+        # choose subset size (roughly n/2, but at least 1 and at most n-1)
+        k = random.randrange(1, n)  # 1..n-1
+        positions = sorted(random.sample(range(n), k=k))
+
+        def build_child(
+            keep_parent: tuple[str, ...], fill_parent: tuple[str, ...]
+        ) -> tuple[str, ...]:
+            child: list[str | None] = [None] * n
+            used = set()
+            for pos in positions:
+                gene = keep_parent[pos]
+                child[pos] = gene
+                used.add(gene)
+
+            filler = [g for g in fill_parent if g not in used]
+            it = iter(filler)
+            for i in range(n):
+                if child[i] is None:
+                    child[i] = next(it)
+            return tuple(child)  # type: ignore[arg-type]
+
+        return build_child(parent_a, parent_b), build_child(parent_b, parent_a)
+
+    @staticmethod
+    def _mutate_insertion_per_gene(
+        solution: tuple[str, ...], p_m: float
+    ) -> tuple[str, ...]:
+        """Insertion mutation applied per gene with probability p_m.
+
+        For each position i, with prob p_m:
+        - remove job at i (current list index)
+        - insert at a random position
+        """
+        if p_m <= 0.0:
+            return solution
+        sol = list(solution)
+        n = len(sol)
+        if n <= 1:
+            return solution
+
+        # apply sequentially (note indices shift)
+        i = 0
+        while i < len(sol):
+            if random.random() < p_m:
+                job = sol.pop(i)
+                j = random.randrange(0, len(sol) + 1)
+                sol.insert(j, job)
+                # do not increment i aggressively; keep moving forward
+            i += 1
+        return tuple(sol)
+
+    def _maybe_local_search_insertion(
+        self, solution: tuple[str, ...], p_ls: float
+    ) -> tuple[str, ...]:
+        """Light insertion local search with probability p_ls.
+
+        This is a practical insertion LS:
+        - If n is small, do a full pass (O(n^2) evaluations) with first-improvement.
+        - If n is large, sample a limited number of moves.
+
+        (Hook point: if you already have an insertion-improvement routine elsewhere,
+        replace this body with that call.)
+        """
+        if p_ls <= 0.0 or random.random() >= p_ls:
+            return solution
+
+        base: list[str] = list(solution)
+        n: int = len(base)
+        if n <= 2:
+            return solution
+
+        # Get NEW evaluator + id<->idx mapping (cached)
+        evaluator, job_id_to_idx, idx_to_job_id = self._get_new_acc_evaluator()
+
+        # Current solution in idx form
+        pi_idx_full: list[int] = [job_id_to_idx[j] for j in solution]
+
+        # Current objective via evaluator (fast enough to compute once using normal eval if you prefer)
+        # We'll keep self._evaluate here once; it's OK and consistent with rest of code.
+        base_obj: int = self._evaluate(solution)
+        best_sol: tuple[str, ...] | None = None
+        best_obj: int = base_obj
+
+        for pos in list(range(n)):
+            job_idx: int = pi_idx_full[pos]
+
+            # Build pi without this job (still idx-based)
+            pi_wo: list[int] = pi_idx_full[:pos] + pi_idx_full[pos + 1 :]
+
+            # Ask evaluator: where to insert job_idx (sigma length 1) to minimize sumTj
+            best_pos_list, best_obj_val = evaluator.get_best_position(pi_wo, [job_idx])
+
+            # If no improvement, skip
+            if best_obj_val >= best_obj:
+                continue
+
+            # Construct improved permutation (job inserted at earliest best position)
+            insert_pos = best_pos_list[0]
+
+            new_pi = pi_wo[:insert_pos] + [job_idx] + pi_wo[insert_pos:]
+            new_sol = tuple(idx_to_job_id[k] for k in new_pi)
+
+            # best-improvement mode: keep best found in this pass
+            best_obj = best_obj_val
+            best_sol = new_sol
+
+        return best_sol if best_sol is not None else solution
+
+    def _compute_population_diversity(self, population: list[tuple[str, ...]]) -> float:
+        """Compute a simple positional diversity measure in [0, 1].
+
+        For each position pos, compute max frequency of a job in that position.
+        Diversity = 1 - (sum_pos maxfreq(pos)) / (|P| * n)
+
+        - 0 means all individuals identical.
+        - closer to 1 means high diversity.
+        """
+        m = len(population)
+        if m <= 1:
+            return 0.0
+        n = len(population[0])
+        if n == 0:
+            return 0.0
+
+        sum_max = 0
+        for pos in range(n):
+            freq: dict[str, int] = {}
+            for sol in population:
+                job = sol[pos]
+                freq[job] = freq.get(job, 0) + 1
+            sum_max += max(freq.values())
+        div = 1.0 - (sum_max / float(m * n))
+        return max(0.0, min(1.0, div))
+
+    def _restart_population_gapr(self, *, P_size: int, keep_best: bool = True) -> None:
+        """Restart population (fixed logic): keep best (optional), then EDD, then random fill."""
+        if P_size < 2:
+            raise ValueError("GAPR requires P_size >= 2.")
+
+        keep: list[tuple[str, ...]] = []
+        keep_set: set[tuple[str, ...]] = set()
+
+        if keep_best:
+            best = self.pop_mgr.get_best_solution()
+            if best is not None:
+                keep.append(tuple(best))
+                keep_set.add(tuple(best))
+
+        edd = self._build_edd_solution()
+        if edd not in keep_set:
+            keep.append(edd)
+            keep_set.add(edd)
+
+        # rebuild a new population manager
+        self.pop_mgr = PopulationManager(P_size, timer=self.timer)
+
+        # add kept solutions first
+        for sol in keep:
+            self.pop_mgr.add_individual(sol, self._evaluate(sol), source="RESTART_KEEP")
+
+        # fill remaining with random
+        remain = P_size - len(keep)
+        if remain > 0:
+            rand_sols = self._get_random_solutions(remain)
+            for sol in rand_sols:
+                if sol in keep_set:
+                    continue
+                self.pop_mgr.add_individual(
+                    sol, self._evaluate(sol), source="RESTART_RAND"
+                )
+
+        self.pop_mgr.elitist_replace()
+
+    def _select_pr_pair_pr1(
+        self,
+        population: list[tuple[str, ...]],
+        pressure: float,
+        marked: set[tuple[str, ...]],
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """PR type 1: pick two different unmarked individuals using tournament selection."""
+        if len(population) < 2:
+            raise ValueError("Need at least 2 individuals for PR.")
+
+        # filter unmarked if possible
+        unmarked = [s for s in population if s not in marked]
+        cand_pool = unmarked if len(unmarked) >= 2 else population
+
+        a = self._tournament_select(cand_pool, pressure)
+        b = self._tournament_select(cand_pool, pressure)
+        _guard = 0
+        while b == a and _guard < 20:
+            b = self._tournament_select(cand_pool, pressure)
+            _guard += 1
+        return a, b
+
+    def _path_relink_bidirectional_best(
+        self, a: tuple[str, ...], b: tuple[str, ...]
+    ) -> list[tuple[str, ...]]:
+        """Generate best candidates from bidirectional path relinking (a->b and b->a)."""
+        best1 = self._path_relink_best(a, b)
+        best2 = self._path_relink_best(b, a)
+        out: list[tuple[str, ...]] = []
+        if best1 is not None:
+            out.append(best1)
+        if best2 is not None and best2 != best1:
+            out.append(best2)
+        return out
+
+    def _path_relink_best(
+        self, initiating: tuple[str, ...], guiding: tuple[str, ...]
+    ) -> tuple[str, ...] | None:
+        """Simple PR for permutations via position-fixing swaps.
+
+        Starting from initiating, iteratively move toward guiding by fixing
+        the leftmost position where they differ (swap in the correct job).
+        Evaluate intermediates and return the best encountered (excluding start if no improvement).
+        """
+        if len(initiating) != len(guiding):
+            raise ValueError("PR requires same length permutations.")
+        n = len(initiating)
+        if n <= 1:
+            return None
+
+        cur = list(initiating)
+        best_sol = tuple(cur)
+        best_fit = self._evaluate(best_sol)
+
+        # precompute target positions in guiding
+        target_pos: dict[str, int] = {job: idx for idx, job in enumerate(guiding)}
+
+        # walk until matches guiding
+        # (left-to-right fixing tends to be stable and cheap)
+        for i in range(n):
+            if cur[i] == guiding[i]:
+                continue
+            desired_job = guiding[i]
+            j = cur.index(desired_job)  # position of desired_job in current
+            # swap cur[i] and cur[j]
+            cur[i], cur[j] = cur[j], cur[i]
+
+            sol = tuple(cur)
+            fit = self._evaluate(sol)
+            if fit < best_fit:
+                best_fit = fit
+                best_sol = sol
+
+        # return best encountered (could be initiating itself)
+        if best_sol == initiating:
+            return None
+        return best_sol
+
+    # End GAPR helper methods
 
 
 def _compute_simple_horizon(instance: FlowshopDuedateParameters) -> int:
@@ -559,21 +1306,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.seed:
         ctrl.set_random_seed(int(args.seed))
 
-    ctrl.ga_edd(
-        pop_size=int(args.pop_size),
-        cross_size=int(args.cross_size),
-        mut_size=int(args.mut_size),
-    )
+    # result_header_str = "==== GA-EDD Result ===="
+    # ctrl.ga_edd(
+    #     pop_size=int(args.pop_size),
+    #     cross_size=int(args.cross_size),
+    #     mut_size=int(args.mut_size),
+    # )
+
+    result_header_str = "===== GAPR Result ====="
+    ctrl.gapr()
 
     best = ctrl.solution_manager.get_incumbent()
     if best is None:
         print("No solution found.")
         return 2
 
-    best_obj = ctrl.population_manager.get_best_fitness()
-    perm = ctrl.population_manager.get_best_solution()
+    best_obj = ctrl.pop_mgr.get_best_fitness()
+    perm = ctrl.pop_mgr.get_best_solution()
 
-    print("==== GA-EDD Result ====")
+    print(result_header_str)
     print(f"instance: {instance.name}")
     print(f"jobs: {instance.job_count}, stages: {instance.stage_count}")
     print(

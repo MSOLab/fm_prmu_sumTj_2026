@@ -33,6 +33,9 @@ class PopulationManager:
     def get_best_obj_series(self) -> list[tuple[float, float]]:
         return [(record.timestamp, record.obj_value) for record in self._trajectory]
 
+    def get_population_set(self) -> set[tuple[str, ...]]:
+        return set(self._population.keys())
+
     # End getters
 
     # Start setters
