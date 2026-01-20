@@ -11,10 +11,28 @@ class PopulationManager:
         self._population: dict[tuple[str, ...], float] = {}
         """Mapping from solution to fitness score."""
 
-        self._trajectory: list[TrajectoryRecord] = []
         self.generation: int = 0
         self.best_sol: tuple[str, ...] | None = None
         self.best_fitness: float | None = None
+
+        self._trajectory: list[TrajectoryRecord] = []
+        """
+        List of trajectory records for best solution found so far.
+        Each record corresponds to an improvement in the best solution.
+        `clear` method does not clear this list.
+        """
+
+        self.cumulative_best_sol: tuple[str, ...] | None = None
+        """
+        Best solution found since the creation of the PopulationManager.
+        `clear` method does not reset this value.
+        """
+
+        self.cumulative_best_fitness: float | None = None
+        """
+        Fitness of the best solution found since the creation of the PopulationManager.
+        `clear` method does not reset this value.
+        """
 
     # Start getters
 
@@ -49,7 +67,6 @@ class PopulationManager:
 
     def clear(self) -> None:
         self._population.clear()
-        self._trajectory.clear()
         self.generation = 0
         self.best_sol = None
         self.best_fitness = None
@@ -74,6 +91,12 @@ class PopulationManager:
                     source=source,
                 )
             )
+            if (
+                self.cumulative_best_fitness is None
+                or fitness < self.cumulative_best_fitness
+            ):
+                self.cumulative_best_fitness = fitness
+                self.cumulative_best_sol = solution
 
     def elitist_replace(self) -> None:
         """From current population leave pop_size number of solutions having the smallest fitness score."""

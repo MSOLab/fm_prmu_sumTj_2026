@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import logging
 import random
@@ -72,10 +70,10 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             f"Gen {record.generation} at {record.timestamp:.2f}: "
             f"Best obj (sumTj) = {record.obj_value} by {record.source}"
         )
-        last_obj_value = record.obj_value
+        gen_best_obj_value = record.obj_value
 
         is_timeover: bool = self.time_is_up()
-        is_optimal: bool = last_obj_value == 0
+        is_optimal: bool = gen_best_obj_value == 0
         # Start main loop
         while not (is_timeover or is_optimal):
             self.pop_mgr.generation += 1
@@ -140,7 +138,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                 this_obj_value = self.pop_mgr.get_best_fitness()
                 if is_timeover:
                     # updated = self._log_best_fitness_to_obj_store("TIME UP")
-                    if last_obj_value != this_obj_value:
+                    if gen_best_obj_value != this_obj_value:
                         record = self.pop_mgr.get_last_trajectory_record()
                         if record is None:
                             raise RuntimeError(
@@ -150,11 +148,11 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                             f"Gen {record.generation} at {record.timestamp:.2f}: "
                             f"Best obj (sumTj) = {record.obj_value} by {record.source}"
                         )
-                        last_obj_value = this_obj_value
+                        gen_best_obj_value = this_obj_value
                     break
                 is_optimal = this_obj_value == 0
                 if is_optimal:
-                    last_obj_value = this_obj_value
+                    gen_best_obj_value = this_obj_value
                     logging.info("GA-EDD: reached optimal solution (obj=0).")
                     break
 
@@ -183,7 +181,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                 this_obj_value = self.pop_mgr.get_best_fitness()
                 if is_timeover:
                     # updated = self._log_best_fitness_to_obj_store("TIME UP")
-                    if last_obj_value != this_obj_value:
+                    if gen_best_obj_value != this_obj_value:
                         record = self.pop_mgr.get_last_trajectory_record()
                         if record is None:
                             raise RuntimeError(
@@ -193,11 +191,11 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                             f"Gen {record.generation} at {record.timestamp:.2f}: "
                             f"Best obj (sumTj) = {record.obj_value} by {record.source}"
                         )
-                        last_obj_value = this_obj_value
+                        gen_best_obj_value = this_obj_value
                     break
                 is_optimal = this_obj_value == 0
                 if is_optimal:
-                    last_obj_value = this_obj_value
+                    gen_best_obj_value = this_obj_value
                     logging.info("GA-EDD: reached optimal solution (obj=0).")
                     break
 
@@ -206,7 +204,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
 
             # Log best fitness if improved
             this_obj_value = self.pop_mgr.get_best_fitness()
-            if last_obj_value != this_obj_value:
+            if gen_best_obj_value != this_obj_value:
                 record = self.pop_mgr.get_last_trajectory_record()
                 if record is None:
                     raise RuntimeError("No trajectory record found after update.")
@@ -214,16 +212,22 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     f"Gen {record.generation} at {record.timestamp:.2f}: "
                     f"Best obj (sumTj) = {record.obj_value} by {record.source}"
                 )
-                last_obj_value = this_obj_value
+                gen_best_obj_value = this_obj_value
 
             # Check time limit for next generation
             is_timeover = self.time_is_up()
-            is_optimal = last_obj_value == 0
+            is_optimal = gen_best_obj_value == 0
             if is_optimal:
                 logging.info("GA-EDD: reached optimal solution (obj=0).")
 
+        # End of main loop
+        last_obj_value = self.pop_mgr.cumulative_best_fitness
+        last_job_seq = self.pop_mgr.cumulative_best_sol
+
         # Wrap up
         if last_obj_value is not None:
+            if last_job_seq is None:
+                raise RuntimeError("No best solution found in population manager.")
             # Update objective store
             timestamp_obj_value_list = self.pop_mgr.get_best_obj_series()
             for timestamp, obj_value in timestamp_obj_value_list:
@@ -240,16 +244,12 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             )
 
             # Register final solution
-            obj_value = self.pop_mgr.get_best_fitness()
-            last_job_seq = self.pop_mgr.get_best_solution()
             report = FsSubroutineReport(
                 elapsed_time=sub_timer.elapsed_sec,
-                obj_value=obj_value,
+                obj_value=last_obj_value,
                 obj_bound=None,
                 is_init=False,
             )
-            if last_job_seq is None:
-                raise RuntimeError("No best solution found in population manager.")
             last_schedule = self._dispatch_permutation(list(last_job_seq))
             self.solution_manager.register(report, last_schedule)
 
@@ -598,7 +598,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             f"GAPR Gen {record.generation} at {record.timestamp:.2f}: "
             f"Best obj (sumTj) = {record.obj_value} by {record.source}"
         )
-        last_obj_value = record.obj_value
+        this_gen_obj_value = record.obj_value
 
         # Track duplicates using current population content
         pop_set: set[tuple[str, ...]] = self.pop_mgr.get_population_set()
@@ -607,7 +607,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         marked: set[tuple[str, ...]] = set()
 
         is_timeover: bool = self.time_is_up()
-        is_optimal: bool = last_obj_value == 0
+        is_optimal: bool = this_gen_obj_value == 0
 
         # ---------------- main loop (steady-state style) ----------------
         while not (is_timeover or is_optimal):
@@ -715,7 +715,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             this_obj_value = self.pop_mgr.get_best_fitness()
             if this_obj_value is None:
                 raise RuntimeError("No best fitness found in population manager.")
-            if this_obj_value != last_obj_value:
+            if this_obj_value != this_gen_obj_value:
                 record = self.pop_mgr.get_last_trajectory_record()
                 if record is None:
                     raise RuntimeError("No trajectory record found after update.")
@@ -723,20 +723,23 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                     f"GAPR Gen {record.generation} at {record.timestamp:.2f}: "
                     f"Best obj (sumTj) = {record.obj_value} by {record.source}"
                 )
-                last_obj_value = this_obj_value
+                this_gen_obj_value = this_obj_value
                 stats["best_update_cnt"] += 1
                 src = record.source if record else "UNKNOWN"
                 stats["best_by_source"][src] = stats["best_by_source"].get(src, 0) + 1
 
             # termination checks
             is_timeover = self.time_is_up()
-            is_optimal = last_obj_value == 0
+            is_optimal = this_gen_obj_value == 0
             if is_optimal:
                 logging.info("GAPR: reached optimal solution (obj=0).")
 
+        # End of main loop
+        last_obj_value = self.pop_mgr.cumulative_best_fitness
+        last_job_seq = self.pop_mgr.cumulative_best_sol
+
         # Gather statistics
         elapsed = sub_timer.elapsed_sec
-        best_obj = self.pop_mgr.get_best_fitness()
         pop_size_final = len(self.pop_mgr.get_this_population_list())
 
         logging.info("===== GAPR Summary =====")
@@ -746,7 +749,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             stats["gen_end"],
             stats["gen_end"] - stats["gen_start"] + 1,
             elapsed,
-            str(best_obj),
+            str(last_obj_value),
             pop_size_final,
         )
         logging.info(
@@ -785,6 +788,8 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
 
         # Wrap up
         if last_obj_value is not None:
+            if last_job_seq is None:
+                raise RuntimeError("No best solution found in population manager.")
             # Update objective store
             timestamp_obj_value_list = self.pop_mgr.get_best_obj_series()
             for timestamp, obj_value in timestamp_obj_value_list:
@@ -801,16 +806,12 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             )
 
             # Register final solution
-            obj_value = self.pop_mgr.get_best_fitness()
-            last_job_seq = self.pop_mgr.get_best_solution()
             report = FsSubroutineReport(
                 elapsed_time=sub_timer.elapsed_sec,
-                obj_value=obj_value,
+                obj_value=last_obj_value,
                 obj_bound=None,
                 is_init=False,
             )
-            if last_job_seq is None:
-                raise RuntimeError("No best solution found in population manager.")
             last_schedule = self._dispatch_permutation(list(last_job_seq))
             self.solution_manager.register(report, last_schedule)
 
@@ -1084,7 +1085,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             raise ValueError("Need at least 2 individuals for PR.")
 
         # filter unmarked if possible
-        unmarked = [s for s in population if s not in marked]
+        unmarked = population
         cand_pool = unmarked if len(unmarked) >= 2 else population
 
         a = self._tournament_select(cand_pool, pressure)
@@ -1119,26 +1120,26 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         """
         if len(initiating) != len(guiding):
             raise ValueError("PR requires same length permutations.")
-        n = len(initiating)
+        n: int = len(initiating)
         if n <= 1:
             return None
 
-        cur = list(initiating)
-        best_sol = tuple(cur)
-        best_fit = self._evaluate(best_sol)
-
-        # precompute target positions in guiding
-        target_pos: dict[str, int] = {job: idx for idx, job in enumerate(guiding)}
+        cur: list[str] = list(initiating)
+        best_sol: tuple[str, ...] = tuple(cur)
+        best_fit: int = self._evaluate(best_sol)
 
         # walk until matches guiding
         # (left-to-right fixing tends to be stable and cheap)
+        pos_in_cur = {job: idx for idx, job in enumerate(cur)}
         for i in range(n):
             if cur[i] == guiding[i]:
                 continue
-            desired_job = guiding[i]
-            j = cur.index(desired_job)  # position of desired_job in current
-            # swap cur[i] and cur[j]
+            desired_job: str = guiding[i]
+            j: int = pos_in_cur[desired_job]
+            # swap positions i and j
             cur[i], cur[j] = cur[j], cur[i]
+            pos_in_cur[cur[j]] = j
+            pos_in_cur[cur[i]] = i
 
             sol = tuple(cur)
             fit = self._evaluate(sol)
