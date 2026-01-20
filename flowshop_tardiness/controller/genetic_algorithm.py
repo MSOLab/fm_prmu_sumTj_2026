@@ -616,8 +616,6 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             P_prev = self.pop_mgr.get_this_population_list()
             if not P_prev:
                 raise RuntimeError("Population is empty, cannot proceed with GAPR.")
-            # prune marked to current population only
-            marked.intersection_update(P_prev)
 
             # Refresh population set (in case elitist_replace changed membership)
             pop_set = set(P_prev)
@@ -634,8 +632,6 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                 marked.clear()
                 P_prev = self.pop_mgr.get_this_population_list()
                 pop_set = set(P_prev)
-                # prune marked to current population only
-                marked.intersection_update(P_prev)
 
             # 2) Parent selection (tournament with pressure)
             # ensure distinct parents when possible
