@@ -206,8 +206,8 @@ class PwCpConstructor:
         profile_fixed_cnt: int | None = None,
         step_size_on_improve: int | None = None,
         step_size_on_no_improve: int | None = None,
-        solver_thread_cnt: int | None = None,
         max_time_per_add: float | None = None,
+        solver_thread_cnt: int | None = None,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ) -> PwCpResult:
@@ -228,10 +228,10 @@ class PwCpConstructor:
                 to profile-fixed or time-fixed) when the CP solution improves the objective.
                 Defaults to `added_batch_size`.
             step_size_on_no_improve (int | None, optional): The number of jobs to finalize when the CP
-                solution does not improve the objective. Defaults to 1.
-            solver_thread_cnt (int | None, optional): Number of threads for the CP solver. Defaults to None.
+                solution does not improve the objective. Defaults to `added_batch_size`.
             max_time_per_add (float | None, optional): Time limit for each CP solving iteration.
                 Defaults to None.
+            solver_thread_cnt (int | None, optional): Number of threads for the CP solver. Defaults to None.
             error_if_infeasible (bool, optional): Whether to raise an error if the final schedule is infeasible.
                 Defaults to False.
             draw_gantt (bool, optional): Whether to save Gantt charts for intermediate and final solutions.
@@ -266,7 +266,7 @@ class PwCpConstructor:
         self.step_size_on_no_improve = (
             step_size_on_no_improve
             if step_size_on_no_improve is not None and step_size_on_no_improve > 0
-            else 1
+            else _added_batch_size
         )
 
         given_sol = PermutationFlowshopScheduleLite(

@@ -1274,12 +1274,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     def pw_cp(
         self,
-        solver_thread_cnt: int,
         added_batch_size: int | None = None,
         profile_fixed_cnt: int | None = None,
         step_size_on_improve: int | None = None,
         step_size_on_no_improve: int | None = None,
         max_time_per_add: float | None = None,
+        solver_thread_cnt: int | None = None,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ):
@@ -1287,14 +1287,22 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         Builds a CP-guided solution using job sequence of the incumbent solution.
 
         Args:
-            solver_thread_cnt (int): The number of parallel workers (i.e. threads) to use during search.
-            added_batch_size (int, optional): The number of jobs to add in each iteration.
-                Defaults to 1.
-            max_time_per_add (float | None, optional): Time limit (in seconds) for solving each incremental subproblem.
-                If None, uses the remaining time limit. Defaults to None.
-            error_if_infeasible (bool, optional): If True, raises an error if the solution is infeasible.
+            added_batch_size (int | None, optional): The number of jobs to add to the window in each iteration.
+                If None, defaults to 1.
+            profile_fixed_cnt (int | None, optional): The number of jobs at the beginning of the window
+                whose relative order is fixed (profile-fixed). These jobs are part of the CP problem
+                but their relative positions are constrained. If None, defaults to 0.
+            step_size_on_improve (int | None, optional): The number of jobs to finalize (move from window
+                to profile-fixed or time-fixed) when the CP solution improves the objective.
+                Defaults to `added_batch_size`.
+            step_size_on_no_improve (int | None, optional): The number of jobs to finalize when the CP
+                solution does not improve the objective. Defaults to `added_batch_size`.
+            solver_thread_cnt (int | None, optional): Number of threads for the CP solver. Defaults to None.
+            max_time_per_add (float | None, optional): Time limit for each CP solving iteration.
+                Defaults to None.
+            error_if_infeasible (bool, optional): Whether to raise an error if the final schedule is infeasible.
                 Defaults to False.
-            draw_gantt (bool, optional): If True, draws a Gantt chart of the solution.
+            draw_gantt (bool, optional): Whether to save Gantt charts for intermediate and final solutions.
                 Defaults to False.
         """
         sub_timer = ElapsedTimer()
@@ -1326,8 +1334,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             profile_fixed_cnt=profile_fixed_cnt,
             step_size_on_improve=step_size_on_improve,
             step_size_on_no_improve=step_size_on_no_improve,
-            solver_thread_cnt=solver_thread_cnt,
             max_time_per_add=max_time_per_add,
+            solver_thread_cnt=solver_thread_cnt,
             error_if_infeasible=error_if_infeasible,
             draw_gantt=draw_gantt,
         )
