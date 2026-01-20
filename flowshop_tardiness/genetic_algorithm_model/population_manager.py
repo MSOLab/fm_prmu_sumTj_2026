@@ -9,6 +9,8 @@ class PopulationManager:
         self.timer: ElapsedTimer = timer or ElapsedTimer()
 
         self._population: dict[tuple[str, ...], float] = {}
+        """Mapping from solution to fitness score."""
+
         self._trajectory: list[TrajectoryRecord] = []
         self.generation: int = 0
         self.best_sol: tuple[str, ...] | None = None
@@ -36,9 +38,21 @@ class PopulationManager:
     def get_population_set(self) -> set[tuple[str, ...]]:
         return set(self._population.keys())
 
+    def get_worst_fitness(self) -> float | None:
+        if not self._population:
+            return None
+        return max(self._population.values())
+
     # End getters
 
     # Start setters
+
+    def clear(self) -> None:
+        self._population.clear()
+        self._trajectory.clear()
+        self.generation = 0
+        self.best_sol = None
+        self.best_fitness = None
 
     def add_individual(
         self, solution: tuple[str, ...], fitness: float, source: str
