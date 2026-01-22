@@ -1,11 +1,13 @@
 from unittest.mock import MagicMock
 
 import pytest
+from fontTools.misc.iterTools import permutations
 from mbls.cpsat import CpsatSolverReport, CpsatStatus
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
 from flowshop_tardiness.controller.pw_cp import PwCpConstructor, PwCpContext, PwCpResult
-from flowshop_tardiness.cpsat_model_2.position import Params, Vars
+from flowshop_tardiness.cpsat_model_2.indirect_prec import IndirectPrecVars
+from flowshop_tardiness.cpsat_model_2.params import Params
 
 
 @pytest.fixture
@@ -48,7 +50,7 @@ def mock_context():
     ctx.solver = MagicMock()
 
     # Setup methods
-    ctx.get_remaining_time_limit.return_value = 100.0
+    ctx.get_remaining_time_limit.return_value = 10.0
 
     # Use real logic for get_obj_value and check_feasibility
     def get_obj_value_real(schedule):
@@ -98,18 +100,21 @@ def test_run_basic_flow(pw_cp, mock_context):
         m_mdl = MagicMock()
         m_params = MagicMock(spec=Params)
         m_params.j_list = list(range(len(sub_instance.job_id_list)))
-        m_vars = MagicMock(spec=Vars)
+        m_vars = MagicMock(spec=IndirectPrecVars)
         m_vars.total_tardiness = MagicMock()
         m_vars.sum_latest_completion = MagicMock()
-        # Map k to j (index)
-        m_vars.pi = {k: k for k in m_params.j_list}
+        m_vars.prec = {}
+        for j1, j2 in permutations(m_params.j_list, 2):
+            m_vars.prec[j1, j2] = 1
+            m_vars.prec[j2, j1] = 0
         return m_mdl, m_params, m_vars
 
     pw_cp.builder = MagicMock()
     pw_cp.builder.build.side_effect = build_side_effect
-
-    # Mock solver values: ctx.solver.Value(vars.pi[k]) should return j (index)
-    mock_context.solver.Value.side_effect = lambda x: x  # vars.pi[k] is k
+    
+    # Mock solver values and sequence reconstruction
+    mock_context.solver.Value.side_effect = lambda x: x
+    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: params.j_list
 
     result = pw_cp.run(
         job_sequence=job_sequence, added_batch_size=2, solver_thread_cnt=1
@@ -117,17 +122,6 @@ def test_run_basic_flow(pw_cp, mock_context):
 
     assert isinstance(result, PwCpResult)
     # With batch=2, all 2 jobs are added, CP runs once.
-    # Logic:
-    #  batch 1: remaining=[J1,J2], added=[J1,J2]
-    #  solve -> returns J1,J2 (because mock identity)
-    #  improved=False (base=J1,J2)
-    #  step_size=1 (default no improve)
-    #  pf=[J1]. overflow=1. commit J1.
-    #  remaining=[J2].
-    #  batch 2: remaining=[J2], added=[J2].
-    #  solve -> J2.
-    #  commit J2.
-    #  finish.
     assert len(result.schedule.get_last_stage_job_list()) == 2
     assert mock_context.solve_cp_model_2.call_count >= 1
 
@@ -140,15 +134,21 @@ def test_run_two_batches(pw_cp, mock_context):
         m_mdl = MagicMock()
         m_params = MagicMock(spec=Params)
         m_params.j_list = list(range(len(sub_instance.job_id_list)))
-        m_vars = MagicMock(spec=Vars)
+        m_vars = MagicMock(spec=IndirectPrecVars)
         m_vars.total_tardiness = MagicMock()
         m_vars.sum_latest_completion = MagicMock()
-        m_vars.pi = {k: k for k in m_params.j_list}
+        m_vars.prec = {}
+        for j1, j2 in permutations(m_params.j_list, 2):
+            m_vars.prec[j1, j2] = 1
+            m_vars.prec[j2, j1] = 0
         return m_mdl, m_params, m_vars
 
     pw_cp.builder = MagicMock()
     pw_cp.builder.build.side_effect = build_side_effect
+    
+    # Mock solver values and sequence reconstruction
     mock_context.solver.Value.side_effect = lambda x: x
+    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: params.j_list
 
     result = pw_cp.run(
         job_sequence=job_sequence, added_batch_size=1, solver_thread_cnt=1
@@ -162,25 +162,31 @@ def test_run_two_batches(pw_cp, mock_context):
 def test_log_snapshot(pw_cp, mock_context):
     """Test that _log_snapshot actually records objective values in sub_obj_store."""
 
-    job_sequence = ["J1"]
+    # Needs at least 2 jobs to enter optimization loop
+    job_sequence = ["J1", "J2"]
 
     # Correctly mock builder to return iterable j_list and valid variables
     def build_side_effect(sub_instance, **kwargs):
         m_mdl = MagicMock()
         m_params = MagicMock(spec=Params)
-        m_params.j_list = list(range(len(sub_instance.job_id_list)))  # [0]
-        m_vars = MagicMock(spec=Vars)
+        m_params.j_list = list(range(len(sub_instance.job_id_list)))
+        m_vars = MagicMock(spec=IndirectPrecVars)
         m_vars.total_tardiness = MagicMock()
         m_vars.sum_latest_completion = MagicMock()
         m_vars.pi = {0: 0}
+        m_vars.prec = {}
+        for j1, j2 in permutations(m_params.j_list, 2):
+            m_vars.prec[j1, j2] = 1
+            m_vars.prec[j2, j1] = 0
 
         return m_mdl, m_params, m_vars
 
     pw_cp.builder = MagicMock()
     pw_cp.builder.build.side_effect = build_side_effect
 
-    # Solver value mock needs to return an int (the index)
-    mock_context.solver.Value.return_value = 0
+    # Mock solver values and sequence reconstruction
+    mock_context.solver.Value.side_effect = lambda x: x
+    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: params.j_list
 
     result = pw_cp.run(job_sequence, added_batch_size=1)
 
@@ -193,21 +199,30 @@ def test_log_snapshot(pw_cp, mock_context):
 
 def test_solver_infeasible(pw_cp, mock_context):
     """Test handling when solver returns infeasible."""
-    job_sequence = ["J1"]
+    # Needs at least 2 jobs to enter optimization loop
+    job_sequence = ["J1", "J2"]
 
     # Configure mock
     def build_side_effect(sub_instance, **kwargs):
         m_mdl = MagicMock()
         m_params = MagicMock(spec=Params)
-        m_params.j_list = [0]
-        m_vars = MagicMock(spec=Vars)
+        m_params.j_list = list(range(len(sub_instance.job_id_list)))
+        m_vars = MagicMock(spec=IndirectPrecVars)
         m_vars.pi = {0: 0}
         m_vars.total_tardiness = MagicMock()
         m_vars.sum_latest_completion = MagicMock()
+        m_vars.prec = {}
+        for j1, j2 in permutations(m_params.j_list, 2):
+            m_vars.prec[j1, j2] = 1
+            m_vars.prec[j2, j1] = 0
         return m_mdl, m_params, m_vars
 
     pw_cp.builder = MagicMock()
     pw_cp.builder.build.side_effect = build_side_effect
+    
+    # Mock solver values and sequence reconstruction
+    mock_context.solver.Value.side_effect = lambda x: x
+    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: params.j_list
 
     # Return infeasible report
     mock_context.solve_cp_model_2.return_value = CpsatSolverReport(
@@ -221,4 +236,5 @@ def test_solver_infeasible(pw_cp, mock_context):
 
     result = pw_cp.run(job_sequence, added_batch_size=1)
     assert isinstance(result, PwCpResult)
-    assert len(result.schedule.get_last_stage_job_list()) == 1
+    # Even if infeasible, it should return a schedule with all jobs dispatched (fallback to base)
+    assert len(result.schedule.get_last_stage_job_list()) == 2
