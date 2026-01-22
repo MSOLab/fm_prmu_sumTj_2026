@@ -645,11 +645,13 @@ class PwCpConstructor:
         if solver_thread_cnt is None:
             solver_thread_cnt = 1
 
-        # Number of jobs worth optimization per iteration
-        min_remaining_jobs: int = 2
+        # Initial step size = added batch size
+        step_size: int = st.added_batch_size
+        # Last step size used
+        last_step_size: int = st.added_batch_size
 
         # Repeat until no more jobs to optimize
-        while len(st.remaining_jobs) >= min_remaining_jobs:
+        while len(st.remaining_jobs) > (step_size - last_step_size):
             st.iter_idx += 1
             _timelimit = ctx.get_remaining_time_limit(max_time_per_add)
             if float_a_leq_b(_timelimit, 0):
@@ -671,6 +673,7 @@ class PwCpConstructor:
             sub_jobs: list[str] = (
                 st.iter_cp_job_list
             )  # profile_fixed + added(front batch)
+            last_job_idx = self.job_sequence.index(sub_jobs[-1])
             base_seq: list[str] = list(sub_jobs)  # "before optimization" reference
             prev_pf_len: int = len(st.profile_fixed_jobs)
 
@@ -694,11 +697,12 @@ class PwCpConstructor:
                 stage_2_lct_map = {}
 
             logging.info(
-                "(iter %d) CP on sub_jobs=%d (pf=%d + added=%d), timelimit=%.2fs",
+                "(iter %d) CP on sub_jobs=%d (pf=%d + added=%d) with %d-th last job, timelimit=%.2fs",
                 st.iter_idx,
                 len(sub_jobs),
                 len(st.profile_fixed_jobs),
                 len(added_job_list),
+                last_job_idx + 1,
                 _timelimit,
             )
 
@@ -730,25 +734,22 @@ class PwCpConstructor:
             st.last_cp_subseq = solver_seq
             st.last_cp_obj = getattr(iter_report, "obj_value", None)
 
-            # ---- step size & minimum remaining jobs ----
+            # ---- update last step size & (next) step size ----
+            last_step_size = step_size
             if improved:
-                step_size: int = (
+                step_size = (
                     self.step_size_on_improve
                     if self.step_size_on_improve is not None
                     else st.added_batch_size
                 )
-                min_remaining_jobs = 2
             else:
                 step_size = (
                     self.step_size_on_no_improve
                     if self.step_size_on_no_improve is not None
-                    else 1
+                    else st.added_batch_size
                 )
-                min_remaining_jobs = st.added_batch_size
 
-            # clamp step_size to remaining length (and also to >=1)
-            if step_size <= 0:
-                step_size = 1
+            # clamp step_size to remaining length
             if step_size > len(st.remaining_jobs):
                 step_size = len(st.remaining_jobs)
 
