@@ -142,7 +142,8 @@ def test_best_insertion_matches_naive_one_instance(p, due, pi, sigma):
     solver = PermutationFlowshopSubseqEvaluator(p, due)
 
     # NEW best
-    best_pos_new, best_val_new = solver.get_best_position(pi, _sigma)
+    best_pos_new_list, best_val_new = solver.get_best_position(pi, _sigma)
+    best_pos_new = best_pos_new_list[0]
 
     # naive best
     best_pos_naive = None
