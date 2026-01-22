@@ -690,5 +690,5 @@ if __name__ == "__main__":
         repo_root / "resources/vrm_ref/2023IJoC.csv",
         BaselineColumnMapping(instance="Instance", obj_val="BKS", obj_bound="LB"),
     )
-    logging.info("Starting HFS Multi-Scenario Runner.")
+    logging.info("Starting Multi-Scenario Runner.")
     multi_scenario_runner.run()

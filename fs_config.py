@@ -78,7 +78,7 @@ class MainMetadata(BaseModel):
         description="Base directory for all scenario outputs.",
     )
     scenario_log_filename: str = Field(
-        default="hfs_scenario_runner.log",
+        default="multi_scenario_runner.log",
         description="Log file name for the multi-scenario run.",
     )
     result_dir_name: str = Field(

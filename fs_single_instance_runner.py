@@ -46,11 +46,14 @@ class FsSingleInstanceRunner(
         output_metadata: dict[str, Any],
         mode: RunMode = RunMode.FULL_RUN,
     ):
+        _stopping_criteria = StoppingCriteria.from_dict(
+            stopping_criteria.to_obj()
+        )
         super().__init__(
             instance=instance,
             shared_param_dict=shared_param_dict,
             subroutine_flow=subroutine_flow,
-            stopping_criteria=stopping_criteria,
+            stopping_criteria=_stopping_criteria,
             output_dir=output_dir,
             output_metadata=output_metadata,
             mode=mode,
@@ -61,6 +64,25 @@ class FsSingleInstanceRunner(
         self.result_dir = self.working_dir / result_dir_name
         self.result_dir.mkdir(parents=True, exist_ok=True)
         self.prepare_saved_file_paths()
+
+        # Apply instance-wise timelimit if specified
+        if (
+            isinstance(self.stopping_criteria, StoppingCriteria)
+            and hasattr(self.stopping_criteria, "timelimit_n_by_m_multiplier")
+            and self.stopping_criteria.timelimit_n_by_m_multiplier is not None
+            and self.stopping_criteria.timelimit_n_by_m_multiplier > 0
+        ):
+            n = self.instance.job_count
+            m = self.instance.stage_count
+            adjusted_timelimit = self.stopping_criteria.timelimit_n_by_m_multiplier * (
+                n * m
+            )
+            # Override the timelimit
+            logging.info(
+                f"Adjusting timelimit for instance '{self.name}' with n={n}, m={m}: "
+                f"new timelimit = {adjusted_timelimit} seconds."
+            )
+            self.stopping_criteria.timelimit = adjusted_timelimit
 
     # Start abstract methods
 

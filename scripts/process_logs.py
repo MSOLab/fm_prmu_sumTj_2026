@@ -75,7 +75,7 @@ def get_obj_value_for_method(
     prev_obj_value,
 ):
     relevant_times = []
-    # Prefix match (e.g., "6-" matches "6-bd_cp")
+    # Prefix match (e.g., "6-" matches "6-pw_cp")
     for time_str, note in obj_notes.items():
         if note.startswith(method_prefix):
             relevant_times.append(time_str)

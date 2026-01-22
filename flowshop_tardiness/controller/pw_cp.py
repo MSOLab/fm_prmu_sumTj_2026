@@ -14,8 +14,6 @@ from schore.schedule_examples.shop.flow import FlowshopSchedule
 from flowshop_tardiness.cpsat_model_2.position import BaseModelBuilder, Params, Vars
 from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite
 
-# TODO: add tests for this module
-
 
 class PwCpContext(Protocol):
     """
@@ -57,18 +55,8 @@ class PwCpContext(Protocol):
         log_level_obj_bound: int = logging.INFO,
     ) -> CpsatSolverReport: ...
 
-    def get_job_sequence_from_solver(self, params: Params, vars: Vars) -> list[str]: ...
-
-    # schedule build
-    def create_schedule_from_sequence(
-        self, params: Params, j_name_sequence: list[str]
-    ) -> FlowshopSchedule: ...
-
     # optional
     def set_sumTj_lower_bound(self, mdl, vars: Vars, bound: float | None) -> None: ...
-    def add_obj_value_log(self, ts: float, value: float, is_maximize=None) -> None: ...
-    @property
-    def obj_store(self): ...
     def export_solution_to_yaml(
         self,
         start_time_map: dict[tuple[str, str], int],
@@ -77,27 +65,92 @@ class PwCpContext(Protocol):
         encoding="utf-8",
     ) -> None: ...
     def get_file_path_for_subroutine(self, suffix: str): ...
-    def _get_call_context_of_current_method(self) -> str: ...
 
 
 @dataclass
 class PwCpRunState:
     timer: ElapsedTimer
 
-    job_sequence: list[str]
-    """Given full job sequence."""
+    # --- Job partitions ---
+    time_fixed_pool: set[str]
+    """Jobs already time-fixed"""
+
+    profile_fixed_jobs: list[str]
+    """Jobs with fixed relative order (order can be defined by this list)"""
+
+    remaining_jobs: list[str]
+    """Remaining jobs (candidates for addition). = All - profile-fixed - time-fixed"""
+
+    # --- Append-only job sequence ---
+    committed_time_fixed_jobs: list[str]
+    """Sequence of time-fixed jobs; once a job is committed here, it won't be changed."""
+
+    # --- Schedule instances ---
+    time_fixed_sol: PermutationFlowshopScheduleLite
+    profile_fixed_sol: PermutationFlowshopScheduleLite  # For debugging / logging
+
+    # --- iteration bookkeeping ---
+    iter_idx: int
+    sub_obj_store: ObjValueBoundStore[int]
+
+    # --- CP solving results ---
+    last_cp_subseq: list[str] | None
+    """Sequence of (profile-fixed + added batch) jobs (global id)"""
+
+    last_cp_obj: int | None
+    """Objective value from last CP solving."""
+
+    last_improved: bool | None
+    """Whether the last CP solving improved the objective value."""
+
+    # --- Algorithm parameter cache (referenced repeatedly in loop) ---
     added_batch_size: int
 
-    sub_obj_store: ObjValueBoundStore[int]
-    job_cnt: int
-    given_sol: PermutationFlowshopScheduleLite
-    """Schedule by the given job sequence with tail jobs pushed back."""
+    @property
+    def added_job_list(self) -> list[str]:
+        """
+        Returns:
+            list[str]: List of jobs to be considered for addition in this iteration.
+        """
+        return self.remaining_jobs[: self.added_batch_size]
 
-    target_job_subset: set[str]
-    last_obj_val: int
-    last_job_seq: list[str]
-    last_solution: PermutationFlowshopScheduleLite | None
-    """The schedule to be built incrementally."""
+    @property
+    def not_added_first_job(self) -> str | None:
+        """
+        Returns:
+            str | None: The first remaining job not considered for addition in this iteration
+                (None if not exists).
+        """
+        if len(self.remaining_jobs) > self.added_batch_size:
+            return self.remaining_jobs[self.added_batch_size]
+        else:
+            return None
+
+    @property
+    def iter_cp_job_list(self) -> list[str]:
+        """
+        Returns:
+            list[str]: List of jobs included in CP for this iteration (profile-fixed + added).
+        """
+        return self.profile_fixed_jobs + self.added_job_list
+
+    @property
+    def last_job_is_included(self) -> bool:
+        """
+        Returns:
+            bool: Whether the last job is included in CP for this iteration.
+        """
+        return len(self.remaining_jobs) <= self.added_batch_size
+
+    def extend_time_fixed_jobs(self, job_list: list[str]) -> None:
+        """Add job_list to time-fixed job list and update time-fixed pool.
+
+        Args:
+            job_list (list[str]): List of time-fixed jobs to add.
+        """
+        self.committed_time_fixed_jobs.extend(job_list)
+        self.time_fixed_pool.update(job_list)
+        self.time_fixed_sol.extend_jobs(job_list)
 
 
 @dataclass
@@ -108,6 +161,15 @@ class PwCpResult:
 
 
 class PwCpConstructor:
+    # Given solution cache
+    job_sequence: list[str]
+    job_cnt: int
+
+    # Algorithm parameter cache
+    profile_fixed_cnt: int
+    step_size_on_improve: int
+    step_size_on_no_improve: int
+
     def __init__(self, ctx: PwCpContext):
         self.ctx = ctx
         self.builder = BaseModelBuilder()
@@ -140,27 +202,80 @@ class PwCpConstructor:
     def run(
         self,
         job_sequence: list[str],
-        added_batch_size: int = 1,
-        solver_thread_cnt: int | None = None,
+        added_batch_size: int | None = None,
+        profile_fixed_cnt: int | None = None,
+        step_size_on_improve: int | None = None,
+        step_size_on_no_improve: int | None = None,
         max_time_per_add: float | None = None,
+        solver_thread_cnt: int | None = None,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ) -> PwCpResult:
+        """
+        Run the Prefix-Window CP (PW-CP) algorithm.
+
+        This algorithm incrementally builds a schedule by iteratively solving a CP model
+        for a window of jobs. The window slides forward as jobs are fixed.
+
+        Args:
+            job_sequence (list[str]): The initial full sequence of jobs.
+            added_batch_size (int | None, optional): The number of jobs to add to the window in each iteration.
+                If None, defaults to 1.
+            profile_fixed_cnt (int | None, optional): The number of jobs at the beginning of the window
+                whose relative order is fixed (profile-fixed). These jobs are part of the CP problem
+                but their relative positions are constrained. If None, defaults to 0.
+            step_size_on_improve (int | None, optional): The number of jobs to finalize (move from window
+                to profile-fixed or time-fixed) when the CP solution improves the objective.
+                Defaults to `added_batch_size`.
+            step_size_on_no_improve (int | None, optional): The number of jobs to finalize when the CP
+                solution does not improve the objective. Defaults to `added_batch_size`.
+            max_time_per_add (float | None, optional): Time limit for each CP solving iteration.
+                Defaults to None.
+            solver_thread_cnt (int | None, optional): Number of threads for the CP solver. Defaults to None.
+            error_if_infeasible (bool, optional): Whether to raise an error if the final schedule is infeasible.
+                Defaults to False.
+            draw_gantt (bool, optional): Whether to save Gantt charts for intermediate and final solutions.
+                Defaults to False.
+
+        Returns:
+            PwCpResult: The result containing the final schedule, objective value, and log store.
+        """
         ctx = self.ctx
         timer = ElapsedTimer()
         sub_obj_store = ObjValueBoundStore[int]()
         sub_obj_store.obj_value_series.name = "ObjVal after dispatch"
         sub_obj_store.obj_bound_series.name = "ObjVal before dispatch"
 
-        job_cnt: int = len(job_sequence)
+        self.job_sequence = job_sequence
+        self.job_cnt = len(job_sequence)
+        _added_batch_size = (
+            added_batch_size
+            if added_batch_size is not None and added_batch_size >= 1
+            else 1
+        )
+        self.profile_fixed_cnt = (
+            profile_fixed_cnt
+            if profile_fixed_cnt is not None and profile_fixed_cnt >= 0
+            else 0
+        )
+        self.step_size_on_improve = (
+            step_size_on_improve
+            if step_size_on_improve is not None and step_size_on_improve > 0
+            else _added_batch_size
+        )
+        self.step_size_on_no_improve = (
+            step_size_on_no_improve
+            if step_size_on_no_improve is not None and step_size_on_no_improve > 0
+            else _added_batch_size
+        )
 
         given_sol = PermutationFlowshopScheduleLite(
             ctx.stage_ids,
             job_2_stage_2_p_map=ctx.job_2_stage_2_p_dict,
             job_2_due_map=ctx.instance.job_2_duedate_map,
         )
-        given_sol.extend_jobs(job_sequence)
-        given_sol.push_back_tail_jobs_keep_tardiness(job_cnt)
+        given_sol.extend_jobs(self.job_sequence)
+        given_sol.push_back_tail_jobs_keep_tardiness(self.job_cnt)
         if draw_gantt:
             given_sol_output_path = ctx.get_file_path_for_subroutine(
                 "_0_pushed_back_solution.yaml"
@@ -168,21 +283,36 @@ class PwCpConstructor:
             self.save_schedule_lite_to_yaml(given_sol, given_sol_output_path)
             logging.info("Saved pushed-back solution to: %s", given_sol_output_path)
 
+        # Initialize state
+        time_fixed_sol = PermutationFlowshopScheduleLite(
+            ctx.stage_ids,
+            job_2_stage_2_p_map=ctx.job_2_stage_2_p_dict,
+            job_2_due_map=ctx.instance.job_2_duedate_map,
+        )
+        profile_fixed_sol = PermutationFlowshopScheduleLite(
+            ctx.stage_ids,
+            job_2_stage_2_p_map=ctx.job_2_stage_2_p_dict,
+            job_2_due_map=ctx.instance.job_2_duedate_map,
+        )
         self._st = PwCpRunState(
             timer=timer,
-            job_sequence=job_sequence,
-            added_batch_size=added_batch_size,
+            remaining_jobs=self.job_sequence.copy(),
+            profile_fixed_jobs=[],
+            time_fixed_pool=set(),
+            committed_time_fixed_jobs=[],
+            time_fixed_sol=time_fixed_sol,
+            profile_fixed_sol=profile_fixed_sol,
+            iter_idx=0,
             sub_obj_store=sub_obj_store,
-            job_cnt=job_cnt,
-            given_sol=given_sol,
-            target_job_subset=set(),
-            last_solution=None,
-            last_job_seq=[],
-            last_obj_val=0,
+            last_cp_subseq=None,
+            last_cp_obj=None,
+            last_improved=None,
+            added_batch_size=_added_batch_size,
         )
 
         try:
             return self._run_loop(
+                given_sol,
                 solver_thread_cnt=solver_thread_cnt,
                 max_time_per_add=max_time_per_add,
                 error_if_infeasible=error_if_infeasible,
@@ -205,13 +335,12 @@ class PwCpConstructor:
         Returns:
             PermutationFlowshopScheduleLite: The modified flow shop schedule.
         """
-        st = self._require_state()
         _base_sol = base_sol.deepcopy()
 
-        if len(already_scheduled_job_set) == st.job_cnt:
+        if len(already_scheduled_job_set) == self.job_cnt:
             return _base_sol
         remaining_jobs = [
-            j for j in st.job_sequence if j not in already_scheduled_job_set
+            j for j in self.job_sequence if j not in already_scheduled_job_set
         ]
         full_sched = _base_sol
         full_sched.extend_jobs(remaining_jobs)
@@ -219,8 +348,7 @@ class PwCpConstructor:
 
     def _log_snapshot(
         self,
-        picked_sol: PermutationFlowshopScheduleLite,
-        already_scheduled_job_set: set[str],
+        picked_obj_val: int,
         note: str,
         timestamp: float,
         iter_report: CpsatSolverReport | None = None,
@@ -229,8 +357,7 @@ class PwCpConstructor:
         """Log a snapshot of the current state.
 
         Args:
-            picked_sol (PermutationFlowshopScheduleLite): The picked solution to log.
-            already_scheduled_job_set (set[str]): The set of already scheduled jobs.
+            picked_obj_val (int): The objective value of the picked solution.
             note (str): A note to attach to the log.
             timestamp (float): The timestamp for the log entry.
                 If None, the current subroutine timer's elapsed time is used.
@@ -239,49 +366,20 @@ class PwCpConstructor:
                 If provided, objective bounds are extracted.
                 Defaults to None.
         """
-        ctx = self.ctx
-        st = self._require_state()
-        sub_obj_store = st.sub_obj_store
-
-        full_sched = self._make_all_dispatched(picked_sol, already_scheduled_job_set)
-        full_sched_value = full_sched.get_total_tardiness()
-        if draw_gantt:
-            number = len(already_scheduled_job_set)
-            full_sol_output_path = ctx.get_file_path_for_subroutine(
-                f"_{number}_full_disp_solution.yaml"
-            )
-            self.save_schedule_lite_to_yaml(full_sched, full_sol_output_path)
-            logging.info("Saved full-dispatched solution to: %s", full_sol_output_path)
-        sub_obj_store.add_obj_value(timestamp, full_sched_value, is_maximize=None)
-
-        if iter_report is not None and getattr(iter_report, "is_feasible", False):
-            records = iter_report.obj_value_records
-            seen = set()
-            for elapsed, val in records:
-                sub_obj_store.add_obj_bound(elapsed, val, is_maximize=None)
-                seen.add((elapsed, val))
-            final_val = picked_sol.get_total_tardiness()
-            if (timestamp, final_val) not in seen:
-                sub_obj_store.add_obj_bound(timestamp, final_val, is_maximize=None)
-            sub_obj_store.add_last_timestamp_note(
-                note, obj_value_is_valid=True, obj_bound_is_valid=True
-            )
-        else:
-            picked_val = picked_sol.get_total_tardiness()
-            sub_obj_store.add_obj_bound(timestamp, picked_val, is_maximize=None)
-            sub_obj_store.add_last_timestamp_note(
-                note, obj_value_is_valid=True, obj_bound_is_valid=True
-            )
+        sub_obj_store = self._require_state().sub_obj_store
+        sub_obj_store.add_obj_value(timestamp, picked_obj_val, is_maximize=None)
+        sub_obj_store.add_last_timestamp_note(note, obj_value_is_valid=True)
 
     def _solve_cp_model_lexico_for_batch(
         self,
         sub_instance: FlowshopDuedateParameters,
-        stage_2_est_map: dict[str, int] | None,
-        stage_2_lct_map: dict[str, int] | None,
-        sumTj_offset: int | None,
         solver_timelimit: float,
         solver_thread_cnt: int | None,
-        all_jobs_are_included: bool,
+        last_job_is_included: bool,
+        stage_2_est_map: dict[str, int] | None = None,
+        stage_2_lct_map: dict[str, int] | None = None,
+        sumTj_offset: int | None = None,
+        profile_fixed_job_list: list[str] | None = None,
     ) -> tuple[CpsatSolverReport, list[str]]:
         """
         Solve CP model in two phases to optimize lexicographic objectives:
@@ -309,6 +407,7 @@ class PwCpConstructor:
         Returns:
             tuple[CpsatSolverReport, list[str]]: Solver report and job sequence.
         """
+        sub_timer = ElapsedTimer()
         if solver_thread_cnt is None:
             solver_thread_cnt = 1
         st = self._require_state()
@@ -339,15 +438,17 @@ class PwCpConstructor:
                 stage_2_est_map=stage_2_est_map,
                 stage_2_lct_map=stage_2_lct_map,
                 sumTj_offset=sumTj_offset,
+                profile_fixed_job_list=profile_fixed_job_list,
             )
             if vars1.total_tardiness is None:
                 raise RuntimeError(
                     "Unexpected: total_tardiness variable is None after CP building."
                 )
+            # Define primary objective
             mdl1.minimize(vars1.total_tardiness)
 
             if (
-                all_jobs_are_included
+                last_job_is_included
                 and ctx.solution_manager.best_obj_bound is not None
                 and not math.isnan(ctx.solution_manager.best_obj_bound)
             ):
@@ -365,14 +466,14 @@ class PwCpConstructor:
                 _timelimit,
                 solver_thread_cnt,
                 e_timer=st.timer,
-                obj_value_is_valid=all_jobs_are_included,
+                obj_value_is_valid=False,
                 obj_bound_is_valid=False,
                 log_level_obj_value=logging.NOTSET,
                 log_level_obj_bound=logging.NOTSET,
             )
             if not getattr(report1, "is_feasible", False):
                 logging.info("No solution from phase 1 CP; skip phase 2.")
-                return report1, []
+                return report1, subjob_id_list
 
             best_sumTj = int(ctx.solver.Value(vars1.total_tardiness))
             phase1_pi: list[int] = [
@@ -388,7 +489,7 @@ class PwCpConstructor:
                 "Skip CP solving in phase 1: total tardiness of given subsequence is zero."
             )
             report_obj_val = sumTj_offset if sumTj_offset is not None else 0
-            elapsed_time = st.timer.elapsed_sec
+            elapsed_time = sub_timer.elapsed_sec
             report1 = CpsatSolverReport(
                 elapsed_time=elapsed_time,
                 obj_value=report_obj_val,
@@ -402,7 +503,7 @@ class PwCpConstructor:
 
         job_seq: list[str] = [subjob_id_list[idx] for idx in phase1_pi]
 
-        if all_jobs_are_included:
+        if last_job_is_included:
             logging.info("All jobs are included; skip phase 2.")
             return report1, job_seq
 
@@ -411,6 +512,7 @@ class PwCpConstructor:
             stage_2_est_map=stage_2_est_map,
             stage_2_lct_map=stage_2_lct_map,
             sumTj_offset=sumTj_offset,
+            profile_fixed_job_list=profile_fixed_job_list,
         )
         if vars2.sum_latest_completion is None:
             raise RuntimeError(
@@ -418,7 +520,7 @@ class PwCpConstructor:
             )
         # Freeze primary objective value
         mdl2.add(vars2.total_tardiness == best_sumTj)
-        # Minimize secondary objective
+        # Define secondary objective
         mdl2.minimize(vars2.sum_latest_completion)
 
         # Add hints from phase1
@@ -432,7 +534,7 @@ class PwCpConstructor:
             _timelimit,
             solver_thread_cnt,
             e_timer=st.timer,
-            obj_value_is_valid=all_jobs_are_included,
+            obj_value_is_valid=False,
             obj_bound_is_valid=False,
             log_level_obj_value=logging.NOTSET,
             log_level_obj_bound=logging.NOTSET,
@@ -450,142 +552,251 @@ class PwCpConstructor:
 
     def _run_loop(
         self,
+        given_sol: PermutationFlowshopScheduleLite,
         solver_thread_cnt: int | None = None,
         max_time_per_add: float | None = None,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ) -> PwCpResult:
+        """
+        Main loop for the PW-CP algorithm.
+
+        Iteratively adds jobs, defines the profile-fixed and optimization windows,
+        runs the CP solver, and updates the schedule based on the results.
+
+        Args:
+            given_sol (PermutationFlowshopScheduleLite): The initial schedule used as a reference
+                for LCT estimation (push-back mechanism).
+            solver_thread_cnt (int | None, optional): Number of threads for the CP solver.
+                Defaults to None (1 thread).
+            max_time_per_add (float | None, optional): Time limit for each CP solving iteration.
+                Defaults to None.
+            error_if_infeasible (bool, optional): Whether to raise an error if infeasibility occurs.
+                Defaults to False.
+            draw_gantt (bool, optional): Whether to save Gantt charts. Defaults to False.
+
+        Returns:
+            PwCpResult: The final result of the PW-CP run.
+        """
         st = self._require_state()
         ctx = self.ctx
 
-        st.last_obj_val = 0
-        st.last_job_seq = []
-        st.last_solution = PermutationFlowshopScheduleLite(
-            ctx.stage_ids,
-            job_2_stage_2_p_map=ctx.job_2_stage_2_p_dict,
-            job_2_due_map=ctx.instance.job_2_duedate_map,
-        )
+        if solver_thread_cnt is None:
+            solver_thread_cnt = 1
 
-        sequence_of_job_sublist = [
-            st.job_sequence[i : i + st.added_batch_size]
-            for i in range(0, len(st.job_sequence), st.added_batch_size)
-        ]
-        job_sublist_cnt = len(sequence_of_job_sublist)
-
-        for bidx, added_job_sublist in enumerate(sequence_of_job_sublist):
+        # Repeat until there are no more jobs to add
+        while len(st.remaining_jobs) > 0:
+            st.iter_idx += 1
             _timelimit = ctx.get_remaining_time_limit(max_time_per_add)
             if float_a_leq_b(_timelimit, 0):
                 logging.info(
-                    "(batch %d/%d) Time over before CP -> dispatch remaining jobs.",
-                    bidx + 1,
-                    job_sublist_cnt,
+                    "(batch %d) Time over before CP -> dispatch remaining %d jobs.",
+                    st.iter_idx + 1,
+                    len(st.remaining_jobs),
                 )
                 break
+
+            added_job_list: list[str] = st.added_job_list
+            if not added_job_list:
+                logging.info(
+                    "(batch %d) No more jobs to add -> finish.",
+                    st.iter_idx + 1,
+                )
+                break
+
+            sub_jobs: list[str] = (
+                st.iter_cp_job_list
+            )  # profile_fixed + added(front batch)
+            base_seq: list[str] = list(sub_jobs)  # "before optimization" reference
+            prev_pf_len: int = len(st.profile_fixed_jobs)
+
+            # Bounds from previous iteration
+            sumTj_offset: int
+            stage_2_est_map: dict[str, int]
+            stage_2_lct_map: dict[str, int]
+
+            if isinstance(st.time_fixed_sol, PermutationFlowshopScheduleLite):
+                sumTj_offset = st.time_fixed_sol.get_total_tardiness()
+                stage_2_est_map = st.time_fixed_sol.get_stage_2_makespan_map()
+            else:
+                sumTj_offset = 0
+                stage_2_est_map = {}
+
+            if not st.last_job_is_included:
+                stage_2_lct_map = given_sol.get_stage_2_start_time_map(
+                    st.not_added_first_job
+                )
+            else:
+                stage_2_lct_map = {}
+
             logging.info(
-                "(batch %d/%d) Preparing to add %d jobs (time limit: %.2f sec).",
-                bidx + 1,
-                job_sublist_cnt,
-                len(added_job_sublist),
+                "(iter %d) CP on sub_jobs=%d (pf=%d + added=%d), timelimit=%.2fs",
+                st.iter_idx,
+                len(sub_jobs),
+                len(st.profile_fixed_jobs),
+                len(added_job_list),
                 _timelimit,
             )
 
-            job_subset_cnt = len(st.target_job_subset) + len(added_job_sublist)
-            all_jobs_are_included = job_subset_cnt == st.job_cnt
+            # ---- build subinstance + solve ----
+            sub_instance = ctx.instance.get_subinstance(sub_jobs)
 
-            sub_instance = ctx.instance.get_subinstance(added_job_sublist)
-
-            sumTj_offset = None
-            stage_2_est_map = None
-            stage_2_lct_map = None
-
-            if isinstance(st.last_solution, PermutationFlowshopScheduleLite):
-                sumTj_offset = int(st.last_obj_val)
-                stage_2_est_map = st.last_solution.get_stage_2_makespan_map()
-
-            if not all_jobs_are_included:
-                next_job = st.given_sol.get_next_job_name(added_job_sublist[-1])
-                stage_2_lct_map = st.given_sol.get_stage_2_start_time_map(next_job)
-
-            logging.info(
-                "(batch %d/%d) Start CP on %d jobs at %s",
-                bidx + 1,
-                job_sublist_cnt,
-                len(added_job_sublist),
-                st.timer.get_formatted_elapsed_time(),
-            )
-
-            iter_report, job_seq_to_be_appended = self._solve_cp_model_lexico_for_batch(
-                sub_instance=sub_instance,
+            iter_report, solver_seq = self._solve_cp_model_lexico_for_batch(
+                sub_instance,
+                _timelimit,
+                solver_thread_cnt,
+                last_job_is_included=st.last_job_is_included,
                 stage_2_est_map=stage_2_est_map,
                 stage_2_lct_map=stage_2_lct_map,
                 sumTj_offset=sumTj_offset,
-                solver_timelimit=_timelimit,
-                solver_thread_cnt=solver_thread_cnt,
-                all_jobs_are_included=all_jobs_are_included,
+                profile_fixed_job_list=st.profile_fixed_jobs,
             )
             last_timestamp = st.timer.elapsed_sec
 
-            if not getattr(iter_report, "is_feasible", False):
+            feasible = getattr(iter_report, "is_feasible", False)
+            if not feasible:
                 logging.info(
-                    "(batch %d/%d) Sub-CP infeasible -> dispatch remaining jobs.",
-                    bidx + 1,
-                    job_sublist_cnt,
+                    "(iter %d) Sub-CP infeasible -> keep base order.", st.iter_idx
                 )
-                break
+                solver_seq = base_seq  # no change
 
             # Update state
-            st.target_job_subset.update(added_job_sublist)
-            st.last_job_seq += job_seq_to_be_appended
-            st.last_solution.extend_jobs(job_seq_to_be_appended)
-            st.last_obj_val = st.last_solution.get_total_tardiness()
+            improved = solver_seq != base_seq
+            st.last_improved = improved
+            st.last_cp_subseq = solver_seq
+            st.last_cp_obj = getattr(iter_report, "obj_value", None)
 
-            seq_changed: bool = job_seq_to_be_appended != added_job_sublist
-            if draw_gantt and seq_changed:
-                batch_sol_output_path = ctx.get_file_path_for_subroutine(
-                    f"_{job_subset_cnt}_batch_disp_solution.yaml"
+            # ---- step size ----
+            if improved:
+                step_size: int = (
+                    self.step_size_on_improve
+                    if self.step_size_on_improve is not None
+                    else st.added_batch_size
                 )
-                self.save_schedule_lite_to_yaml(st.last_solution, batch_sol_output_path)
+            else:
+                step_size = (
+                    self.step_size_on_no_improve
+                    if self.step_size_on_no_improve is not None
+                    else 1
+                )
+
+            # clamp step_size to remaining length (and also to >=1)
+            if step_size <= 0:
+                step_size = 1
+            if step_size > len(st.remaining_jobs):
+                step_size = len(st.remaining_jobs)
+
+            logging.info(
+                "(iter %d) improve=%s -> step_size=%d (rule=%s, batch=%d)",
+                st.iter_idx,
+                improved,
+                step_size,
+                "improve" if improved else "no_improve",
+                len(added_job_list),
+            )
+
+            # ---- update partitions ----
+            # 1) profile_fixed replace:
+            #    pf := opt_seq[: (prev_pf_len + step_size)]
+            new_pf_len: int = prev_pf_len + step_size
+            # opt_seq length is prev_pf_len + len(added_job_list); new_pf_len should not exceed it
+            # new_pf_len = min(new_pf_len, len(opt_seq))
+            st.profile_fixed_jobs = solver_seq[:new_pf_len]
+
+            # Update profile_fixed_sol for logging
+            st.profile_fixed_sol = PermutationFlowshopScheduleLite(
+                ctx.stage_ids,
+                job_2_stage_2_p_map=ctx.job_2_stage_2_p_dict,
+                job_2_due_map=ctx.instance.job_2_duedate_map,
+            )
+            st.profile_fixed_sol.extend_jobs(
+                st.profile_fixed_jobs, stage_2_est_map=stage_2_est_map
+            )
+
+            # 2) overflow -> commit into time-fixed
+            overflow_cnt: int = len(st.profile_fixed_jobs) - self.profile_fixed_cnt
+            if overflow_cnt > 0:
+                to_commit: list[str] = st.profile_fixed_jobs[:overflow_cnt]
+                st.profile_fixed_jobs = st.profile_fixed_jobs[overflow_cnt:]
+                st.extend_time_fixed_jobs(to_commit)
+
+            # 3) remaining_jobs update
+            st.remaining_jobs = [
+                j for j in st.remaining_jobs if j not in st.time_fixed_pool
+            ]
+            if self.profile_fixed_cnt > 0:
+                st.remaining_jobs = [
+                    j for j in st.remaining_jobs if j not in st.profile_fixed_jobs
+                ]
+
+            # --- Log ---
+            # Create a full schedule
+            full_sol = self._make_all_dispatched(st.time_fixed_sol, st.time_fixed_pool)
+            full_obj_val = full_sol.get_total_tardiness()
+            note = str(len(st.time_fixed_pool) + len(st.profile_fixed_jobs))
+
+            if draw_gantt:
+                if len(st.time_fixed_pool) > 1:
+                    time_fixed_sol_output_path = ctx.get_file_path_for_subroutine(
+                        f"_{note}_1_time_fixed_solution.yaml"
+                    )
+                    self.save_schedule_lite_to_yaml(
+                        st.time_fixed_sol, time_fixed_sol_output_path
+                    )
+                    logging.info(
+                        "Saved time-fixed solution to: %s", time_fixed_sol_output_path
+                    )
+
+                if len(st.profile_fixed_jobs) > 0:
+                    profile_fixed_sol_output_path = ctx.get_file_path_for_subroutine(
+                        f"_{note}_2_profile_fixed_solution.yaml"
+                    )
+                    self.save_schedule_lite_to_yaml(
+                        st.profile_fixed_sol, profile_fixed_sol_output_path
+                    )
+                    logging.info(
+                        "Saved profile-fixed solution to: %s",
+                        profile_fixed_sol_output_path,
+                    )
+
+                full_sol_output_path = ctx.get_file_path_for_subroutine(
+                    f"_{note}_3_full_solution.yaml"
+                )
+                self.save_schedule_lite_to_yaml(full_sol, full_sol_output_path)
                 logging.info(
-                    "Saved batch-dispatched solution to: %s", batch_sol_output_path
+                    "Saved full-dispatched solution to: %s", full_sol_output_path
                 )
 
             self._log_snapshot(
-                st.last_solution,
-                st.target_job_subset,
-                note=f"{len(st.target_job_subset)}/{st.job_cnt}",
-                iter_report=iter_report,
+                picked_obj_val=full_obj_val,
+                note=note,
                 timestamp=last_timestamp,
-                draw_gantt=draw_gantt and seq_changed,
+                iter_report=iter_report,
+                draw_gantt=draw_gantt,
             )
 
-        # -------- finish by dispatch remaining --------
-        remaining_jobs = [j for j in st.job_sequence if j not in st.target_job_subset]
-        if remaining_jobs:
-            st.last_solution.extend_jobs(remaining_jobs)
-            self._log_snapshot(
-                st.last_solution,
-                set(st.job_sequence),
-                note="Final dispatch",
-                timestamp=st.timer.elapsed_sec,
-            )
-            st.last_obj_val = st.last_solution.get_total_tardiness()
+        # ---- finalize: full sequence = committed + profile_fixed + remaining ----
+        final_seq = (
+            list(st.committed_time_fixed_jobs)
+            + list(st.profile_fixed_jobs)
+            + list(st.remaining_jobs)
+        )
 
-        # Build a solution to return
-        last_solution = FlowshopSchedule.from_stage_name_list(ctx.stage_ids)
-        for j in st.last_solution.get_job_sequence():
-            last_solution.dispatch_job_by_stages(
+        # Build full FlowshopSchedule for return
+        final_solution = FlowshopSchedule.from_stage_name_list(ctx.stage_ids)
+        for j in final_seq:
+            final_solution.dispatch_job_by_stages(
                 j, ctx.stage_ids, ctx.job_2_stage_2_p_dict[j], after_last=True
             )
-        if ctx.get_obj_value(last_solution) != st.last_obj_val:
-            raise RuntimeError(
-                "Discrepancy in total tardiness in final solution: %d (expected) vs %d (actual)."
-                % (st.last_obj_val, ctx.get_obj_value(last_solution))
-            )
+
         if error_if_infeasible:
-            ctx.check_feasibility(last_solution)
+            ctx.check_feasibility(final_solution)
+
+        # record final
+        last_obj_val = ctx.get_obj_value(final_solution)
 
         return PwCpResult(
-            schedule=last_solution,
+            schedule=final_solution,
             sub_obj_store=st.sub_obj_store,
-            last_obj_value=ctx.get_obj_value(last_solution),
+            last_obj_value=last_obj_val,
         )

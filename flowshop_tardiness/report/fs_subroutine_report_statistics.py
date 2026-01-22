@@ -2,7 +2,8 @@ from typing import Any
 
 from routix.report import SubroutineReportStatistics
 
-from .fs_subroutine_report import FsCpsatSolverReport, FsSubroutineReportT
+from .fs_cpsat_subroutine_report import FsCpsatSolverReport
+from .fs_subroutine_report import FsSubroutineReportT
 
 
 class FsSubroutineReportStatistics(SubroutineReportStatistics[FsSubroutineReportT]):

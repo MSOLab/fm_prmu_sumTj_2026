@@ -5,6 +5,8 @@ description = "Flow shop scheduling to minimize total tardiness"
 readme = "README.md"
 requires-python = "==3.11.*"
 dependencies = [
+    "cplex>=22.1.2.0",
+    "docplex>=2.27.239",
     "mbls",
     "ortools>=9.14.6206",
     "pydantic>=2.11.9",

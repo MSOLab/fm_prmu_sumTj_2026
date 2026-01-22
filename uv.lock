@@ -57,6 +57,19 @@ wheels = [
 ]
 
 [[package]]
+name = "cplex"
+version = "22.1.2.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/42/4c/dddcfb67fbd9c4b60742ddbac728ae584a6be9ca71d24163225d05a1f472/cplex-22.1.2.0-cp311-cp311-macosx_10_6_x86_64.whl", hash = "sha256:09b5176113c9ab7f2c049afd534627d470381280e514426ff74d6703229010c7", size = 39827872, upload-time = "2025-09-17T10:42:07.774Z" },
+    { url = "https://files.pythonhosted.org/packages/af/d8/9891e218d15911675531b1d46a5039d6d76671c01482608c3c15281fb1b5/cplex-22.1.2.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:328eb996caa55f9e10271b9dd40391d12fe600f8f47ff26274977416d8163797", size = 29350168, upload-time = "2025-09-17T10:42:10.39Z" },
+    { url = "https://files.pythonhosted.org/packages/90/67/ac721d3218574525454171c2c071d30e4c6e7434aaafa54272bd689a5393/cplex-22.1.2.0-cp311-cp311-manylinux2014_aarch64.whl", hash = "sha256:f976ce0166bd0e68740e4b514d1395b4f16e8103ef50d9a8f157c1cc916db216", size = 32634872, upload-time = "2024-12-13T13:45:19.529Z" },
+    { url = "https://files.pythonhosted.org/packages/05/04/239306c42047131c281c30f836f6668754cfe6aedc32ad029efe982cb38c/cplex-22.1.2.0-cp311-cp311-manylinux2014_ppc64le.whl", hash = "sha256:e875852bd46361b799950cc6854870a5e3d86f7238d4a8ba97648497521bb52b", size = 37077206, upload-time = "2024-12-13T13:45:25.409Z" },
+    { url = "https://files.pythonhosted.org/packages/86/75/4519d08bf01eb41f61dc554e52bb2590a2ad63d2a0f79ccdfaa5f123f2f4/cplex-22.1.2.0-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:bee12d488df86da5142ccb986fdf537df9ccff8837f33e5f0bc504b0e9b5d3f7", size = 44299356, upload-time = "2024-12-13T13:45:33.377Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/c3/74e851371fbf493289edbe2058a9d715166fb46088c1edfa296771db11d1/cplex-22.1.2.0-cp311-cp311-win_amd64.whl", hash = "sha256:afbbad8aaede41255b703ab758452df9a899dbad48366bd0c9991fb219d57062", size = 26383380, upload-time = "2024-12-13T13:45:40.712Z" },
+]
+
+[[package]]
 name = "cycler"
 version = "0.12.1"
 source = { registry = "https://pypi.org/simple" }
@@ -66,10 +79,21 @@ wheels = [
 ]
 
 [[package]]
+name = "docplex"
+version = "2.30.251"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4d/e0/249705babebfe5bad4beb865f6b439a718b0376bf45287e6bbf62aa93763/docplex-2.30.251.tar.gz", hash = "sha256:6503219f5b51275a7e4e77ca4332903b0f80925d205030a48d3f6aa7ca0dbf2a", size = 646515, upload-time = "2025-07-02T09:08:26.684Z" }
+
+[[package]]
 name = "flowshop-tardiness"
 version = "0.0.1"
 source = { virtual = "." }
 dependencies = [
+    { name = "cplex" },
+    { name = "docplex" },
     { name = "mbls" },
     { name = "ortools" },
     { name = "pydantic" },
@@ -88,6 +112,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cplex", specifier = ">=22.1.2.0" },
+    { name = "docplex", specifier = ">=2.27.239" },
     { name = "mbls", editable = "../mbls" },
     { name = "ortools", specifier = ">=9.14.6206" },
     { name = "pydantic", specifier = ">=2.11.9" },

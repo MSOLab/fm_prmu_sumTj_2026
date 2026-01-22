@@ -7,7 +7,7 @@
 - method: repeat_while_improvement
   n_repeats: 99
   routine_data:
-    - method: bd_cp
+    - method: pw_cp
       added_batch_size: 5
       max_time_per_add: 10
       solver_thread_cnt: 1
