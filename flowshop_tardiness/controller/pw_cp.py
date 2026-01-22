@@ -379,24 +379,6 @@ class PwCpConstructor:
         sub_obj_store = self._require_state().sub_obj_store
         sub_obj_store.add_obj_value(timestamp, picked_obj_val, is_maximize=None)
         sub_obj_store.add_last_timestamp_note(note, obj_value_is_valid=True)
-        # if iter_report is not None and getattr(iter_report, "is_feasible", False):
-        #     records = iter_report.obj_value_records
-        #     seen = set()
-        #     for elapsed, val in records:
-        #         sub_obj_store.add_obj_bound(elapsed, val, is_maximize=None)
-        #         seen.add((elapsed, val))
-        #     final_val = picked_obj_val
-        #     if (timestamp, final_val) not in seen:
-        #         sub_obj_store.add_obj_bound(timestamp, final_val, is_maximize=None)
-        #     sub_obj_store.add_last_timestamp_note(
-        #         note, obj_value_is_valid=True, obj_bound_is_valid=True
-        #     )
-        # else:
-        #     picked_val = picked_obj_val
-        #     sub_obj_store.add_obj_bound(timestamp, picked_val, is_maximize=None)
-        #     sub_obj_store.add_last_timestamp_note(
-        #         note, obj_value_is_valid=True, obj_bound_is_valid=True
-        #     )
 
     def _solve_cp_model_lexico_for_batch(
         self,
