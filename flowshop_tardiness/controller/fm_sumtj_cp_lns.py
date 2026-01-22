@@ -801,6 +801,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         # 1) EDD order
         incumbent_sol = self.solution_manager.get_incumbent()
+        is_init = incumbent_sol is None
         if incumbent_sol is None:
             job_sequence = self.get_edd_sequence()
         else:
@@ -831,7 +832,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             elapsed_time=sub_timer.elapsed_sec,
             obj_value=obj_value,
             obj_bound=None,
-            is_init=True,
+            is_init=is_init,
         )
         was_updated = self.solution_manager.register(report, schedule)
 
@@ -1157,7 +1158,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             self.check_feasibility(schedule)
         obj_value = self.get_obj_value(schedule)
         logging.info(
-            "Repeated-insertion improvement %s (tie=%s, passes=%d): total tardiness %d",
+            "%s improvement %s (tie=%s, passes=%d): total tardiness %d",
+            "Repeated-insertion" if max_passes is not None and max_passes > 1 else "Insertion",
             "applied" if improved_globally else "no change",
             tie_breaker,
             passes,
