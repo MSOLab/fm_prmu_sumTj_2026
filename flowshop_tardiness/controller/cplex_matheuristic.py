@@ -505,7 +505,7 @@ class FlowshopTardinessCplexMatheuristicController(BaseFlowshopController):
         )
         sub_timer.reset()
         last_schedule = self._dispatch_permutation(cand_seq)
-        was_updated = self.solution_manager.register(last_report, last_schedule)
+        self.solution_manager.register(last_report, last_schedule)
 
         # Final logs
         if last_obj_value is not None:
