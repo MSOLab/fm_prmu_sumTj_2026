@@ -1,36 +1,37 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import permutations
 
 from mbls.cpsat import CustomCpModel
-from ortools.sat.python.cp_model import CpModel, IntVar
+from ortools.sat.python.cp_model import CpModel, IntervalVar, IntVar
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
 from .params import Params
 
 
 @dataclass
-class PositionVars:
+class IndirectPrecVars:
     op_start: dict[tuple[int, int], IntVar]
-    """
-    (i, k) -> start time of a k-th job in stage i
-    """
-    op_lth: dict[tuple[int, int], IntVar]
-    """
-    (i, k) -> processing time of a k-th job in stage i
-    """
-    op_end: dict[tuple[int, int], IntVar]
-    """
-    (i, k) -> end time of a k-th job in stage i
-    """
-    pi: dict[int, IntVar]
-    """$pi_k$: job index (j) at position k"""
+    """(i, j) -> start time of job j in stage i"""
 
-    d: dict[int, IntVar]
-    """$d_k$: due date of job at k-th position"""
+    op_end: dict[tuple[int, int], IntVar]
+    """(i, j) -> end time of job j in stage i"""
+
+    op_intvl: dict[tuple[int, int], IntervalVar]
+    """(i, j) -> interval variable of job j in stage i"""
+
+    prec: dict[tuple[int, int], IntVar]
+    """
+    $prec_{j1,j2}$: Indirect precedence variables;
+    1 if job j1 (not necessarily immediately) before job j2
+    """
 
     T: dict[int, IntVar]
     """$T_k$: tardiness of job at k-th position"""
+
+    C: dict[int, IntVar]
+    """$C_i$: latest completion time of stage i"""
 
     total_tardiness: IntVar | None = None
     """Total tardiness variable"""
@@ -41,10 +42,8 @@ class PositionVars:
     # hint 대상만 반환(중요)
     def decision_vars(self):
         yield from self.op_start.values()
-        yield from self.op_lth.values()
         yield from self.op_end.values()
-        yield from self.pi.values()
-        yield from self.d.values()
+        yield from self.prec.values()
         yield from self.T.values()
 
 
@@ -56,13 +55,13 @@ class BaseModelBuilder:
         stage_2_lct_map: dict[str, int] | None = None,
         sumTj_offset: int | None = None,
         profile_fixed_job_list: list[str] | None = None,
-    ) -> tuple[CustomCpModel, Params, PositionVars]:
+    ) -> tuple[CustomCpModel, Params, IndirectPrecVars]:
         mdl = CustomCpModel()
         params: Params = self._make_params(
             instance, stage_2_est_map=stage_2_est_map, stage_2_lct_map=stage_2_lct_map
         )
 
-        vars = self._make_vars(mdl, instance, params)
+        vars: IndirectPrecVars = self._make_vars(mdl, instance, params)
         self._add_structural_constraints(mdl, instance, params, vars)
         self._define_objectives(
             mdl, instance, params, vars, sumTj_offset=sumTj_offset
@@ -146,44 +145,49 @@ class BaseModelBuilder:
         mdl: CpModel,
         instance: FlowshopDuedateParameters,
         params: Params,
-    ) -> PositionVars:
-        j_list = params.j_list
+    ) -> IndirectPrecVars:
         i_list = params.i_list
+        j_list = params.j_list
 
         # Interval variables
         var_op_start = {}
-        var_op_lth = {}
         var_op_end = {}
+        var_op_intvl = {}
 
         for i in i_list:
             stage_start_time_lb = params.stage_start_time_lb[i]
             stage_end_time_ub = params.stage_end_time_ub[i]
             P_set = {params.P[i, j] for j in j_list}
             P_min_i = min(P_set)
-            P_max_i = max(P_set)
-            for k in j_list:
-                suffix = f"{i}_{k}"
-                var_op_start[i, k] = mdl.new_int_var(
+            for j in j_list:
+                suffix = f"{i}_{j}"
+                var_op_start[i, j] = mdl.new_int_var(
                     stage_start_time_lb,
                     stage_end_time_ub - P_min_i,
                     f"start_{suffix}",
                 )
-                var_op_lth[i, k] = mdl.new_int_var(P_min_i, P_max_i, f"lth_{suffix}")
-                var_op_end[i, k] = mdl.new_int_var(
+                var_op_end[i, j] = mdl.new_int_var(
                     stage_start_time_lb + P_min_i,
                     stage_end_time_ub,
                     f"end_{suffix}",
                 )
+                var_op_intvl[i, j] = mdl.new_interval_var(
+                    var_op_start[i, j],
+                    params.P[i, j],
+                    var_op_end[i, j],
+                    f"intvl_{suffix}",
+                )
 
-        # Position variables
-        var_pi = {
-            k: mdl.new_int_var(params.j_first, params.j_last, f"pi_{k}") for k in j_list
-        }
+        # Indirect precedence variables
+        var_prec = {}
+        for j1_idx, j1 in enumerate(j_list):
+            for j2 in j_list[j1_idx + 1 :]:
+                var_prec[j1, j2] = mdl.new_bool_var(f"prec_ind_{j1}_{j2}")
+                var_prec[j2, j1] = mdl.new_bool_var(f"prec_ind_{j2}_{j1}")
+                mdl.add(var_prec[j1, j2] + var_prec[j2, j1] == 1)
 
         D_set = {params.D[j] for j in j_list}
         D_min = min(D_set)
-        D_max = max(D_set)
-        var_d = {k: mdl.new_int_var(D_min, D_max, f"d_{k}") for k in j_list}
 
         # Tardiness of k-th job
         last_i = i_list[-1]
@@ -194,13 +198,18 @@ class BaseModelBuilder:
             for k in j_list
         }
 
-        return PositionVars(
+        # Latest completion time of each stage
+        var_Ci = {}
+        for i in i_list:
+            var_Ci[i] = mdl.new_int_var(0, params.stage_end_time_ub[i], f"C_{i}")
+
+        return IndirectPrecVars(
             op_start=var_op_start,
-            op_lth=var_op_lth,
             op_end=var_op_end,
-            pi=var_pi,
-            d=var_d,
+            op_intvl=var_op_intvl,
+            prec=var_prec,
             T=var_T,
+            C=var_Ci,
         )
 
     def _add_structural_constraints(
@@ -208,74 +217,44 @@ class BaseModelBuilder:
         mdl: CpModel,
         instance: FlowshopDuedateParameters,
         params: Params,
-        vars: PositionVars,
+        vars: IndirectPrecVars,
     ) -> None:
         # Alias for readability
-        j_list = params.j_list
         i_list = params.i_list
-
-        # timer = ElapsedTimer()
-
-        # All-different constraint on sequence variables
-        mdl.add_all_different([vars.pi[k] for k in j_list])
-
-        # logging.info(f"  All-different constr. took {timer.elapsed_sec:.3f} sec.")
-        # timer.set_start_time_as_now()
-
-        # Processing time of each operation
-        # lth_{i,k} = sum_j{P_{ij} * (pi_k == j_index)} \forall i\in I, k\in K
-        # This uses the element constraint.
-        for i in i_list:
-            P_vals_i = [params.P[i, j] for j in j_list]
-            for k in j_list:
-                mdl.add_element(vars.pi[k], P_vals_i, vars.op_lth[i, k])
-
-        # logging.info(f"  Processing time constr. took {timer.elapsed_sec:.3f} sec.")
-        # timer.set_start_time_as_now()
-
-        # Due date of each job
-        # d_k = sum_j{D_j * (pi_k == j_index)}
-        D_vals = [params.D[j] for j in j_list]
-        for k in j_list:
-            mdl.add_element(vars.pi[k], D_vals, vars.d[k])
-
-        # logging.info(f"  Due date constr. took {timer.elapsed_sec:.3f} sec.")
-        # timer.set_start_time_as_now()
+        j_list = params.j_list
 
         # Precedence between consecutive stages for each job
-        for i, next_i in zip(i_list[:-1], i_list[1:]):
-            for k in j_list:
-                mdl.add(vars.op_end[i, k] <= vars.op_start[next_i, k])
+        consecutive_stage_pairs = list(zip(i_list[:-1], i_list[1:]))
+        for j in j_list:
+            for i, next_i in consecutive_stage_pairs:
+                mdl.add(
+                    vars.op_start[i, j] + params.P[i, j] <= vars.op_start[next_i, j]
+                )
 
-        # logging.info(
-        #     f"  Precedence (inter-stage) constr. took {timer.elapsed_sec:.3f} sec."
-        # )
-        # timer.set_start_time_as_now()
-
-        # Precedence between operations in the same stage
+        # Link precedence and time
         for i in i_list:
-            for k in j_list:
-                mdl.add(vars.op_end[i, k] == vars.op_start[i, k] + vars.op_lth[i, k])
-                if k != params.j_first:
-                    mdl.add(vars.op_end[i, k - 1] <= vars.op_start[i, k])
-
-        # logging.info(
-        #     f"  Precedence (intra-stage) constr. took {timer.elapsed_sec:.3f} sec."
-        # )
+            for j1, j2 in permutations(j_list, 2):
+                mdl.add(vars.op_start[i, j2] >= vars.op_end[i, j1]).only_enforce_if(
+                    vars.prec[j1, j2]
+                )
 
     def _define_objectives(
         self,
         mdl: CpModel,
         instance: FlowshopDuedateParameters,
         params: Params,
-        vars: PositionVars,
+        vars: IndirectPrecVars,
         sumTj_offset: int | None = None,
     ) -> None:
         j_list = params.j_list
-        last_i = params.i_list[-1]
+        i_list = params.i_list
+        last_i = i_list[-1]
 
-        for k in j_list:
-            mdl.add_max_equality(vars.T[k], [vars.op_end[last_i, k] - vars.d[k], 0])
+        # Tardiness of each job
+        for j in j_list:
+            mdl.add(vars.T[j] >= vars.op_end[last_i, j] - params.D[j])
+
+        # Total tardiness
         sumTj_ub = sum(
             max(0, params.stage_end_time_ub[last_i] - params.D[j]) for j in j_list
         )
@@ -283,16 +262,19 @@ class BaseModelBuilder:
         if sumTj_offset is not None:
             sumTj_ub += sumTj_offset
             sumTj_lb += sumTj_offset
-
         sumTj = mdl.new_int_var(sumTj_lb, sumTj_ub, "total_tardiness")
-        # T == sum(tardiness_j)
-        mdl.add(sumTj == sum(vars.T[k] for k in j_list) + (sumTj_offset or 0))
+        mdl.add(sumTj == sum(vars.T[j] for j in j_list) + (sumTj_offset or 0))
         vars.total_tardiness = sumTj
 
-        S_ub = sum(params.stage_end_time_ub[i] for i in params.i_list)
+        # Latest completion time of each stage
+        for i in i_list:
+            for j in j_list:
+                mdl.add(vars.C[i] >= vars.op_end[i, j])
 
+        # Sum of latest completion times of all stages
+        S_ub = sum(params.stage_end_time_ub[i] for i in i_list)
         sumCi = mdl.new_int_var(0, S_ub, "sum_latest_completion")
-        mdl.add(sumCi == sum(vars.op_end[i, params.j_last] for i in params.i_list))
+        mdl.add(sumCi == sum(vars.C[i] for i in i_list))
         vars.sum_latest_completion = sumCi
 
     def _add_profile_fixing_constraints(
@@ -300,7 +282,7 @@ class BaseModelBuilder:
         mdl: CpModel,
         instance: FlowshopDuedateParameters,
         params: Params,
-        vars: PositionVars,
+        vars: IndirectPrecVars,
         profile_fixed_job_list: list[str],
     ) -> None:
         """
@@ -328,21 +310,11 @@ class BaseModelBuilder:
             return
 
         job_name_2_j_map = params.job_name_2_j_map
-        j_list = params.j_list
-
-        # Variable for positions of jobs
-        pi_inv = {
-            j: mdl.new_int_var(params.j_first, params.j_last, f"pi_inv_{j}")
-            for j in j_list
-        }
-        # Define inverse mapping constraints
-        pi_list = [vars.pi[k] for k in j_list]
-        pi_inv_list = [pi_inv[j] for j in j_list]
-        mdl.add_inverse(pi_list, pi_inv_list)
 
         # Convert job names to job indices
         fixed_job_indices = [job_name_2_j_map[name] for name in profile_fixed_job_list]
 
         # Add constraints to maintain relative order
         for j, jp in zip(fixed_job_indices[:-1], fixed_job_indices[1:]):
-            mdl.add(pi_inv[j] < pi_inv[jp])
+            mdl.add(vars.prec[j, jp] == 1)
+            mdl.add(vars.prec[jp, j] == 0)
