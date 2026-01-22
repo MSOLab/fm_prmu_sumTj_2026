@@ -5,7 +5,7 @@
 - method: initialize_by_nehms
 - method: set_cp_model_as_base_cp_model
 - method: repeat_while_improvement
-  n_repeats: 1
+  n_repeats: 99
   routine_data:
     - method: pw_cp
       added_batch_size: 5
@@ -22,6 +22,6 @@
       subseq_size: 2
       tie_breaker: "default"
       first_improvement: true
-# - method: solve_base_cp_model
-#   computational_time: null
-#   solver_thread_cnt: 1
+- method: solve_base_cp_model
+  computational_time: null
+  solver_thread_cnt: 1
