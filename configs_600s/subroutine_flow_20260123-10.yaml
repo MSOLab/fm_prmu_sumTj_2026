@@ -10,10 +10,10 @@
     - method: pw_cp
       added_batch_size: 5
       profile_fixed_cnt: 4
-      max_time_per_add: 10
-      solver_thread_cnt: 1
       step_size_on_improve: 5
       step_size_on_no_improve: 1
+      max_time_per_add: 10
+      solver_thread_cnt: 1
     - method: improve_by_insertion
       subseq_size: 1
       tie_breaker: "default"
