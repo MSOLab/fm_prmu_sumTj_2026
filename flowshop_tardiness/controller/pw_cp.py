@@ -13,7 +13,6 @@ from schore.schedule_examples.shop.flow import FlowshopSchedule
 
 from flowshop_tardiness.cpsat_model_2.indirect_prec import IndirectPrecVars
 from flowshop_tardiness.cpsat_model_2.params import Params
-from flowshop_tardiness.cpsat_model_2.position import PositionVars
 from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite
 
 

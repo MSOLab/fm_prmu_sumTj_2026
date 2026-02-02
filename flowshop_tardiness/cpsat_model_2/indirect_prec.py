@@ -39,13 +39,6 @@ class IndirectPrecVars:
     sum_latest_completion: IntVar | None = None
     """Sum of latest completion times variable"""
 
-    # hint 대상만 반환(중요)
-    def decision_vars(self):
-        yield from self.op_start.values()
-        yield from self.op_end.values()
-        yield from self.prec.values()
-        yield from self.T.values()
-
 
 class BaseModelBuilder:
     def build(
@@ -61,15 +54,15 @@ class BaseModelBuilder:
             instance, stage_2_est_map=stage_2_est_map, stage_2_lct_map=stage_2_lct_map
         )
 
-        vars: IndirectPrecVars = self._make_vars(mdl, instance, params)
-        self._add_structural_constraints(mdl, instance, params, vars)
+        vars: IndirectPrecVars = self._make_vars(mdl, params)
+        self._add_structural_constraints(mdl, params, vars)
         self._define_objectives(
-            mdl, instance, params, vars, sumTj_offset=sumTj_offset
+            mdl, params, vars, sumTj_offset=sumTj_offset
         )  # only defines vars + equalities
         if profile_fixed_job_list is not None:
             # Add profile-fixing constraints
             self._add_profile_fixing_constraints(
-                mdl, instance, params, vars, profile_fixed_job_list
+                mdl, params, vars, profile_fixed_job_list
             )
 
         return mdl, params, vars
@@ -140,12 +133,7 @@ class BaseModelBuilder:
             D=D,
         )
 
-    def _make_vars(
-        self,
-        mdl: CpModel,
-        instance: FlowshopDuedateParameters,
-        params: Params,
-    ) -> IndirectPrecVars:
+    def _make_vars(self, mdl: CpModel, params: Params) -> IndirectPrecVars:
         i_list = params.i_list
         j_list = params.j_list
 
@@ -213,11 +201,7 @@ class BaseModelBuilder:
         )
 
     def _add_structural_constraints(
-        self,
-        mdl: CpModel,
-        instance: FlowshopDuedateParameters,
-        params: Params,
-        vars: IndirectPrecVars,
+        self, mdl: CpModel, params: Params, vars: IndirectPrecVars
     ) -> None:
         # Alias for readability
         i_list = params.i_list
@@ -241,7 +225,6 @@ class BaseModelBuilder:
     def _define_objectives(
         self,
         mdl: CpModel,
-        instance: FlowshopDuedateParameters,
         params: Params,
         vars: IndirectPrecVars,
         sumTj_offset: int | None = None,
@@ -280,7 +263,6 @@ class BaseModelBuilder:
     def _add_profile_fixing_constraints(
         self,
         mdl: CpModel,
-        instance: FlowshopDuedateParameters,
         params: Params,
         vars: IndirectPrecVars,
         profile_fixed_job_list: list[str],
@@ -300,7 +282,6 @@ class BaseModelBuilder:
 
         Args:
             mdl (CpModel): model to which constraints are added
-            instance (FlowshopDuedateParameters): instance parameters
             params (Params): parameters of the model
             vars (Vars): variables of the model
             profile_fixed_job_list (list[str]): List of job names to fix the profile

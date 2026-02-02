@@ -111,13 +111,13 @@ class FlowshopTardinessControllerCore(
         from ..cpsat_model_2.indirect_prec import BaseModelBuilder
 
         builder = BaseModelBuilder()
-        mdl, params, vars = builder.build(self.instance)
+        mdl, params, variables = builder.build(self.instance)
         self.params: Params = params
-        self.vars: PositionVars = vars
+        self.vars: IndirectPrecVars = variables
         # Set total tardiness as the objective
-        if vars.total_tardiness is None:
+        if variables.total_tardiness is None:
             raise ValueError("Total tardiness variable is not defined in the model.")
-        mdl.minimize(vars.total_tardiness)
+        mdl.minimize(variables.total_tardiness)
         return mdl
 
     # End abstract getters

@@ -38,15 +38,6 @@ class PositionVars:
     sum_latest_completion: IntVar | None = None
     """Sum of latest completion times variable"""
 
-    # hint 대상만 반환(중요)
-    def decision_vars(self):
-        yield from self.op_start.values()
-        yield from self.op_lth.values()
-        yield from self.op_end.values()
-        yield from self.pi.values()
-        yield from self.d.values()
-        yield from self.T.values()
-
 
 class BaseModelBuilder:
     def build(
