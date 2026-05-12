@@ -48,7 +48,7 @@ draw_progress_plot: true
 progress_plot_filename_format: "{}_progress_plot.png"
 drop_first_values_percent: 0.0
 # Optional metadata for post-processing only
-# analysis_dir_path: "$HFS_RESULT_DIR/Calop1/20250912T001404_281753"
-# analysis_timestamp: "20250923T185753_526917"
+# analysis_dir_path: "Outputs_scenarios/20260512T172930_828669"
+# analysis_timestamp: "20260512T172930_828669"
 # resume_dir_path: resources/vrm_prev_calc/20250923T011049_333399/output_600s/nehedd
 # resume_dir_path: resources/vrm_prev_calc/20251008T110030_267889/output_600s/NEHms_II

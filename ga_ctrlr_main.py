@@ -10,7 +10,7 @@ from routix import (
     StoppingCriteria,
     SubroutineFlowValidator,
 )
-from routix.io import init_timestamped_working_dir, object_to_yaml
+from routix.io import dump_yaml, init_timestamped_working_dir
 from routix.type_defs import RunMode
 from schore.parameters_examples.shop.flow import (
     FlowshopDuedateParameters,
@@ -85,8 +85,8 @@ def main():
     )
     # if run_mode is RunMode.FULL_RUN:
     if run_mode in {RunMode.FULL_RUN, RunMode.RESUME}:
-        object_to_yaml(config.to_dict(), main_metadata_dump_path)
-        object_to_yaml(vrm_common_params_dict, vrm_common_params_dump_path)
+        dump_yaml(config.to_dict(), main_metadata_dump_path)
+        dump_yaml(vrm_common_params_dict, vrm_common_params_dump_path)
     elif run_mode is RunMode.POST_PROCESS_ONLY:
         if not main_metadata_dump_path.is_file():
             raise FileNotFoundError(

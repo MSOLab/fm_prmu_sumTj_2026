@@ -17,7 +17,7 @@ from mbls.cpsat import (
 )
 from mbls.cpsat.callbacks import ValueBoundPair
 from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
-from routix.io import object_to_yaml, tuple_to_pyyaml_key
+from routix.io import dump_yaml
 from routix.util.comparison import float_a_leq_b, float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from schore.schedule_examples.shop.flow import FlowshopSchedule
@@ -264,10 +264,10 @@ class FlowshopTardinessControllerCore(
         from ..io_solution import END_TIME_MAP_KEY, START_TIME_MAP_KEY
 
         solution_dict = {
-            START_TIME_MAP_KEY: tuple_to_pyyaml_key(start_time_map),
-            END_TIME_MAP_KEY: tuple_to_pyyaml_key(end_time_map),
+            START_TIME_MAP_KEY: start_time_map,
+            END_TIME_MAP_KEY: end_time_map,
         }
-        object_to_yaml(solution_dict, output_path, encoding=encoding)
+        dump_yaml(solution_dict, output_path, encoding=encoding)
 
     def export_schedule_to_yaml(
         self, schedule: FlowshopSchedule, output_path: Path | None = None

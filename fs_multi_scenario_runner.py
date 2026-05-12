@@ -163,13 +163,13 @@ class FsMultiScenarioRunner(
         try:
             # 1. Pivot the raw data to get scenarios as columns
             best_obj_value_df = raw_summary_df.pivot_table(
-                index="instanceName", columns="scenario", values="bestObj"
+                index="insName", columns="scenario", values="bestObj"
             ).reset_index()
 
             # 2. Merge with baseline data if available
             if self.baseline_df is not None and not self.baseline_df.empty:
                 rename_map = {
-                    self.baseline_instance_col: "instanceName",
+                    self.baseline_instance_col: "insName",
                     self.baseline_obj_val_col: "baselineObjVal",
                     self.baseline_obj_bound_col: "baselineBound",
                 }
@@ -184,8 +184,8 @@ class FsMultiScenarioRunner(
                 baseline_subset[self.baseline_instance_col] = baseline_subset[
                     self.baseline_instance_col
                 ].astype(str)
-                best_obj_value_df["instanceName"] = best_obj_value_df[
-                    "instanceName"
+                best_obj_value_df["insName"] = best_obj_value_df[
+                    "insName"
                 ].astype(str)
                 baseline_subset.rename(columns=rename_map, inplace=True)
 
@@ -199,7 +199,7 @@ class FsMultiScenarioRunner(
                 dashboard_df = pd.merge(
                     best_obj_value_df,
                     baseline_subset,
-                    on="instanceName",
+                    on="insName",
                     how="left",
                 )
             else:
@@ -218,7 +218,7 @@ class FsMultiScenarioRunner(
                 "rpdf_col_name_format", self.relative_percentage_difference_col_format
             )
             scenarios = [
-                col for col in best_obj_value_df.columns if col != "instanceName"
+                col for col in best_obj_value_df.columns if col != "insName"
             ]
 
             has_baseline_val = (
@@ -276,7 +276,7 @@ class FsMultiScenarioRunner(
                     )
 
             # 4. Define the desired column order
-            ordered_columns = ["instanceName"]
+            ordered_columns = ["insName"]
             obj_val_cols = [col for col in scenarios]
             baseline_obj_val_col = (
                 ["baselineObjVal"] if "baselineObjVal" in dashboard_df.columns else []
@@ -318,9 +318,9 @@ class FsMultiScenarioRunner(
 
             summary_rows: list[dict[str, Any]] = []
             for stat_name, stat_func in self.stat_name_func_pairs:
-                row: dict[str, Any] = {"instanceName": stat_name}
+                row: dict[str, Any] = {"insName": stat_name}
                 for col in final_dashboard.columns:
-                    if col != "instanceName":
+                    if col != "insName":
                         if pd.api.types.is_numeric_dtype(final_dashboard[col]):
                             row[col] = getattr(final_dashboard[col], stat_func)()
                 summary_rows.append(row)
@@ -411,7 +411,7 @@ class FsMultiScenarioRunner(
                                     ),
                                 )
                             )
-                        elif col == "instanceName":
+                        elif col == "insName":
                             header.append(("", "insId"))
                         elif col == "baselineObjVal":
                             header.append(("", "baselineObjVal"))

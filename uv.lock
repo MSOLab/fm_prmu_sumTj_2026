@@ -114,12 +114,12 @@ dev = [
 requires-dist = [
     { name = "cplex", specifier = ">=22.1.2.0" },
     { name = "docplex", specifier = ">=2.27.239" },
-    { name = "mbls", editable = "../mbls" },
+    { name = "mbls" },
     { name = "ortools", specifier = ">=9.14.6206" },
     { name = "pydantic", specifier = ">=2.11.9" },
     { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "routix", editable = "../routix" },
-    { name = "schore", editable = "../schore" },
+    { name = "routix" },
+    { name = "schore" },
     { name = "xlsxwriter", specifier = ">=3.2.9" },
 ]
 
@@ -222,26 +222,15 @@ wheels = [
 
 [[package]]
 name = "mbls"
-version = "0.0.13"
-source = { editable = "../mbls" }
+version = "0.0.15"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "matplotlib" },
     { name = "routix" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "matplotlib", specifier = ">=3.10.3" },
-    { name = "routix", specifier = "==0.0.13" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "ortools", specifier = ">=9.12.4544" },
-    { name = "pytest", specifier = ">=8.4.1" },
-    { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "types-protobuf", specifier = ">=6.30.2.20250516" },
-    { name = "types-pyyaml", specifier = ">=6.0.12.20250402" },
+sdist = { url = "https://files.pythonhosted.org/packages/24/78/8ef9055159ce6625c3e90a7936f33743279e4aa1336c4b745c05060a7cca/mbls-0.0.15.tar.gz", hash = "sha256:699c087d64be26cb4b114f57b82f774eac72fdca6b743edc4e24e377e8d5746c", size = 79724, upload-time = "2026-03-27T05:05:19.554Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/97/b015319991cf4d38cc67e4cd55e22026842f38937443aba5097176bdadd7/mbls-0.0.15-py3-none-any.whl", hash = "sha256:f833b64fe90cab81179b6c2175bfaca53c6932adec6acf18f30084fd2bb5a26b", size = 28911, upload-time = "2026-03-27T05:05:18.403Z" },
 ]
 
 [[package]]
@@ -510,37 +499,24 @@ wheels = [
 
 [[package]]
 name = "routix"
-version = "0.0.13"
-source = { editable = "../routix" }
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.4.2" },
-    { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "types-pyyaml", specifier = ">=6.0.12.20250402" },
+version = "0.0.17"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e0/83/27a2d4257b08e6082a34eba7e6a3a83c6fe02881f530d35d6c8dfa1b0ba8/routix-0.0.17.tar.gz", hash = "sha256:fe3a5227d1115cc28b5b1f9297b1dd30ef4c8759ef423ea78c93745fb2f720dc", size = 35912, upload-time = "2026-04-30T01:59:52.068Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/28/61a74cc2cddba69074b36fc9f6e7813bbb8c94239d90483fa063009a1ca6/routix-0.0.17-py3-none-any.whl", hash = "sha256:16c1a652590e66f711eeb0342db75c88286b3aad917783a62a4024082f1e9cfa", size = 49980, upload-time = "2026-04-30T01:59:53.179Z" },
 ]
 
 [[package]]
 name = "schore"
-version = "0.0.4"
-source = { editable = "../schore" }
+version = "0.0.7"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "matplotlib" },
     { name = "pandas" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "matplotlib", specifier = ">=3.10.6" },
-    { name = "pandas", specifier = ">=2.2.3" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pandas-stubs", specifier = ">=2.2.3.250308" },
-    { name = "pytest", specifier = ">=8.4.1" },
+sdist = { url = "https://files.pythonhosted.org/packages/b0/8c/d9d362294e550f618bfaa9e1a503374c7f70faf5f223579d424229caa386/schore-0.0.7.tar.gz", hash = "sha256:d80af8b7320f298093b9393e5fcaea0254ab55a3627d5492086750f8a60b3f8b", size = 86204, upload-time = "2026-03-27T02:12:41.081Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/2a/44913f5f331a61dfd6bfbaf862378bda4d0d104e8bd138b75178b1b0adfb/schore-0.0.7-py3-none-any.whl", hash = "sha256:ba4720d077e19570e4b69ddef44c55b23d193b89df6bf2d3b84cbd234eecd997", size = 45387, upload-time = "2026-03-27T02:12:39.586Z" },
 ]
 
 [[package]]

@@ -5,7 +5,7 @@ from typing import Any, Sequence
 
 from mbls.cpsat import ObjValueBoundStore
 from routix import DynamicDataObject, StoppingCriteria
-from routix.io import object_to_yaml, tuple_to_pyyaml_key
+from routix.io import dump_yaml
 from routix.runner import SingleInstanceRunner
 from routix.type_defs import RunMode
 from schore.parameters_examples.shop.flow import (
@@ -45,6 +45,8 @@ class FsSingleInstanceRunner(
         output_dir: Path,
         output_metadata: dict[str, Any],
         mode: RunMode = RunMode.FULL_RUN,
+        logger: logging.Logger | None = None,
+        layout: Any = None,
     ):
         _stopping_criteria = StoppingCriteria.from_dict(
             stopping_criteria.to_obj()
@@ -57,6 +59,8 @@ class FsSingleInstanceRunner(
             output_dir=output_dir,
             output_metadata=output_metadata,
             mode=mode,
+            logger=logger,
+            layout=layout,
         )
         self.name = self.instance.name
         self.encoding = self.output_metadata.get("encoding", "utf-8")
@@ -218,14 +222,10 @@ class FsSingleInstanceRunner(
         incumbent_solution = self.ctrlr.solution_manager.get_incumbent()
         if incumbent_solution:
             solution_dict = {
-                START_TIME_MAP_KEY: tuple_to_pyyaml_key(
-                    incumbent_solution.get_start_time_map()
-                ),
-                END_TIME_MAP_KEY: tuple_to_pyyaml_key(
-                    incumbent_solution.get_end_time_map()
-                ),
+                START_TIME_MAP_KEY: incumbent_solution.get_start_time_map(),
+                END_TIME_MAP_KEY: incumbent_solution.get_end_time_map(),
             }
-            object_to_yaml(solution_dict, self.solution_path, encoding=encoding)
+            dump_yaml(solution_dict, self.solution_path, encoding=encoding)
 
     def save_obj_value_bound_store(self, encoding: str = "utf-8") -> None:
         self.ctrlr.obj_store.save_yaml(self.obj_log_path, encoding=encoding)

@@ -19,6 +19,23 @@ class FsMultiInstanceRunner(
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+    def run(self) -> Any:
+        # routix MultiInstanceConcurrentRunner.run() invokes post_run_process()
+        # only after its ProcessPoolExecutor `with` block; any exception escaping
+        # the block (e.g. BrokenPipeError during spawn, or a worker re-raise via
+        # future.result()) skips the summary write. Salvage it here.
+        try:
+            return super().run()
+        except Exception:
+            logging.exception(
+                "Multi-instance run aborted before post_run_process; running it now."
+            )
+            try:
+                return self.post_run_process()
+            except Exception:
+                logging.exception("post_run_process also failed.")
+                return None
+
     # Start abstract methods
 
     def post_run_process(self) -> pd.DataFrame:
