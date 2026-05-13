@@ -28,6 +28,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .method_mean_scatter import (
+    export_method_mean_scatter_html,
+    load_method_mean_metrics,
+)
 from .multi_scenario_method_chart import (
     export_multi_scenario_method_rpdf_comparison_html,
 )
@@ -48,6 +52,8 @@ logger = logging.getLogger(__name__)
 _OBJ_LOG_FN_FORMAT = "{}_obj_log.yaml"
 _RESULT_DIR_NAME = "results"
 _SCENARIO_SCATTER_FN = "summary_method_rpdf_and_norm_time_scatter.html"
+_SCENARIO_METHOD_MEAN_FN = "summary_method_mean_rpdf_and_mean_norm_time_scatter.html"
+_METHOD_END_SUMMARY_FN = "summary_method_end_time_and_obj_value.csv"
 
 
 def _scenario_short_name(scenario_path: str) -> str:
@@ -338,5 +344,59 @@ def write_post_run_dashboard_artifacts(
                 logger.info("Wrote %s", scatter_path)
     else:
         logger.info("Subroutine charts skipped: no scenarios with usable obj_logs")
+
+    # ------------------------------------------------------------------
+    # 5. Per-method mean (time%, RPDf) scatter — per scenario + run level
+    # ------------------------------------------------------------------
+    method_mean_scenarios: list[dict[str, Any]] = []
+    for scenario_path in scenario_paths:
+        csv_path = run_dir / scenario_path / _METHOD_END_SUMMARY_FN
+        if not csv_path.exists():
+            logger.info(
+                "Skipping method-mean chart for %s: %s not found",
+                scenario_path,
+                csv_path.name,
+            )
+            continue
+        timelimit_by_instance = {
+            ins: float(meta["timelimit"])
+            for (sc, ins), meta in instance_meta.items()
+            if sc == scenario_path
+        }
+        method_points = load_method_mean_metrics(
+            csv_path,
+            timelimit_by_instance=timelimit_by_instance,
+            baseline_obj_by_instance=baseline_map,
+        )
+        if not method_points:
+            logger.info(
+                "No method-mean points for %s (no instances with both obj and BKS)",
+                scenario_path,
+            )
+            continue
+        label = _scenario_short_name(scenario_path)
+        scenario_entry = {"label": label, "method_points": method_points}
+        per_scenario_path = run_dir / scenario_path / _SCENARIO_METHOD_MEAN_FN
+        if export_method_mean_scatter_html(
+            [scenario_entry],
+            per_scenario_path,
+            title=f"Method mean RPDf vs mean Time% — {label}",
+        ):
+            written[f"method_mean_scatter:{label}"] = per_scenario_path
+            logger.info("Wrote %s", per_scenario_path)
+        method_mean_scenarios.append(scenario_entry)
+
+    if method_mean_scenarios:
+        run_level_path = (
+            run_dir
+            / f"{run_id}_multi_scenario_method_mean_rpdf_and_mean_norm_time_scatter.html"
+        )
+        if export_method_mean_scatter_html(
+            method_mean_scenarios,
+            run_level_path,
+            title=f"Method mean RPDf vs mean Time% — {run_id}",
+        ):
+            written["multi_scenario_method_mean_scatter_html"] = run_level_path
+            logger.info("Wrote %s", run_level_path)
 
     return written
