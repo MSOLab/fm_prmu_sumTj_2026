@@ -13,6 +13,9 @@ from schore.parameters_examples.shop.flow import (
 from xlsxwriter import Workbook
 from xlsxwriter.worksheet import Worksheet
 
+from flowshop_tardiness.report.dashboards import (
+    write_post_run_dashboard_artifacts,
+)
 from fs_config import BaselineColumnMapping
 from fs_multi_instance_runner import FsMultiInstanceRunner
 from fs_single_instance_runner import FsSingleInstanceRunner
@@ -135,6 +138,23 @@ class FsMultiScenarioRunner(
             info_df=info_df,
             baseline_df=self.baseline_df,
         )
+
+        # 5. Write the interactive HTML dashboards (RPDf pivot + multi-scenario
+        # subroutine flow comparison). Ported from ffc_ddw_sum_et — see
+        # flowshop_tardiness/report/dashboards/.
+        try:
+            instance_col = getattr(self, "baseline_instance_col", "Instance")
+            obj_val_col = getattr(self, "baseline_obj_val_col", "BKS")
+            obj_bound_col = getattr(self, "baseline_obj_bound_col", "LB")
+            write_post_run_dashboard_artifacts(
+                self.output_dir,
+                baseline_df=self.baseline_df,
+                baseline_instance_col=instance_col,
+                baseline_obj_val_col=obj_val_col,
+                baseline_obj_bound_col=obj_bound_col,
+            )
+        except Exception:
+            logging.exception("Failed to write post-run HTML dashboards")
 
     # End abstract methods
 
