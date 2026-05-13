@@ -13,6 +13,7 @@ from .rpdf_pivot import (
     build_rpdf_comparison_df,
     write_pivot_html,
 )
+from .rpdf_scatter_chart import export_method_rpdf_scatter_html
 
 __all__ = [
     "InstanceProgression",
@@ -20,6 +21,7 @@ __all__ = [
     "build_endpoint_df",
     "build_raw_progression_df",
     "build_rpdf_comparison_df",
+    "export_method_rpdf_scatter_html",
     "export_multi_scenario_method_rpdf_comparison_html",
     "load_instance_progression",
     "write_pivot_html",

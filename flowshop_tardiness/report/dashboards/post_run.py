@@ -1,20 +1,22 @@
 """End-to-end driver: turn a run directory into the dashboard artifacts.
 
 Reads ``all_scenarios_summary.csv`` and the per-instance
-``<ins>/results/<ins>_obj_log.yaml`` files, then writes three artifacts at
-the run root (filenames prefixed with the run timestamp = run directory name):
+``<ins>/results/<ins>_obj_log.yaml`` files, then writes:
 
 * ``<run_id>_rpdf_comparison.csv`` — long-format scenario × instance frame
   with ``RPDf``, ``RPDv``, ``Gap``, ``time%``, etc.
-* ``<run_id>_rpdf_dashboard.html`` — self-contained PivotTable.js dashboard
-  built from the comparison CSV. Default view: rows = ``scenarioName``,
-  cols = ``insName``, values = ``RPDf`` (heatmap).
+* ``<run_id>_rpdf_dashboard.html`` — PivotTable.js dashboard built from the
+  comparison CSV. Default view: rows = ``(scenarioName, c)``, cols = ``n``,
+  vals = ``RPDf`` (heatmap).
 * ``<run_id>_multi_scenario_subroutine_flow_comparison.html`` — Plotly chart
   overlaying each scenario's mean RPDf-over-normalized-time trajectory with
   subroutine-end guide markers.
+* ``<scenario_dir>/summary_method_rpdf_and_norm_time_scatter.html`` — one
+  per scenario, interactive per-instance / per-(n,c)-mean detail chart.
 
-Invoked at the tail of ``FsMultiScenarioRunner.post_run_process`` so the
-artifacts ship alongside the existing Excel report.
+Invoked at the tail of ``FsMultiScenarioRunner.post_run_process``. All inputs
+are read from disk so POST_PROCESS_ONLY runs (and the standalone
+``scripts/generate_dashboards.py`` CLI) reproduce every artifact.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from .multi_scenario_method_chart import (
@@ -38,24 +41,26 @@ from .rpdf_pivot import (
     build_rpdf_comparison_df,
     write_pivot_html,
 )
+from .rpdf_scatter_chart import export_method_rpdf_scatter_html
 
 logger = logging.getLogger(__name__)
 
 _OBJ_LOG_FN_FORMAT = "{}_obj_log.yaml"
 _RESULT_DIR_NAME = "results"
+_SCENARIO_SCATTER_FN = "summary_method_rpdf_and_norm_time_scatter.html"
 
 
 def _scenario_short_name(scenario_path: str) -> str:
     return scenario_path.rsplit("/", 1)[-1] if scenario_path else scenario_path
 
 
-def _attach_rpdf(
-    df: pd.DataFrame, baseline_obj_by_instance: dict[str, float]
+def _attach_rpdf_and_dims(
+    df: pd.DataFrame,
+    baseline_obj_by_instance: dict[str, float],
 ) -> pd.DataFrame:
-    """Add ``rpd_f`` column (NaN-dropped on unmatched instances) to ``df``.
+    """Add ``rpd_f`` column (and keep ``n``, ``c`` already attached upstream).
 
-    Matches the ``ffc_ddw_sum_et`` baseline-join semantics: unmatched instances
-    get logged + dropped; matched rows compute symmetric percentage diff.
+    Drops rows whose ``instance_id`` is missing from the baseline map.
     """
     if df.empty:
         return df.assign(rpd_f=pd.Series(dtype=float))
@@ -76,10 +81,6 @@ def _attach_rpdf(
     obj = work["obj_value"].astype(float).to_numpy()
     ref_arr = ref.astype(float).to_numpy()
     denom = obj + ref_arr
-    # Avoid divide-by-zero: when both are zero treat as 0% diff; when sum is
-    # zero with opposite signs we end up with NaN which gets dropped later.
-    import numpy as np
-
     with np.errstate(divide="ignore", invalid="ignore"):
         rpdf = np.where(denom == 0, 0.0, 2 * (obj - ref_arr) / denom)
     work["rpd_f"] = rpdf
@@ -109,7 +110,10 @@ def _build_baseline_obj_map(
 ) -> dict[str, float]:
     if baseline_df is None or baseline_df.empty:
         return {}
-    if instance_col not in baseline_df.columns or obj_val_col not in baseline_df.columns:
+    if (
+        instance_col not in baseline_df.columns
+        or obj_val_col not in baseline_df.columns
+    ):
         logger.warning(
             "Baseline df missing required columns %r / %r; skipping baseline join",
             instance_col,
@@ -140,9 +144,7 @@ def _load_scenario_progressions(
         if meta is None:
             continue
         ins_dir = run_dir / scenario_path / ins_name
-        obj_log_path = (
-            ins_dir / _RESULT_DIR_NAME / _OBJ_LOG_FN_FORMAT.format(ins_name)
-        )
+        obj_log_path = ins_dir / _RESULT_DIR_NAME / _OBJ_LOG_FN_FORMAT.format(ins_name)
         if not obj_log_path.exists():
             obj_log_path = ins_dir / _OBJ_LOG_FN_FORMAT.format(ins_name)
         if not obj_log_path.exists():
@@ -165,21 +167,40 @@ def _load_scenario_progressions(
     return progressions
 
 
+def _resolve_baseline_df(
+    baseline_df: pd.DataFrame | None,
+    baseline_csv_path: Path | None,
+) -> pd.DataFrame | None:
+    if baseline_df is not None:
+        return baseline_df
+    if baseline_csv_path is None:
+        return None
+    if not Path(baseline_csv_path).exists():
+        logger.warning("Baseline CSV not found at %s", baseline_csv_path)
+        return None
+    return pd.read_csv(baseline_csv_path)
+
+
 def write_post_run_dashboard_artifacts(
     run_dir: Path,
     *,
     summary_csv: Path | None = None,
     baseline_df: pd.DataFrame | None = None,
+    baseline_csv_path: Path | None = None,
     baseline_instance_col: str = "Instance",
     baseline_obj_val_col: str = "BKS",
     baseline_obj_bound_col: str = "LB",
     run_id: str | None = None,
 ) -> dict[str, Path]:
-    """Write the comparison CSV + two HTML dashboards under ``run_dir``.
+    """Write the comparison CSV + run-level HTML dashboards + per-scenario
+    scatter HTMLs under ``run_dir``.
 
-    Returns a mapping of artifact name -> written path. Empty mapping when
-    the run summary is missing/empty (no warning beyond a debug log — the
-    Excel report path emits its own warning in that case).
+    Pass either ``baseline_df`` (already loaded) or ``baseline_csv_path``
+    (loaded lazily). Both omitted is fine — the flow chart then uses
+    per-instance best-across-scenarios as the reference, and the comparison
+    CSV's BKS / RPDf columns come out NaN.
+
+    Returns a mapping of artifact name -> written path.
     """
     summary_csv = summary_csv or (run_dir / "all_scenarios_summary.csv")
     if not summary_csv.exists():
@@ -191,11 +212,12 @@ def write_post_run_dashboard_artifacts(
         logger.info("Dashboards skipped: %s is empty", summary_csv)
         return {}
 
+    baseline_df = _resolve_baseline_df(baseline_df, baseline_csv_path)
     run_id = run_id or run_dir.name
     written: dict[str, Path] = {}
 
     # ------------------------------------------------------------------
-    # 1. RPDf comparison CSV + pivot HTML
+    # 1. RPDf comparison CSV + pivot dashboard
     # ------------------------------------------------------------------
     comparison_df = build_rpdf_comparison_df(
         summary_df,
@@ -215,8 +237,8 @@ def write_post_run_dashboard_artifacts(
         comparison_df,
         pivot_path,
         initial_state={
-            "rows": ["scenarioName"],
-            "cols": ["insName"],
+            "rows": ["scenarioName", "c"],
+            "cols": ["n"],
             "vals": ["RPDf"],
             "aggregatorName": "Average",
             "rendererName": "Heatmap",
@@ -228,7 +250,7 @@ def write_post_run_dashboard_artifacts(
     logger.info("Wrote %s", pivot_path)
 
     # ------------------------------------------------------------------
-    # 2. Multi-scenario subroutine flow comparison HTML
+    # 2. Per-scenario obj_log → endpoint/progression frames
     # ------------------------------------------------------------------
     baseline_map = _build_baseline_obj_map(
         baseline_df,
@@ -236,9 +258,9 @@ def write_post_run_dashboard_artifacts(
         obj_val_col=baseline_obj_val_col,
     )
     if not baseline_map:
-        # Fall back to using the best obj observed across all scenarios for
-        # each instance — keeps the chart useful even without a published BKS.
-        logger.info("No baseline obj available; using per-instance best across scenarios")
+        logger.info(
+            "No baseline obj available; using per-instance best across scenarios"
+        )
         baseline_map = {
             str(ins): float(grp["bestObj"].min())
             for ins, grp in summary_df.groupby("insName")
@@ -251,7 +273,7 @@ def write_post_run_dashboard_artifacts(
         if sc not in scenario_paths:
             scenario_paths.append(sc)
 
-    scenario_metrics: list[dict[str, Any]] = []
+    scenario_frames: list[dict[str, Any]] = []
     for scenario_path in scenario_paths:
         progressions = _load_scenario_progressions(
             run_dir, scenario_path, summary_df, instance_meta
@@ -260,30 +282,61 @@ def write_post_run_dashboard_artifacts(
             continue
         endpoint_df = build_endpoint_df(progressions)
         raw_progression_df = build_raw_progression_df(progressions)
-        endpoint_df = _attach_rpdf(endpoint_df, baseline_map)
-        raw_progression_df = _attach_rpdf(raw_progression_df, baseline_map)
+
+        # Attach n / c onto chart frames so the scatter writer can group by
+        # problem size. job_cnt/stage_cnt come straight from the loader.
+        for df in (endpoint_df, raw_progression_df):
+            if not df.empty:
+                df["n"] = df["job_cnt"].astype(int)
+                df["c"] = df["stage_cnt"].astype(int)
+
+        endpoint_df = _attach_rpdf_and_dims(endpoint_df, baseline_map)
+        raw_progression_df = _attach_rpdf_and_dims(raw_progression_df, baseline_map)
         if endpoint_df.empty:
             continue
-        scenario_metrics.append(
+        scenario_frames.append(
             {
+                "scenario_path": scenario_path,
                 "label": _scenario_short_name(scenario_path),
                 "endpoint_df": endpoint_df,
                 "raw_progression_df": raw_progression_df,
             }
         )
 
-    if scenario_metrics:
+    # ------------------------------------------------------------------
+    # 3. Run-level multi-scenario flow comparison HTML
+    # ------------------------------------------------------------------
+    if scenario_frames:
         flow_path = run_dir / f"{run_id}_multi_scenario_subroutine_flow_comparison.html"
         ok = export_multi_scenario_method_rpdf_comparison_html(
-            scenario_metrics=scenario_metrics,
+            scenario_metrics=[
+                {
+                    "label": f["label"],
+                    "endpoint_df": f["endpoint_df"],
+                    "raw_progression_df": f["raw_progression_df"],
+                }
+                for f in scenario_frames
+            ],
             output_path=flow_path,
         )
         if ok:
             written["multi_scenario_subroutine_flow_comparison_html"] = flow_path
             logger.info("Wrote %s", flow_path)
+
+        # ------------------------------------------------------------------
+        # 4. Per-scenario scatter HTMLs
+        # ------------------------------------------------------------------
+        for frame in scenario_frames:
+            scatter_path = run_dir / frame["scenario_path"] / _SCENARIO_SCATTER_FN
+            ok = export_method_rpdf_scatter_html(
+                endpoint_df=frame["endpoint_df"],
+                raw_progression_df=frame["raw_progression_df"],
+                output_path=scatter_path,
+            )
+            if ok:
+                written[f"scatter:{frame['label']}"] = scatter_path
+                logger.info("Wrote %s", scatter_path)
     else:
-        logger.info(
-            "Multi-scenario flow chart skipped: no scenarios with usable obj_logs"
-        )
+        logger.info("Subroutine charts skipped: no scenarios with usable obj_logs")
 
     return written

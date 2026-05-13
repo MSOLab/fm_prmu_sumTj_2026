@@ -13,13 +13,21 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 from string import Template
 from typing import Any
 
-import numpy as np
 import pandas as pd
+
+from ._chart_internals import (
+    build_best_so_far_points,
+    build_step_path,
+    keep_strict_global_improvements_or_endpoints,
+    progression_points_to_arrays,
+    series_colors_json,
+    step_function_mean_over_union,
+    symbol_map_json,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,48 +38,6 @@ _POSITIVE_AXIS_PADDING = 1.05
 # Minimum x-axis upper so the chart doesn't squeeze horizontally when every
 # scenario finishes well before t=1.
 _MIN_NORMALIZED_TIME_X_UPPER = 1.0
-
-
-_SERIES_COLORS: tuple[str, ...] = (
-    "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
-    "#d62728",
-    "#9467bd",
-    "#8c564b",
-    "#e377c2",
-    "#7f7f7f",
-    "#bcbd22",
-    "#17becf",
-)
-
-# Stable marker shapes for the subroutines exercised by the CP-LNS flow.
-# Subroutines not listed here fall back to "circle" at render time.
-_SUBROUTINE_SYMBOL_MAP: dict[str, str] = {
-    "set_random_seed": "x",
-    "compute_preemptive_last_stage_lb": "diamond",
-    "initialize_by_edd": "triangle-up",
-    "initialize_by_nehms": "triangle-down",
-    "set_cp_model_as_base_cp_model": "square",
-    "improve_by_insertion": "cross",
-    "repeat_while_improvement": "star",
-    "pw_cp": "circle",
-    "solve_base_cp_model": "hexagon",
-}
-
-
-@dataclass(frozen=True)
-class _ProgressionPoint:
-    time: float
-    rpd_f: float
-
-
-def _series_colors_json() -> str:
-    return json.dumps(list(_SERIES_COLORS), separators=(",", ":"))
-
-
-def _symbol_map_json() -> str:
-    return json.dumps(_SUBROUTINE_SYMBOL_MAP, separators=(",", ":"))
 
 
 def _positive_axis_upper(values: list[float]) -> float:
@@ -141,102 +107,6 @@ def _prepare_progression_df(
     return work_df.dropna(subset=["subroutine_order"]).copy()
 
 
-def _best_so_far_points(grp: pd.DataFrame) -> list[_ProgressionPoint]:
-    if grp.empty:
-        return []
-    times = grp["norm_time"].tolist()
-    raw = grp["rpd_f"].tolist()
-    best: list[float] = []
-    cur: float | None = None
-    for y in raw:
-        cur = y if cur is None else min(cur, y)
-        best.append(cur)
-    deduped: dict[float, _ProgressionPoint] = {}
-    for t, y in zip(times, best):
-        deduped[float(t)] = _ProgressionPoint(time=float(t), rpd_f=float(y))
-    return [deduped[k] for k in sorted(deduped)]
-
-
-def _keep_strict_global_improvements_or_endpoints(
-    progression_grp: pd.DataFrame,
-) -> pd.DataFrame:
-    """Keep rows whose ``rpd_f`` strictly improves the global running min,
-    plus each ``call_index`` group's last row. Mirrors source-repo logic to
-    keep HTML size bounded when the raw progression is dense.
-    """
-    if progression_grp.empty:
-        return progression_grp
-    sort_cols = [c for c in ["norm_time", "global_sec"] if c in progression_grp.columns]
-    ordered = progression_grp.sort_values(sort_cols)
-    endpoint_indices: set = set()
-    for _, sub_grp in ordered.groupby("call_index", sort=False):
-        endpoint_indices.add(sub_grp.index[-1])
-    keep_indices: list = []
-    running_min = float("inf")
-    for idx, rpdf in zip(ordered.index, ordered["rpd_f"].tolist()):
-        is_strict = rpdf < running_min
-        is_endpoint = idx in endpoint_indices
-        if is_strict or is_endpoint:
-            keep_indices.append(idx)
-        if is_strict:
-            running_min = rpdf
-    return progression_grp.loc[keep_indices].sort_values(sort_cols)
-
-
-def _progression_points_to_arrays(
-    points: list[_ProgressionPoint],
-) -> tuple[np.ndarray, np.ndarray]:
-    n = len(points)
-    times = np.fromiter((p.time for p in points), dtype=np.float64, count=n)
-    values = np.fromiter((p.rpd_f for p in points), dtype=np.float64, count=n)
-    return times, values
-
-
-def _step_function_mean_over_union(
-    model_arrays: list[tuple[np.ndarray, np.ndarray]],
-) -> tuple[list[float], list[float]]:
-    start_time = max(float(times[0]) for times, _ in model_arrays)
-    end_time = max(float(times[-1]) for times, _ in model_arrays)
-
-    in_range = [t[(t >= start_time) & (t <= end_time)] for t, _ in model_arrays]
-    event_times = np.unique(np.concatenate(in_range)) if in_range else np.array([])
-    if event_times.size == 0:
-        event_times = (
-            np.array([start_time, end_time], dtype=np.float64)
-            if end_time > start_time
-            else np.array([start_time], dtype=np.float64)
-        )
-    elif event_times[-1] < end_time:
-        event_times = np.append(event_times, end_time)
-
-    sum_y = np.zeros(event_times.shape, dtype=np.float64)
-    for times, values in model_arrays:
-        idx = np.searchsorted(times, event_times, side="right") - 1
-        sum_y += values[idx]
-    mean_y_arr = sum_y / len(model_arrays)
-
-    return event_times.tolist(), mean_y_arr.tolist()
-
-
-def _build_step_path(
-    x_values: list[float], y_values: list[float]
-) -> tuple[list[float], list[float]]:
-    step_x: list[float] = []
-    step_y: list[float] = []
-    for idx, (x, y) in enumerate(zip(x_values, y_values)):
-        if idx == 0:
-            step_x.append(x)
-            step_y.append(y)
-            continue
-        prev_y = y_values[idx - 1]
-        step_x.append(x)
-        step_y.append(prev_y)
-        if y < prev_y:
-            step_x.append(x)
-            step_y.append(y)
-    return step_x, step_y
-
-
 def _fill_missing_subroutine_endpoints(endpoint_df: pd.DataFrame) -> pd.DataFrame:
     """For each instance, add a synthetic endpoint row for every scenario-level
     subroutine the instance never reached. Without this, the guide-marker
@@ -281,7 +151,7 @@ def _build_scenario_progression_models(
             if c in raw_progression_df.columns
         ]
         progression_by_instance = {
-            str(ins): _keep_strict_global_improvements_or_endpoints(
+            str(ins): keep_strict_global_improvements_or_endpoints(
                 grp.sort_values(sort_cols)
             )
             for ins, grp in raw_progression_df.groupby("instance_id", sort=True)
@@ -297,7 +167,7 @@ def _build_scenario_progression_models(
         models.append(
             {
                 "instance_id": str(ins),
-                "progression_points": _best_so_far_points(source_grp),
+                "progression_points": build_best_so_far_points(source_grp),
             }
         )
     return models
@@ -315,10 +185,10 @@ def _build_scenario_mean_series(
         return None
 
     model_arrays = [
-        _progression_points_to_arrays(m["progression_points"]) for m in models
+        progression_points_to_arrays(m["progression_points"]) for m in models
     ]
-    mean_x, mean_y = _step_function_mean_over_union(model_arrays)
-    step_x, step_y = _build_step_path(mean_x, mean_y)
+    mean_x, mean_y = step_function_mean_over_union(model_arrays)
+    step_x, step_y = build_step_path(mean_x, mean_y)
 
     guide_df = (
         endpoint_df.sort_values(["subroutine_order", "subroutine_name", "norm_time"])
@@ -333,8 +203,7 @@ def _build_scenario_mean_series(
         "step_y": step_y,
         "meta": [scenario_label, len(models)],
         "vertical_guides": [
-            {"subroutine_name": name, "x": x}
-            for name, x in zip(guide_text, guide_x)
+            {"subroutine_name": name, "x": x} for name, x in zip(guide_text, guide_x)
         ],
         "guide_marker_x": guide_x,
         "guide_marker_text": guide_text,
@@ -478,8 +347,8 @@ def _render_html(payload: dict, x_decimals: int, y_decimals: int) -> str:
         payload_json=json.dumps(payload, separators=(",", ":")),
         x_percent_decimals=x_decimals,
         y_percent_decimals=y_decimals,
-        series_colors_json=_series_colors_json(),
-        symbol_map_json=_symbol_map_json(),
+        series_colors_json=series_colors_json(),
+        symbol_map_json=symbol_map_json(),
     )
 
 
