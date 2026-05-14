@@ -18,12 +18,12 @@ dicts_of_i_o_data_path:
     output_dir: "20260514_lb_neh"
     description: "LB (init by NEH-MS)"
   - stopping_criteria_rel_path: "configs_cp_lns/stopping_criteria_nm.yaml"
-    subroutine_flow_rel_path: "configs_cp_lns/20260514_ablation_c3.yaml"
-    output_dir: "20260514_ablation_c3"
+    subroutine_flow_rel_path: "configs_cp_lns/20260515_ablation_c3.yaml"
+    output_dir: "20260515_ablation_c3"
     description: "LB + EDD + NEH_MS + II(1) + Base CP"
   - stopping_criteria_rel_path: "configs_cp_lns/stopping_criteria_nm.yaml"
-    subroutine_flow_rel_path: "configs_cp_lns/20260514_ablation_c5.yaml"
-    output_dir: "20260514_ablation_c5"
+    subroutine_flow_rel_path: "configs_cp_lns/20260515_ablation_c5.yaml"
+    output_dir: "20260515_ablation_c5"
     description: "LB + EDD + NEH_MS + PW-CP(7,0,7,1) + II(1) + Base CP"
 
 # Output and Logging configuration
