@@ -1,6 +1,6 @@
-import random
 import logging
 import math
+import random
 import time
 from collections import defaultdict
 from typing import Callable, Sequence
@@ -784,32 +784,27 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
         return best_pos_list, metric
 
-    def _run_neh_edd(
+    def _build_neh_schedule(
         self,
-        method_name: str,
+        job_sequence: list[str],
         tie_breaker: str,
         random_among_best_pos: bool = False,
         error_if_infeasible: bool = False,
-        draw_gantt: bool = False,
-    ) -> None:
+    ) -> tuple[FlowshopSchedule, list[str]]:
         """
-        Generic NEH with EDD ordering (sum of tardiness objective), array-based fast evaluation.
-        - No schedule/deepcopy during insertion trials (only once at the end).
-        Complexity: O(n^2 * m) with small constants via prefix reuse.
+        Run the NEH insertion construction with ``job_sequence`` as the seed:
+        iterate over the seed in order and re-insert each job into its best
+        position under ``tie_breaker``, using NEW-acceleration evaluation.
+
+        Does NOT register the solution or write to the obj log; callers handle that.
+
+        Args:
+            job_sequence: job ids in the order driving the NEH iteration.
+
+        Returns:
+            tuple of (schedule, resulting NEH sequence).
         """
-        sub_timer = ElapsedTimer()
-
-        # 1) EDD order
-        incumbent_sol = self.solution_manager.get_incumbent()
-        is_init = incumbent_sol is None
-        if incumbent_sol is None:
-            job_sequence = self.get_edd_sequence()
-        else:
-            job_sequence = incumbent_sol.get_last_stage_job_list()
-
         seq: list[str] = []
-
-        # 2) NEH insertion by EDD order with NEW acceleration evaluation
         for j in job_sequence:
             pos_list, _ = self._get_best_pos_list_and_metric_new_acc(
                 seq, j, tie_breaker=tie_breaker
@@ -820,10 +815,43 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 pos = pos_list[0]
             seq.insert(pos, j)
 
-        # 3) Build schedule once and register/log
         schedule = self.get_dispatched_schedule(seq)
         if error_if_infeasible:
             self.check_feasibility(schedule)
+
+        return schedule, seq
+
+    def _run_neh_rebuild(
+        self,
+        method_name: str,
+        tie_breaker: str,
+        random_among_best_pos: bool = False,
+        error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
+    ) -> None:
+        """
+        Run the NEH rebuild on the incumbent's job order (EDD as fallback) for the
+        sum-of-tardiness objective with array-based fast evaluation, then register
+        the resulting schedule and update obj/timestamp logs.
+
+        - No schedule/deepcopy during insertion trials (only once at the end).
+        Complexity: O(n^2 * m) with small constants via prefix reuse.
+        """
+        sub_timer = ElapsedTimer()
+
+        incumbent_sol = self.solution_manager.get_incumbent()
+        is_init = incumbent_sol is None
+        if incumbent_sol is None:
+            seed_sequence = self.get_edd_sequence()
+        else:
+            seed_sequence = incumbent_sol.get_last_stage_job_list()
+
+        schedule, _ = self._build_neh_schedule(
+            seed_sequence,
+            tie_breaker=tie_breaker,
+            random_among_best_pos=random_among_best_pos,
+            error_if_infeasible=error_if_infeasible,
+        )
 
         obj_value = self.get_obj_value(schedule)
         logging.info(f"Initialized by {method_name} with total tardiness {obj_value}")
@@ -858,7 +886,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         draw_gantt: bool = False,
         random_among_best_pos: bool = False,
     ) -> None:
-        self._run_neh_edd(
+        self._run_neh_rebuild(
             "NEHedd",
             "default",
             random_among_best_pos=random_among_best_pos,
@@ -872,7 +900,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         draw_gantt: bool = False,
         random_among_best_pos: bool = False,
     ) -> None:
-        self._run_neh_edd(
+        self._run_neh_rebuild(
             "makespan",
             "makespan",
             random_among_best_pos=random_among_best_pos,
@@ -883,7 +911,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     # def initialize_by_nehm(
     #     self, error_if_infeasible: bool = False, draw_gantt: bool = False
     # ) -> None:
-    #     self._run_neh_edd(
+    #     self._run_neh_rebuild(
     #         "NEH-M",
     #         "NEH-M",
     #         error_if_infeasible=error_if_infeasible,
@@ -893,7 +921,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     # def initialize_by_neh_it1(
     #     self, error_if_infeasible: bool = False, draw_gantt: bool = False
     # ) -> None:
-    #     self._run_neh_edd(
+    #     self._run_neh_rebuild(
     #         "NEH-IT1",
     #         "NEH-IT1",
     #         error_if_infeasible=error_if_infeasible,
@@ -1159,7 +1187,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         obj_value = self.get_obj_value(schedule)
         logging.info(
             "%s improvement %s (tie=%s, passes=%d): total tardiness %d",
-            "Repeated-insertion" if max_passes is not None and max_passes > 1 else "Insertion",
+            "Repeated-insertion"
+            if max_passes is not None and max_passes > 1
+            else "Insertion",
             "applied" if improved_globally else "no change",
             tie_breaker,
             passes,
@@ -1190,7 +1220,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
     # Subroutine: lower bound by preemptive scheduling of the last stage only
 
     def compute_preemptive_last_stage_lb(
-        self, error_if_infeasible: bool = False, draw_gantt: bool = False
+        self,
+        init_by_neh_ms: bool = False,
+        error_if_infeasible: bool = False,
+        draw_gantt: bool = False,
     ) -> None:
         from ..graph_model.single_mc_pmtn import SingleMachinePreemptionMcf
 
@@ -1205,23 +1238,35 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 obj_bound,
                 sub_timer.get_formatted_elapsed_time(),
             )
+
+            def _make_schedule_from(seq: list[str]) -> FlowshopSchedule:
+                if init_by_neh_ms:
+                    schedule, _ = self._build_neh_schedule(
+                        seq,
+                        tie_breaker="makespan",
+                        error_if_infeasible=error_if_infeasible,
+                    )
+                    return schedule
+                return self.get_dispatched_schedule(seq)
+
             seq_by_start = last_stage_only_mdl.get_job_start_sequence()
-            schedule_by_start = self.get_dispatched_schedule(seq_by_start)
+            schedule_by_start = _make_schedule_from(seq_by_start)
             obj_value_by_start = self.get_obj_value(schedule_by_start)
 
             seq_by_end = last_stage_only_mdl.get_job_completion_sequence()
-            schedule_by_end = self.get_dispatched_schedule(seq_by_end)
+            schedule_by_end = _make_schedule_from(seq_by_end)
             obj_value_by_end = self.get_obj_value(schedule_by_end)
 
             seq_by_avg = last_stage_only_mdl.get_job_average_sequence()
-            schedule_by_avg = self.get_dispatched_schedule(seq_by_avg)
+            schedule_by_avg = _make_schedule_from(seq_by_avg)
             obj_value_by_avg = self.get_obj_value(schedule_by_avg)
 
-            logging.info("Dispatched schedules' total tardiness:")
+            label = "NEH-MS" if init_by_neh_ms else "Dispatched"
+            logging.info("%s schedules' total tardiness:", label)
             logging.info(" - by start time sequence: %d", obj_value_by_start)
             logging.info(" - by completion time sequence: %d", obj_value_by_end)
             logging.info(" - by average time sequence: %d", obj_value_by_avg)
-            # Choose the best among the three dispatched sequences
+            # Choose the best among the three sequence-based candidates
             best_obj_value = min(obj_value_by_start, obj_value_by_end, obj_value_by_avg)
             if best_obj_value == obj_value_by_start:
                 best_schedule = schedule_by_start
@@ -1233,7 +1278,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 best_schedule = schedule_by_avg
                 method_used = "average time"
             logging.info(
-                "Among dispatched schedules, best total tardiness is %d by %s sequence.",
+                "Among %s schedules, best total tardiness is %d by %s sequence.",
+                label,
                 best_obj_value,
                 method_used,
             )

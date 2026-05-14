@@ -109,5 +109,7 @@ class FsSubroutineReportStatistics(SubroutineReportStatistics[FsSubroutineReport
             return_dict["initBound"] = init_obj_bound
         if type(best) is FsCpsatSolverReport:
             return_dict["status"] = best.status.to_solver_status_enum().value
+        elif best is not None:
+            return_dict["status"] = "HEURISTIC"
 
         return return_dict

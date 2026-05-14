@@ -23,7 +23,7 @@ from fs_multi_scenario_runner import FsMultiScenarioRunner
 from fs_single_instance_runner import FsSingleInstanceRunner
 from output_filenames import OutputFilenames
 
-MAIN_METADATA_FILENAME = "metadata_cp_lns_20260512.yaml"
+MAIN_METADATA_FILENAME = "metadata_cp_lns_20260514.yaml"
 
 
 def main():
