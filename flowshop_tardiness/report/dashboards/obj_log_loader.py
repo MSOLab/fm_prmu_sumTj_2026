@@ -80,6 +80,56 @@ def _innermost_method_name(label: str) -> str:
     return m.group(2)
 
 
+def _truncate_calls_to_timelimit(
+    calls: tuple[CallSegment, ...], timelimit_sec: float
+) -> tuple[CallSegment, ...]:
+    """Truncate the call trajectory to ``timelimit_sec``.
+
+    Models the deadline-truncated view (matches ``apply_timelimit_trim`` in
+    :mod:`obj_log_trim`):
+
+    * Calls entirely within the budget are kept unchanged.
+    * A call straddling the deadline is truncated: ``global_end_sec`` becomes
+      ``timelimit_sec`` and only points with ``global_sec <= timelimit_sec``
+      are kept. If no original point falls within the truncated window, a
+      single carry-forward point is synthesized at ``timelimit_sec`` using
+      the last known value, so downstream charts still emit an endpoint
+      marker at ``norm_time = 1``.
+    * Calls starting after the deadline are dropped.
+    """
+    if timelimit_sec is None or timelimit_sec <= 0 or not calls:
+        return calls
+
+    out: list[CallSegment] = []
+    last_value: float | None = None
+    for call in calls:
+        if call.global_start_sec >= timelimit_sec:
+            break
+        if call.global_end_sec <= timelimit_sec:
+            out.append(call)
+            if call.points:
+                last_value = call.points[-1].value
+            continue
+        kept_points = tuple(p for p in call.points if p.global_sec <= timelimit_sec)
+        if not kept_points and last_value is not None:
+            kept_points = (ProgPoint(global_sec=timelimit_sec, value=last_value),)
+        if not kept_points:
+            break
+        out.append(
+            CallSegment(
+                call_index=call.call_index,
+                subroutine_name=call.subroutine_name,
+                prefixed_subroutine_name=call.prefixed_subroutine_name,
+                global_start_sec=call.global_start_sec,
+                global_end_sec=timelimit_sec,
+                points=kept_points,
+            )
+        )
+        last_value = kept_points[-1].value
+        break
+    return tuple(out)
+
+
 def _build_calls_for_series(
     data: dict[str, float],
     notes: dict[str, str],
@@ -161,6 +211,9 @@ def load_instance_progression(
 
     data, notes = _extract_obj_value_block(payload, obj_log_path)
     obj_value_calls = _build_calls_for_series(data, notes)
+    obj_value_calls = _truncate_calls_to_timelimit(
+        obj_value_calls, float(timelimit_sec)
+    )
 
     return InstanceProgression(
         instance_id=instance_id,

@@ -14,6 +14,7 @@ from xlsxwriter import Workbook
 from xlsxwriter.worksheet import Worksheet
 
 from flowshop_tardiness.report.dashboards import (
+    apply_timelimit_trim,
     write_post_run_dashboard_artifacts,
 )
 from fs_config import BaselineColumnMapping
@@ -117,7 +118,14 @@ class FsMultiScenarioRunner(
             return
 
         raw_summary_df = pd.concat(all_summary_dfs, ignore_index=True)
-        # Save the aggregated raw summary
+        # Save the raw, pre-trim aggregate for traceability.
+        raw_summary_df.to_csv(
+            self.output_dir / "all_scenarios_summary_endpoint.csv", index=False
+        )
+        # Trim bestObj/bestBound/totalElapsedTime to the configured timelimit so
+        # downstream dashboards reflect the deadline-truncated view. Originals
+        # are preserved as ``*_endpoint`` columns on the resulting frame.
+        raw_summary_df = apply_timelimit_trim(raw_summary_df, self.output_dir)
         raw_summary_df.to_csv(
             self.output_dir / "all_scenarios_summary.csv", index=False
         )

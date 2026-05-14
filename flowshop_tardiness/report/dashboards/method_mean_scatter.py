@@ -1,17 +1,37 @@
 """Per-controller-method mean (time%, RPDf) scatter charts.
 
 Each top-level method in ``subroutine_flow.yaml`` becomes a single point per
-scenario: arithmetic mean of ``method_end_sec / timelimit`` (x) and
-``2 * (obj - BKS) / (obj + BKS)`` (y) across the instances that actually
-recorded an ``objective_value`` for that method. Methods with no
-``objective_value`` recorded for any instance (e.g. ``set_random_seed``)
-are dropped.
+scenario. The two axes are averaged **asymmetrically** to avoid the
+"last-point-rises" misread that comes from controller short-circuits:
+
+* **x — mean ``method_end_sec / timelimit``** is averaged only over the
+  instances that *actually ran* this method (recorded an ``end_sec``).
+  Instances where the flow short-circuited before reaching this method
+  (UB=LB triggered the stopping condition, a prior method already
+  exhausted the time budget, etc.) have no recorded ``end_sec`` and are
+  excluded from the time average — their time contribution would be
+  meaningless.
+* **y — mean ``RPDf = 2*(obj - BKS) / (obj + BKS)``** is averaged over
+  *every* instance, using the carried-forward obj from the latest method
+  that did record one when the current method was skipped. Excluding the
+  short-circuited instances from the y-average would bias the metric
+  toward the harder instances — exactly the instances whose ``solve_base_cp_model``
+  still has work to do — and can make a later, more expensive method
+  appear *worse* than the cheaper predecessor that already solved most of
+  the easy instances.
+
+Hover shows both ``rpdf_n`` (y-axis sample size, typically all instances
+that have any recorded obj) and ``time_n`` (x-axis sample size, only those
+that actually ran the method), so the asymmetry is visible.
+
+Methods with no ``obj_value`` recorded for any instance (e.g.
+``set_random_seed``) are dropped. ``set_cp_model_as_base_cp_model`` and
+similar non-improving snapshot methods are dropped when
+``drop_non_improving_methods`` is on.
 
 Distinct from ``multi_scenario_method_chart`` (best-so-far step-function
 trajectory from ``<ins>_obj_log.yaml``) and ``rpdf_scatter_chart``
-(per-instance / per-(n, c) subroutine markers) — neither of those shows the
-very first method endpoints because they wait for all instances to report
-before drawing the mean line.
+(per-instance / per-(n, c) subroutine markers).
 
 Data source is ``<scenario>/summary_method_end_time_and_obj_value.csv``,
 written by ``scripts/process_logs.py::process_scenario`` at the tail of
@@ -88,21 +108,34 @@ def load_method_mean_metrics(
     drop_non_improving_methods: bool = True,
 ) -> list[dict[str, Any]]:
     """Read the scenario's ``summary_method_end_time_and_obj_value.csv`` and
-    aggregate one ``(mean time%, mean RPDf)`` point per top-level method.
+    aggregate one ``(mean time%, mean RPDf)`` point per top-level method,
+    using **asymmetric** averaging (see module docstring).
+
+    For each method, two sample sets are tracked:
+
+    * ``time_instance_count`` — instances with a recorded ``end_sec`` for
+      this method (they actually ran it). Drives the x-axis mean.
+    * ``rpdf_instance_count`` — instances with any prior or current
+      recorded obj plus a baseline. Drives the y-axis mean. When the
+      current method was skipped, the carried-forward obj from the latest
+      method that did record one is used.
 
     Returns a method-ordered list of dicts with keys ``method``,
-    ``mean_time_pct``, ``mean_rpdf``, ``instance_count``. Methods that have
-    no instance with a finite ``obj_value`` *and* baseline *and* timelimit
-    are omitted.
+    ``mean_time_pct``, ``mean_rpdf``, ``time_instance_count``,
+    ``rpdf_instance_count``. ``instance_count`` is kept as an alias for
+    ``rpdf_instance_count`` for backward compatibility with older
+    consumers. Methods that have no instance with a finite ``end_sec``
+    *and* baseline *and* timelimit (i.e. nothing for the x-axis) are
+    omitted — without an x value the point cannot be drawn.
 
-    When ``drop_non_improving_methods`` is ``True`` (default), also drop any
-    method whose ``obj_value`` matches the prior recorded ``obj_value`` for
-    *every* instance — i.e. methods like ``set_cp_model_as_base_cp_model``
-    that snapshot the current solution without changing it. The first
-    method with a recorded ``obj_value`` per instance is always kept (no
-    prior to compare against), and the last method that recorded any
-    ``obj_value`` is also always kept so the chart still shows where the
-    flow terminated.
+    When ``drop_non_improving_methods`` is ``True`` (default), also drop
+    any method whose ``obj_value`` matches the prior recorded ``obj_value``
+    for *every* instance — i.e. methods like
+    ``set_cp_model_as_base_cp_model`` that snapshot the current solution
+    without changing it. The first method with a recorded ``obj_value``
+    per instance is always kept (no prior to compare against), and the
+    last method that recorded any ``obj_value`` is also always kept so the
+    chart still shows where the flow terminated.
     """
     df = pd.read_csv(summary_csv_path)
     if df.empty or "instance_id" not in df.columns:
@@ -122,42 +155,64 @@ def load_method_mean_metrics(
         obj_col = f"{method}{_OBJ_VALUE_SUFFIX}"
         end_values = df[end_col].tolist()
         obj_values = df[obj_col].tolist()
-        contributions: list[
-            tuple[str, float, float, float]
-        ] = []  # (ins, time_pct, rpdf, obj)
+
+        time_contribs: list[float] = []
+        rpdf_contribs: list[float] = []
+        # Defer prev_obj update until after the method is fully processed so
+        # the carry-forward used inside this iteration reflects the *prior*
+        # method's obj — not a sibling row processed earlier in the loop.
+        recorded_objs: list[tuple[str, float]] = []
         improves = False
+
         for ins_id, end_raw, obj_raw in zip(ins_ids, end_values, obj_values):
-            end_sec = _safe_float(end_raw)
-            obj = _safe_float(obj_raw)
-            if end_sec is None or obj is None:
-                continue
             timelimit = timelimit_by_instance.get(ins_id)
             bks = baseline_obj_by_instance.get(ins_id)
             if timelimit is None or timelimit <= 0 or bks is None:
                 continue
-            prior = prev_obj_by_instance.get(ins_id)
-            if prior is None or obj < prior:
-                improves = True
-            contributions.append(
-                (ins_id, end_sec / timelimit, _rpd_f(obj, float(bks)), obj)
-            )
-        if not contributions:
-            continue
+
+            end_sec = _safe_float(end_raw)
+            obj_recorded = _safe_float(obj_raw)
+
+            if obj_recorded is not None:
+                effective_obj: float | None = obj_recorded
+                recorded_objs.append((ins_id, obj_recorded))
+                prior = prev_obj_by_instance.get(ins_id)
+                if prior is None or obj_recorded < prior:
+                    improves = True
+            else:
+                # Method was skipped for this instance — fall back to the
+                # last recorded obj so the y-axis still reflects this row.
+                effective_obj = prev_obj_by_instance.get(ins_id)
+
+            if effective_obj is not None:
+                rpdf_contribs.append(_rpd_f(effective_obj, float(bks)))
+
+            # x-axis: only instances that actually ran the method.
+            if end_sec is not None:
+                time_contribs.append(end_sec / timelimit)
+
         # Update prev_obj regardless of whether we keep the point — the next
         # method should compare against the latest recorded obj, not against
         # the last *kept* one (otherwise dropping a non-improver would let
         # the next equal-valued method look like an improvement).
-        for ins_id, _, _, obj in contributions:
+        for ins_id, obj in recorded_objs:
             prev_obj_by_instance[ins_id] = obj
-        time_pcts = [t for _, t, _, _ in contributions]
-        rpdfs = [r for _, _, r, _ in contributions]
+
+        if not time_contribs or not rpdf_contribs:
+            continue
+
         candidates.append(
             {
                 "method": method,
                 "improves": improves,
-                "mean_time_pct": sum(time_pcts) / len(time_pcts),
-                "mean_rpdf": sum(rpdfs) / len(rpdfs),
-                "instance_count": len(time_pcts),
+                "mean_time_pct": sum(time_contribs) / len(time_contribs),
+                "mean_rpdf": sum(rpdf_contribs) / len(rpdf_contribs),
+                "time_instance_count": len(time_contribs),
+                "rpdf_instance_count": len(rpdf_contribs),
+                # Back-compat: ``instance_count`` mirrors the y-axis sample
+                # since the y-axis is the asymmetric metric most callers
+                # care about. The hover template now reads both.
+                "instance_count": len(rpdf_contribs),
             }
         )
 
@@ -210,14 +265,22 @@ def _build_payload(scenarios: list[dict[str, Any]]) -> dict[str, Any]:
         xs = [float(p["mean_time_pct"]) for p in method_points]
         ys = [float(p["mean_rpdf"]) for p in method_points]
         names = [str(p["method"]) for p in method_points]
-        counts = [int(p["instance_count"]) for p in method_points]
+        time_n = [
+            int(p.get("time_instance_count", p.get("instance_count", 0)))
+            for p in method_points
+        ]
+        rpdf_n = [
+            int(p.get("rpdf_instance_count", p.get("instance_count", 0)))
+            for p in method_points
+        ]
         traces.append(
             {
                 "scenario": str(scenario["label"]),
                 "x": xs,
                 "y": ys,
                 "method": names,
-                "instance_count": counts,
+                "time_instance_count": time_n,
+                "rpdf_instance_count": rpdf_n,
             }
         )
         all_x.extend(xs)
@@ -245,7 +308,14 @@ _HTML_TEMPLATE = Template("""<!doctype html>
 </head>
 <body>
   <h1>$title</h1>
-  <p>Per-method mean (Time%, RPDf) across instances. Methods without recorded obj_value are omitted.</p>
+  <p><strong>How to read this chart.</strong> Each point is one controller method.
+  The <strong>x</strong> coordinate (mean normalized time) is averaged <em>only over the instances that actually ran the method</em>
+  (<code>time_n</code> in the hover), while the <strong>y</strong> coordinate (mean RPDf) is averaged
+  over <em>every</em> instance (<code>rpdf_n</code>), carrying the obj value forward from the latest
+  method that did record one when the current method was skipped (e.g. a stopping condition fired
+  earlier in the flow). Without this asymmetry, a later, more expensive method can look strictly
+  worse than its predecessor because only the harder instances make it that far. See the
+  module docstring of <code>method_mean_scatter.py</code> for the full rationale.</p>
   <div id="method-mean-scatter" style="width: 100%; height: 760px;"></div>
   <script>
     const payload = $payload_json;
@@ -254,7 +324,12 @@ _HTML_TEMPLATE = Template("""<!doctype html>
 
     const traces = payload.traces.map((trace, idx) => {
       const seriesColor = SERIES_COLORS[idx % SERIES_COLORS.length];
-      const customdata = trace.method.map((name, i) => [trace.scenario, name, trace.instance_count[i]]);
+      const customdata = trace.method.map((name, i) => [
+        trace.scenario,
+        name,
+        trace.time_instance_count[i],
+        trace.rpdf_instance_count[i]
+      ]);
       return {
         type: "scatter",
         mode: "lines+markers",
@@ -272,7 +347,8 @@ _HTML_TEMPLATE = Template("""<!doctype html>
         hovertemplate:
           "scenario=%{customdata[0]}<br>" +
           "method=%{customdata[1]}<br>" +
-          "instance_cnt=%{customdata[2]}<br>" +
+          "time_n=%{customdata[2]} (x-axis sample)<br>" +
+          "rpdf_n=%{customdata[3]} (y-axis sample)<br>" +
           "mean Time%=%{x:.$x_percent_decimals%}<br>" +
           "mean RPDf=%{y:.$y_percent_decimals%}<extra></extra>"
       };
