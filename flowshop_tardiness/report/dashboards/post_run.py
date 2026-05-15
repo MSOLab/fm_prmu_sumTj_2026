@@ -197,6 +197,7 @@ def write_post_run_dashboard_artifacts(
     baseline_obj_val_col: str = "BKS",
     baseline_obj_bound_col: str = "LB",
     run_id: str | None = None,
+    scenario_output_root: Path | None = None,
 ) -> dict[str, Path]:
     """Write the comparison CSV + run-level HTML dashboards + per-scenario
     scatter HTMLs under ``run_dir``.
@@ -205,6 +206,11 @@ def write_post_run_dashboard_artifacts(
     (loaded lazily). Both omitted is fine — the flow chart then uses
     per-instance best-across-scenarios as the reference, and the comparison
     CSV's BKS / RPDf columns come out NaN.
+
+    ``scenario_output_root`` defaults to ``run_dir`` (current behaviour).
+    When set, per-scenario scatter HTMLs are written under that root
+    using the scenario basename, which prevents writes from following
+    symlinks back into the original run directory.
 
     Returns a mapping of artifact name -> written path.
     """
@@ -279,6 +285,8 @@ def write_post_run_dashboard_artifacts(
         if sc not in scenario_paths:
             scenario_paths.append(sc)
 
+    _scenario_write_root = scenario_output_root or run_dir
+
     scenario_frames: list[dict[str, Any]] = []
     for scenario_path in scenario_paths:
         progressions = _load_scenario_progressions(
@@ -333,7 +341,7 @@ def write_post_run_dashboard_artifacts(
         # 4. Per-scenario scatter HTMLs
         # ------------------------------------------------------------------
         for frame in scenario_frames:
-            scatter_path = run_dir / frame["scenario_path"] / _SCENARIO_SCATTER_FN
+            scatter_path = _scenario_write_root / frame["scenario_path"] / _SCENARIO_SCATTER_FN
             ok = export_method_rpdf_scatter_html(
                 endpoint_df=frame["endpoint_df"],
                 raw_progression_df=frame["raw_progression_df"],
@@ -376,7 +384,7 @@ def write_post_run_dashboard_artifacts(
             continue
         label = _scenario_short_name(scenario_path)
         scenario_entry = {"label": label, "method_points": method_points}
-        per_scenario_path = run_dir / scenario_path / _SCENARIO_METHOD_MEAN_FN
+        per_scenario_path = _scenario_write_root / scenario_path / _SCENARIO_METHOD_MEAN_FN
         if export_method_mean_scatter_html(
             [scenario_entry],
             per_scenario_path,
