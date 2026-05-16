@@ -41,10 +41,12 @@ class FsMultiInstanceRunner(
         )
 
     def run(self) -> Any:
-        # routix MultiInstanceConcurrentRunner.run() invokes post_run_process()
-        # only after its ProcessPoolExecutor `with` block; any exception escaping
-        # the block (e.g. BrokenPipeError during spawn, or a worker re-raise via
-        # future.result()) skips the summary write. Salvage it here.
+        # A failure surfacing here is, in practice, a single-instance run
+        # erroring out. Swallow it on purpose: one instance's failure must not
+        # abort main.py -- this run() is the deliberate swallow point.
+        # routix MultiInstanceConcurrentRunner.run() also invokes
+        # post_run_process() only after its ProcessPoolExecutor `with` block, so
+        # an exception escaping that block skips the summary write; salvage it.
         try:
             return super().run()
         except Exception:

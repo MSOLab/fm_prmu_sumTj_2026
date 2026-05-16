@@ -28,6 +28,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from flowshop_tardiness.io_solution import OBJ_LOG_FN_FORMAT, RESULT_DIR_NAME
+
 from .method_mean_scatter import (
     export_method_mean_scatter_html,
     load_method_mean_metrics,
@@ -49,8 +51,6 @@ from .rpdf_scatter_chart import export_method_rpdf_scatter_html
 
 logger = logging.getLogger(__name__)
 
-_OBJ_LOG_FN_FORMAT = "{}_obj_log.yaml"
-_RESULT_DIR_NAME = "results"
 _SCENARIO_SCATTER_FN = "summary_method_rpdf_and_norm_time_scatter.html"
 _SCENARIO_METHOD_MEAN_FN = "summary_method_mean_rpdf_and_mean_norm_time_scatter.html"
 _METHOD_END_SUMMARY_FN = "summary_method_end_time_and_obj_value.csv"
@@ -150,9 +150,9 @@ def _load_scenario_progressions(
         if meta is None:
             continue
         ins_dir = run_dir / scenario_path / ins_name
-        obj_log_path = ins_dir / _RESULT_DIR_NAME / _OBJ_LOG_FN_FORMAT.format(ins_name)
+        obj_log_path = ins_dir / RESULT_DIR_NAME / OBJ_LOG_FN_FORMAT.format(ins_name)
         if not obj_log_path.exists():
-            obj_log_path = ins_dir / _OBJ_LOG_FN_FORMAT.format(ins_name)
+            obj_log_path = ins_dir / OBJ_LOG_FN_FORMAT.format(ins_name)
         if not obj_log_path.exists():
             logger.info(
                 "No obj_log for %s/%s; skipping in flow chart", scenario_path, ins_name
