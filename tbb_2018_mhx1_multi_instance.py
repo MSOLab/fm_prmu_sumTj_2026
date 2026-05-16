@@ -47,15 +47,15 @@ class FsMultiInstanceRunner(
         # future.result()) skips the summary write. Salvage it here.
         try:
             return super().run()
-        except Exception:
+        except Exception as e:
             logging.exception(
                 "Multi-instance run aborted before post_run_process; running it now."
             )
             try:
-                return self.post_run_process()
+                self.post_run_process()
             except Exception:
                 logging.exception("post_run_process also failed.")
-                return None
+            raise e
 
     # Start abstract methods
 

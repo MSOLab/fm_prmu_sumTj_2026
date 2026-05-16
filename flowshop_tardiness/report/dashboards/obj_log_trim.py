@@ -21,10 +21,9 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-logger = logging.getLogger(__name__)
+from flowshop_tardiness.io_solution import OBJ_LOG_FN_FORMAT, RESULT_DIR_NAME
 
-_OBJ_LOG_FN_FORMAT = "{}_obj_log.yaml"
-_RESULT_DIR_NAME = "results"
+logger = logging.getLogger(__name__)
 
 
 def _last_value_at_or_before(
@@ -41,9 +40,9 @@ def _last_value_at_or_before(
         if t > threshold_sec:
             continue
         if t > best_t:
-            best_t = t
             try:
                 best_v = float(v)
+                best_t = t
             except (TypeError, ValueError):
                 continue
     return best_v
@@ -64,10 +63,10 @@ def _resolve_obj_log_path(
     run_dir: Path, scenario: str, ins_name: str
 ) -> Path | None:
     base = run_dir / scenario / ins_name
-    in_results = base / _RESULT_DIR_NAME / _OBJ_LOG_FN_FORMAT.format(ins_name)
+    in_results = base / RESULT_DIR_NAME / OBJ_LOG_FN_FORMAT.format(ins_name)
     if in_results.exists():
         return in_results
-    flat = base / _OBJ_LOG_FN_FORMAT.format(ins_name)
+    flat = base / OBJ_LOG_FN_FORMAT.format(ins_name)
     if flat.exists():
         return flat
     return None

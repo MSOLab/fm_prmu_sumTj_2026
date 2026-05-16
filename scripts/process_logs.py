@@ -7,18 +7,10 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from flowshop_tardiness.io_solution import OBJ_LOG_FN_FORMAT, RESULT_DIR_NAME as DEFAULT_RESULTS_DIR
+
 # Default constants
 DEFAULT_CONTROLLER_LOG_NAME = "subroutine_controller.log"
-# The obj log is actually in results/ subdirectory
-DEFAULT_RESULTS_DIR = "results"
-
-# Try to import constants from output_filenames
-try:
-    from output_filenames import OutputFilenames
-
-    OBJ_LOG_FN_FORMAT = OutputFilenames.OBJ_LOG_FN_FORMAT
-except ImportError:
-    OBJ_LOG_FN_FORMAT = "{}_obj_log.yaml"
 
 
 def _read_instance_timelimit(instance_dir: Path, instance_id: str) -> float | None:

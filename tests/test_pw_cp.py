@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 
 import pytest
-from fontTools.misc.iterTools import permutations
+from itertools import permutations
 from mbls.cpsat import CpsatSolverReport, CpsatStatus
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
