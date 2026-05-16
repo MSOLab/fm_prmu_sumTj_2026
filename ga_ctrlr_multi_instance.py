@@ -40,6 +40,25 @@ class FsMultiInstanceRunner(
             **kwargs,
         )
 
+    def run(self) -> Any:
+        # A failure surfacing here is, in practice, a single-instance run
+        # erroring out. Swallow it on purpose: one instance's failure must not
+        # abort main.py -- this run() is the deliberate swallow point.
+        # routix MultiInstanceConcurrentRunner.run() also invokes
+        # post_run_process() only after its ProcessPoolExecutor `with` block, so
+        # an exception escaping that block skips the summary write; salvage it.
+        try:
+            return super().run()
+        except Exception:
+            logging.exception(
+                "Multi-instance run aborted before post_run_process; running it now."
+            )
+            try:
+                return self.post_run_process()
+            except Exception:
+                logging.exception("post_run_process also failed.")
+                return None
+
     # Start abstract methods
 
     def post_run_process(self) -> pd.DataFrame:

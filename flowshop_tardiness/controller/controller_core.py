@@ -1,8 +1,11 @@
 import datetime
+import heapq
 import logging
 import math
+from collections import defaultdict
+from itertools import permutations
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Sequence
 
 from mbls.cpsat import (
     CpsatSolverReport,
@@ -14,12 +17,14 @@ from mbls.cpsat import (
 )
 from mbls.cpsat.callbacks import ValueBoundPair
 from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
-from routix.io import object_to_yaml, tuple_to_pyyaml_key
+from routix.io import dump_yaml
 from routix.util.comparison import float_a_leq_b, float_equals
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from schore.schedule_examples.shop.flow import FlowshopSchedule
 
-from flowshop_tardiness.cpsat_model_2.position import Params, Vars
+from flowshop_tardiness.cpsat_model_2.indirect_prec import IndirectPrecVars
+from flowshop_tardiness.cpsat_model_2.params import Params
+from flowshop_tardiness.cpsat_model_2.position import PositionVars
 
 from ..painter.gantt import GanttPlotter
 from ..report import FsCpsatSolverReport
@@ -103,16 +108,16 @@ class FlowshopTardinessControllerCore(
     # Start abstract getters
 
     def create_base_cp_model(self, **kwargs) -> CustomCpModel:
-        from ..cpsat_model_2.position import BaseModelBuilder
+        from ..cpsat_model_2.indirect_prec import BaseModelBuilder
 
         builder = BaseModelBuilder()
-        mdl, params, vars = builder.build(self.instance)
+        mdl, params, variables = builder.build(self.instance)
         self.params: Params = params
-        self.vars: Vars = vars
+        self.vars: IndirectPrecVars = variables
         # Set total tardiness as the objective
-        if vars.total_tardiness is None:
+        if variables.total_tardiness is None:
             raise ValueError("Total tardiness variable is not defined in the model.")
-        mdl.minimize(vars.total_tardiness)
+        mdl.minimize(variables.total_tardiness)
         return mdl
 
     # End abstract getters
@@ -259,10 +264,10 @@ class FlowshopTardinessControllerCore(
         from ..io_solution import END_TIME_MAP_KEY, START_TIME_MAP_KEY
 
         solution_dict = {
-            START_TIME_MAP_KEY: tuple_to_pyyaml_key(start_time_map),
-            END_TIME_MAP_KEY: tuple_to_pyyaml_key(end_time_map),
+            START_TIME_MAP_KEY: start_time_map,
+            END_TIME_MAP_KEY: end_time_map,
         }
-        object_to_yaml(solution_dict, output_path, encoding=encoding)
+        dump_yaml(solution_dict, output_path, encoding=encoding)
 
     def export_schedule_to_yaml(
         self, schedule: FlowshopSchedule, output_path: Path | None = None
@@ -757,7 +762,9 @@ class FlowshopTardinessControllerCore(
             draw_gantt=draw_gantt,
         )
 
-    def _get_j_sequence_from_solver(self, params: Params, vars: Vars) -> list[int]:
+    def _get_j_sequence_from_solver(
+        self, params: Params, vars: IndirectPrecVars
+    ) -> list[int]:
         """Get the job index sequence from the solver.
 
         Args:
@@ -767,9 +774,65 @@ class FlowshopTardinessControllerCore(
         Returns:
             list[int]: The job index sequence as determined by the solver.
         """
-        return [self.solver.Value(vars.pi[k]) for k in params.j_list]
+        if isinstance(vars, PositionVars):
+            return [self.solver.Value(vars.pi[k]) for k in params.j_list]
+        if isinstance(vars, IndirectPrecVars):
+            j_list = params.j_list
+            prec: dict[tuple[int, int], bool] = {}
+            for j1, j2 in permutations(j_list, 2):
+                prec[j1, j2] = bool(self.solver.Value(vars.prec[j1, j2]))
+            return self.from_job_prec_get_sequence(params, prec)
+        raise TypeError(
+            f"Unsupported variable type for getting job sequence: {type(vars)}"
+        )
 
-    def get_job_sequence_from_solver(self, params: Params, vars: Vars) -> list[str]:
+    @staticmethod
+    def from_job_prec_get_sequence(
+        params: Params, prec: dict[tuple[int, int], bool]
+    ) -> list[int]:
+        j_list = params.j_list.copy()
+
+        # Reconstruct job sequence from precedence variables
+        # 2) edge 구성: a->b if prec[(a,b)] is True
+        succ = defaultdict(list)
+        indeg = {j: 0 for j in j_list}
+
+        for (a, b), v in prec.items():
+            if not v:
+                continue
+            if a not in indeg or b not in indeg:
+                if a not in j_list:
+                    j_list.append(a)
+                if b not in j_list:
+                    j_list.append(b)
+            succ[a].append(b)
+            indeg[b] += 1
+
+        # 3) 위상정렬 (tie-break: sorted)
+        ready = [j for j in j_list if indeg[j] == 0]
+        heapq.heapify(ready)
+
+        seq = []
+        while ready:
+            j = heapq.heappop(ready)
+            seq.append(j)
+            for k in succ[j]:
+                indeg[k] -= 1
+                if indeg[k] == 0:
+                    heapq.heappush(ready, k)
+
+        # 4) cycle 검출
+        if len(seq) != len(indeg):
+            remaining = [j for j in indeg if indeg[j] > 0]
+            raise ValueError(
+                f"Cycle detected (or inconsistent precedence). Remaining jobs: {remaining}"
+            )
+
+        return seq
+
+    def get_job_sequence_from_solver(
+        self, params: Params, vars: IndirectPrecVars
+    ) -> list[str]:
         """Get the job name sequence from the solver's job index sequence.
 
         Args:
@@ -803,10 +866,10 @@ class FlowshopTardinessControllerCore(
         return schedule
 
     def create_schedule_from_params_and_vars(
-        self, params: Params, vars: Vars
+        self, params: Params, vars: IndirectPrecVars
     ) -> FlowshopSchedule:
-        j_sequence = self._get_j_sequence_from_solver(params, vars)
-        j_name_sequence = [params.j_2_job_name_map[j] for j in j_sequence]
+        j_sequence: list[int] = self._get_j_sequence_from_solver(params, vars)
+        j_name_sequence: list[str] = [params.j_2_job_name_map[j] for j in j_sequence]
         return self.create_schedule_from_sequence(
             params=params, j_name_sequence=j_name_sequence
         )
@@ -819,10 +882,11 @@ class FlowshopTardinessControllerCore(
         self,
         mdl: CustomCpModel,
         params: Params,
-        vars: Vars,
+        vars: IndirectPrecVars,
         schedule: FlowshopSchedule,
         job_subset: set[str] | None = None,
     ) -> None:
+        logging.info("Adding hints from schedule to CP model.")
         last_i = params.i_list[-1]
         last_i_name = params.i_2_stage_name_map[last_i]
         j_sequence = schedule.get_last_stage_job_list()
@@ -831,40 +895,73 @@ class FlowshopTardinessControllerCore(
         sum_Tj = 0
 
         all_ops_in_schedule = True
-        for k, j_name in enumerate(j_sequence):
-            j = params.job_name_2_j_map[j_name]
-            all_ops_of_j_in_schedule = True
-            for i, i_name in params.i_2_stage_name_map.items():
-                if (j_name, i_name) in start_time_map:
-                    start_hint = start_time_map[j_name, i_name]
-                    P_ij = params.P[i, j]
-                    mdl.add_hint(vars.op_start[i, k], start_hint)
-                    mdl.add_hint(vars.op_lth[i, k], P_ij)
-                    mdl.add_hint(vars.op_end[i, k], start_hint + P_ij)
-                else:
-                    all_ops_in_schedule = False
-                    all_ops_of_j_in_schedule = False
-            mdl.add_hint(vars.pi[k], j)
-            mdl.add_hint(vars.d[k], params.D[j])
-            if all_ops_of_j_in_schedule:
-                assert (j_name, last_i_name) in start_time_map, (
-                    f"Last operation of job {j_name} not found in start_time_map"
-                )
-                Tj = max(
-                    0,
-                    start_time_map[j_name, last_i_name]
-                    + params.P[last_i, j]
-                    - params.D[j],
-                )
-                mdl.add_hint(vars.T[k], Tj)
-                sum_Tj += Tj
+
+        if isinstance(vars, PositionVars):
+            for k, j_name in enumerate(j_sequence):
+                j = params.job_name_2_j_map[j_name]
+                all_ops_of_j_in_schedule = True
+                for i, i_name in params.i_2_stage_name_map.items():
+                    if (j_name, i_name) in start_time_map:
+                        start_hint = start_time_map[j_name, i_name]
+                        P_ij = params.P[i, j]
+                        mdl.add_hint(vars.op_start[i, k], start_hint)
+                        mdl.add_hint(vars.op_lth[i, k], P_ij)
+                        mdl.add_hint(vars.op_end[i, k], start_hint + P_ij)
+                    else:
+                        all_ops_in_schedule = False
+                        all_ops_of_j_in_schedule = False
+                mdl.add_hint(vars.pi[k], j)
+                mdl.add_hint(vars.d[k], params.D[j])
+                if all_ops_of_j_in_schedule:
+                    assert (j_name, last_i_name) in start_time_map, (
+                        f"Last operation of job {j_name} not found in start_time_map"
+                    )
+                    Tj = max(
+                        0,
+                        start_time_map[j_name, last_i_name]
+                        + params.P[last_i, j]
+                        - params.D[j],
+                    )
+                    mdl.add_hint(vars.T[k], Tj)
+                    sum_Tj += Tj
+        elif isinstance(vars, IndirectPrecVars):
+            for j_name in j_sequence:
+                j = params.job_name_2_j_map[j_name]
+                all_ops_of_j_in_schedule = True
+                for i, i_name in params.i_2_stage_name_map.items():
+                    if (j_name, i_name) in start_time_map:
+                        mdl.add_hint(
+                            vars.op_start[i, j], start_time_map[j_name, i_name]
+                        )
+                    else:
+                        all_ops_in_schedule = False
+                        all_ops_of_j_in_schedule = False
+                if all_ops_of_j_in_schedule:
+                    assert (j_name, last_i_name) in start_time_map, (
+                        f"Last operation of job {j_name} not found in start_time_map"
+                    )
+                    Tj = max(
+                        0,
+                        start_time_map[j_name, last_i_name]
+                        + params.P[last_i, j]
+                        - params.D[j],
+                    )
+                    mdl.add_hint(vars.T[j], Tj)
+                    sum_Tj += Tj
+            for j1_idx, j1_name in enumerate(j_sequence):
+                for j2_name in j_sequence[j1_idx + 1 :]:
+                    j1 = params.job_name_2_j_map[j1_name]
+                    j2 = params.job_name_2_j_map[j2_name]
+                    mdl.add_hint(vars.prec[j1, j2], 1)
+                    mdl.add_hint(vars.prec[j2, j1], 0)
+
         if all_ops_in_schedule:
             if vars.total_tardiness is None:
                 raise ValueError("total_tardiness undefined in Vars")
             mdl.add_hint(vars.total_tardiness, sum_Tj)
 
     def set_sumTj_lower_bound(
-        self, mdl: CustomCpModel, vars: Vars, bound: float | None
+        self, mdl: CustomCpModel, vars: IndirectPrecVars, bound: float | None
     ) -> None:
         if bound is None:
             return

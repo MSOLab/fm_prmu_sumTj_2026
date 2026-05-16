@@ -1,0 +1,6 @@
+- method: set_random_seed
+  seed: 42
+- method: ga_edd
+  pop_size: 400
+  cross_size: 200
+  mut_size: 100

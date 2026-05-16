@@ -1,0 +1,13 @@
+- method: set_random_seed
+  seed: 42
+- method: compute_preemptive_last_stage_lb
+  init_by_neh_ms: true
+- method: initialize_by_edd
+- method: initialize_by_nehms
+- method: improve_by_insertion
+  subseq_size: 1
+  first_improvement: false
+- method: set_cp_model_as_base_cp_model
+- method: solve_base_cp_model
+  computational_time: null
+  solver_thread_cnt: 8

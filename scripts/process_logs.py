@@ -7,18 +7,57 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from flowshop_tardiness.io_solution import OBJ_LOG_FN_FORMAT, RESULT_DIR_NAME as DEFAULT_RESULTS_DIR
+
 # Default constants
 DEFAULT_CONTROLLER_LOG_NAME = "subroutine_controller.log"
-# The obj log is actually in results/ subdirectory
-DEFAULT_RESULTS_DIR = "results"
 
-# Try to import constants from output_filenames
-try:
-    from output_filenames import OutputFilenames
 
-    OBJ_LOG_FN_FORMAT = OutputFilenames.OBJ_LOG_FN_FORMAT
-except ImportError:
-    OBJ_LOG_FN_FORMAT = "{}_obj_log.yaml"
+def _read_instance_timelimit(instance_dir: Path, instance_id: str) -> float | None:
+    """Load ``timelimit`` from ``results/<ins>_summary.csv`` if present.
+
+    The per-instance summary is written by ``FsSingleInstanceRunner`` after
+    the run, so it's available by the time ``process_scenario`` is invoked.
+    """
+    summary_path = instance_dir / DEFAULT_RESULTS_DIR / f"{instance_id}_summary.csv"
+    if not summary_path.exists():
+        return None
+    try:
+        df = pd.read_csv(summary_path)
+    except Exception as e:
+        logging.warning(f"Failed to read summary {summary_path}: {e}")
+        return None
+    if df.empty or "timelimit" not in df.columns:
+        return None
+    val = df["timelimit"].iloc[0]
+    try:
+        v = float(val)
+    except (TypeError, ValueError):
+        return None
+    return v if v > 0 else None
+
+
+def _last_obj_value_at_or_before(
+    obj_data: dict, threshold_sec: float
+) -> float | None:
+    """Latest numeric obj value whose timestamp key is ``<= threshold_sec``."""
+    best_t = float("-inf")
+    best_v: float | None = None
+    for k, v in obj_data.items():
+        try:
+            t = float(k)
+        except (TypeError, ValueError):
+            continue
+        if t > threshold_sec or t <= best_t:
+            continue
+        if _is_missing_obj_value(v):
+            continue
+        try:
+            best_v = float(v)
+            best_t = t
+        except (TypeError, ValueError):
+            continue
+    return best_v
 
 
 def parse_controller_log(log_path: Path) -> list[dict]:
@@ -158,6 +197,12 @@ def process_instance(instance_dir: Path, methods_list: list[tuple[str, str]]):
     obj_data = obj_content.get("data", {})
     obj_notes = obj_content.get("notes", {})
 
+    # Trim method end_sec / obj_value to the configured timelimit so the
+    # per-scenario summary CSV (and downstream method-mean charts) reflect the
+    # deadline-truncated view, even when the solver wall-clock overran. See
+    # docs/TODO.md "Hard cutoff" for the underlying overrun issue.
+    timelimit_sec = _read_instance_timelimit(instance_dir, instance_id)
+
     csv_rows = []
     current_obj_value = None
 
@@ -185,6 +230,20 @@ def process_instance(instance_dir: Path, methods_list: list[tuple[str, str]]):
             else:
                 final_end_sec = end_sec
                 final_obj_val = current_obj_value
+
+        if (
+            timelimit_sec is not None
+            and final_end_sec is not None
+            and float(final_end_sec) > timelimit_sec
+        ):
+            # Method overran the budget: cap its endpoint at timelimit, and
+            # use the obj value recorded at or before that moment.
+            obj_at_limit = _last_obj_value_at_or_before(obj_data, timelimit_sec)
+            if obj_at_limit is None and not _is_missing_obj_value(current_obj_value):
+                obj_at_limit = current_obj_value
+            final_end_sec = timelimit_sec
+            if obj_at_limit is not None:
+                final_obj_val = obj_at_limit
 
         if not _is_missing_obj_value(final_obj_val):
             current_obj_value = final_obj_val

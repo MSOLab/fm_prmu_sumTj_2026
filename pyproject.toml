@@ -30,7 +30,4 @@ python_files = "test_*.py"
 python_functions = "test_*"
 pythonpath = ["."]
 
-[tool.uv.sources]
-routix = { path = "../routix", editable = true }
-mbls = { path = "../mbls", editable = true }
-schore = { path = "../schore", editable = true }
+

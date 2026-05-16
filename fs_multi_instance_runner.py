@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import pandas as pd
 from mbls.cpsat import ObjValueBoundStore
@@ -16,29 +16,27 @@ from scripts.process_logs import process_scenario
 class FsMultiInstanceRunner(
     MultiInstanceConcurrentRunner[FlowshopDuedateParameters, FsSingleInstanceRunner]
 ):
-    def __init__(
-        self,
-        s_i_runner_class: type[FsSingleInstanceRunner],
-        instances: Sequence[FlowshopDuedateParameters],
-        shared_param_dict: dict,
-        subroutine_flow: Any,
-        stopping_criteria: Any,
-        output_dir: Path,
-        output_metadata: dict[str, Any],
-        mode: RunMode = RunMode.FULL_RUN,
-        **kwargs: Any,
-    ):
-        super().__init__(
-            s_i_runner_class,
-            instances,
-            shared_param_dict,
-            subroutine_flow,
-            stopping_criteria,
-            output_dir,
-            output_metadata,
-            mode,
-            **kwargs,
-        )
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def run(self) -> Any:
+        # A failure surfacing here is, in practice, a single-instance run
+        # erroring out. Swallow it on purpose: one instance's failure must not
+        # abort main.py -- this run() is the deliberate swallow point.
+        # routix MultiInstanceConcurrentRunner.run() also invokes
+        # post_run_process() only after its ProcessPoolExecutor `with` block, so
+        # an exception escaping that block skips the summary write; salvage it.
+        try:
+            return super().run()
+        except Exception:
+            logging.exception(
+                "Multi-instance run aborted before post_run_process; running it now."
+            )
+            try:
+                return self.post_run_process()
+            except Exception:
+                logging.exception("post_run_process also failed.")
+                return None
 
     # Start abstract methods
 
@@ -47,7 +45,7 @@ class FsMultiInstanceRunner(
         Aggregates results from all single instance runs into a summary DataFrame
         by reading the individual summary CSV files from disk.
         """
-        # 0. Process Logs for this scenario (Added)
+        # Process Logs for this scenario
         logging.info(f"Starting Log Processing for scenario in: {self.working_dir}")
         try:
             process_scenario(self.working_dir)

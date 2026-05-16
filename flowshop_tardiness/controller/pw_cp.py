@@ -5,13 +5,14 @@ from pathlib import Path
 from typing import Protocol
 
 from mbls.cpsat import CpsatSolverReport, CpsatStatus, ObjValueBoundStore
-from ortools.sat.python.cp_model import CpSolver
+from ortools.sat.python.cp_model import CpModel, CpSolver
 from routix import ElapsedTimer
 from routix.util.comparison import float_a_leq_b
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 from schore.schedule_examples.shop.flow import FlowshopSchedule
 
-from flowshop_tardiness.cpsat_model_2.position import BaseModelBuilder, Params, Vars
+from flowshop_tardiness.cpsat_model_2.indirect_prec import IndirectPrecVars
+from flowshop_tardiness.cpsat_model_2.params import Params
 from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite
 
 
@@ -45,7 +46,7 @@ class PwCpContext(Protocol):
     # CP solve & decoding
     def solve_cp_model_2(
         self,
-        mdl,
+        mdl: CpModel,
         computational_time: float,
         solver_thread_cnt: int,
         e_timer: ElapsedTimer | None = None,
@@ -55,8 +56,14 @@ class PwCpContext(Protocol):
         log_level_obj_bound: int = logging.INFO,
     ) -> CpsatSolverReport: ...
 
+    def from_job_prec_get_sequence(
+        self, params: Params, prec: dict[tuple[int, int], bool]
+    ) -> list[int]: ...
+
     # optional
-    def set_sumTj_lower_bound(self, mdl, vars: Vars, bound: float | None) -> None: ...
+    def set_sumTj_lower_bound(
+        self, mdl, vars: IndirectPrecVars, bound: float | None
+    ) -> None: ...
     def export_solution_to_yaml(
         self,
         start_time_map: dict[tuple[str, str], int],
@@ -171,6 +178,8 @@ class PwCpConstructor:
     step_size_on_no_improve: int
 
     def __init__(self, ctx: PwCpContext):
+        from flowshop_tardiness.cpsat_model_2.indirect_prec import BaseModelBuilder
+
         self.ctx = ctx
         self.builder = BaseModelBuilder()
         self._st: PwCpRunState | None = None
@@ -414,7 +423,12 @@ class PwCpConstructor:
         ctx = self.ctx
 
         subjob_id_list: list[str] = sub_instance.job_id_list
-        init_pi_hint: list[int] = list(range(len(subjob_id_list)))
+        # init_pi_hint: list[int] = list(range(len(subjob_id_list)))
+        prec_hint: dict[tuple[int, int], int] = {}
+        for j1_idx in range(len(subjob_id_list)):
+            for j2_idx in range(j1_idx + 1, len(subjob_id_list)):
+                prec_hint[(j1_idx, j2_idx)] = 1
+                prec_hint[(j2_idx, j1_idx)] = 0
 
         # Phase 1: Minimize total tardiness
 
@@ -457,8 +471,12 @@ class PwCpConstructor:
                 )
 
             mdl1.clear_hints()
-            for idx, k in enumerate(params1.j_list):
-                mdl1.add_hint(vars1.pi[k], init_pi_hint[idx])
+            # for idx, k in enumerate(params1.j_list):
+            #     mdl1.add_hint(vars1.pi[k], init_pi_hint[idx])
+            for j1_idx, j1 in enumerate(params1.j_list):
+                for j2 in params1.j_list[j1_idx + 1 :]:
+                    mdl1.add_hint(vars1.prec[j1, j2], 1)
+                    mdl1.add_hint(vars1.prec[j2, j1], 0)
 
             _timelimit = ctx.get_remaining_time_limit(solver_timelimit)
             report1 = ctx.solve_cp_model_2(
@@ -476,8 +494,19 @@ class PwCpConstructor:
                 return report1, subjob_id_list
 
             best_sumTj = int(ctx.solver.Value(vars1.total_tardiness))
-            phase1_pi: list[int] = [
-                int(ctx.solver.Value(vars1.pi[k])) for k in params1.j_list
+            # phase1_pi: list[int] = [
+            #     int(ctx.solver.Value(vars1.pi[k])) for k in params1.j_list
+            # ]
+            # job_seq: list[str] = [subjob_id_list[idx] for idx in phase1_pi]
+            phase1_prec: dict[tuple[int, int], int] = {}
+            for j1_idx, j1 in enumerate(params1.j_list):
+                for j2 in params1.j_list[j1_idx + 1 :]:
+                    prec_val = int(ctx.solver.Value(vars1.prec[j1, j2]))
+                    phase1_prec[(j1, j2)] = prec_val
+                    phase1_prec[(j2, j1)] = 1 - prec_val
+            job_seq: list[str] = [
+                subjob_id_list[idx]
+                for idx in ctx.from_job_prec_get_sequence(params1, phase1_prec)
             ]
             logging.info(
                 "Phase 1 complete(%s): best total tardiness = %d",
@@ -499,9 +528,9 @@ class PwCpConstructor:
                 obj_bound_records=[],
             )
             best_sumTj = report_obj_val
-            phase1_pi = init_pi_hint
-
-        job_seq: list[str] = [subjob_id_list[idx] for idx in phase1_pi]
+            # phase1_pi = init_pi_hint
+            phase1_prec = prec_hint
+            job_seq = subjob_id_list
 
         if last_job_is_included:
             logging.info("All jobs are included; skip phase 2.")
@@ -524,8 +553,12 @@ class PwCpConstructor:
         mdl2.minimize(vars2.sum_latest_completion)
 
         # Add hints from phase1
-        for idx, k in enumerate(params2.j_list):
-            mdl2.add_hint(vars2.pi[k], phase1_pi[idx])
+        # for idx, k in enumerate(params2.j_list):
+        #     mdl2.add_hint(vars2.pi[k], phase1_pi[idx])
+        for j1_idx, j1 in enumerate(params2.j_list):
+            for j2 in params2.j_list[j1_idx + 1 :]:
+                mdl2.add_hint(vars2.prec[j1, j2], phase1_prec[(j1, j2)])
+                mdl2.add_hint(vars2.prec[j2, j1], phase1_prec[(j2, j1)])
 
         _timelimit = ctx.get_remaining_time_limit(solver_timelimit)
         # Solve without logging objective values / bounds
@@ -543,10 +576,37 @@ class PwCpConstructor:
             logging.info("Sub-CP infeasible in phase 2; use phase 1 solution.")
             return report1, job_seq
 
-        phase2_pi: list[int] = [
-            int(ctx.solver.Value(vars2.pi[k])) for k in params2.j_list
-        ]
-        job_seq2: list[str] = [subjob_id_list[idx] for idx in phase2_pi]
+        # phase2_pi: list[int] = [
+        #     int(ctx.solver.Value(vars2.pi[k])) for k in params2.j_list
+        # ]
+        # job_seq2: list[str] = [subjob_id_list[idx] for idx in phase2_pi]
+        phase2_prec: dict[tuple[int, int], int] = {}
+        for j1_idx, j1 in enumerate(params2.j_list):
+            for j2 in params2.j_list[j1_idx + 1 :]:
+                prec_val = int(ctx.solver.Value(vars2.prec[j1, j2]))
+                phase2_prec[(j1, j2)] = prec_val
+                phase2_prec[(j2, j1)] = 1 - prec_val
+        job_seq2: list[str] = []
+        unscheduled_set = set(subjob_id_list)
+        while len(unscheduled_set) > 0:
+            for j in params2.j_list:
+                if subjob_id_list[j] not in unscheduled_set:
+                    continue
+                # check if all predecessors are scheduled
+                all_preds_scheduled = True
+                for k in params2.j_list:
+                    if k == j:
+                        continue
+                    if (
+                        phase2_prec[(k, j)] == 1
+                        and subjob_id_list[k] in unscheduled_set
+                    ):
+                        all_preds_scheduled = False
+                        break
+                if all_preds_scheduled:
+                    job_seq2.append(subjob_id_list[j])
+                    unscheduled_set.remove(subjob_id_list[j])
+                    break
         # use report 1 which has total tardiness info
         return report1, job_seq2
 
@@ -584,8 +644,13 @@ class PwCpConstructor:
         if solver_thread_cnt is None:
             solver_thread_cnt = 1
 
-        # Repeat until there are no more jobs to add
-        while len(st.remaining_jobs) > 0:
+        # Initial step size = added batch size
+        step_size: int = st.added_batch_size
+        # Last step size used
+        last_step_size: int = st.added_batch_size
+
+        # Repeat until no more jobs to optimize
+        while len(st.remaining_jobs) > (step_size - last_step_size):
             st.iter_idx += 1
             _timelimit = ctx.get_remaining_time_limit(max_time_per_add)
             if float_a_leq_b(_timelimit, 0):
@@ -607,6 +672,7 @@ class PwCpConstructor:
             sub_jobs: list[str] = (
                 st.iter_cp_job_list
             )  # profile_fixed + added(front batch)
+            last_job_idx = self.job_sequence.index(sub_jobs[-1])
             base_seq: list[str] = list(sub_jobs)  # "before optimization" reference
             prev_pf_len: int = len(st.profile_fixed_jobs)
 
@@ -630,11 +696,12 @@ class PwCpConstructor:
                 stage_2_lct_map = {}
 
             logging.info(
-                "(iter %d) CP on sub_jobs=%d (pf=%d + added=%d), timelimit=%.2fs",
+                "(iter %d) CP on sub_jobs=%d (pf=%d + added=%d) with %d-th last job, timelimit=%.2fs",
                 st.iter_idx,
                 len(sub_jobs),
                 len(st.profile_fixed_jobs),
                 len(added_job_list),
+                last_job_idx + 1,
                 _timelimit,
             )
 
@@ -666,9 +733,10 @@ class PwCpConstructor:
             st.last_cp_subseq = solver_seq
             st.last_cp_obj = getattr(iter_report, "obj_value", None)
 
-            # ---- step size ----
+            # ---- update last step size & (next) step size ----
+            last_step_size = step_size
             if improved:
-                step_size: int = (
+                step_size = (
                     self.step_size_on_improve
                     if self.step_size_on_improve is not None
                     else st.added_batch_size
@@ -677,12 +745,10 @@ class PwCpConstructor:
                 step_size = (
                     self.step_size_on_no_improve
                     if self.step_size_on_no_improve is not None
-                    else 1
+                    else st.added_batch_size
                 )
 
-            # clamp step_size to remaining length (and also to >=1)
-            if step_size <= 0:
-                step_size = 1
+            # clamp step_size to remaining length
             if step_size > len(st.remaining_jobs):
                 step_size = len(st.remaining_jobs)
 

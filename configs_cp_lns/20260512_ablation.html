@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ablation Study Design: Fm|prmu|ΣTj</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --surface: #ffffff;
+    --border: #e4e2da;
+    --border-soft: #efede5;
+    --text: #1a1a1a;
+    --muted: #5e5e58;
+    --faint: #8a8a82;
+    --accent: #2454b8;
+    --accent-soft: #e6edfa;
+    --code-bg: #f3f2ec;
+    --code-text: #2c2c28;
+    --ok: #1e7a3a;
+    --ok-bg: #e3f2e9;
+    --warn: #a55a07;
+    --warn-bg: #fbeed5;
+    --danger: #b3261e;
+    --danger-bg: #fbe2e0;
+    --info: #1f5a8a;
+    --info-bg: #e3eff8;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.03);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, sans-serif;
+    font-size: 15px; line-height: 1.62; -webkit-font-smoothing: antialiased;
+  }
+  code, pre, .mono { font-family: ui-monospace, monospace; }
+  code { font-size: .88em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; color: var(--code-text); }
+  pre { background: #1f2024; color: #e6e6e0; padding: 14px 16px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; line-height: 1.55; margin: 12px 0; }
+  pre code { background: transparent; color: inherit; padding: 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); max-width: 1240px; margin: 0 auto; }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    .toc { position: static !important; height: auto !important; border-right: 0; border-bottom: 1px solid var(--border); }
+  }
+
+  .toc {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 28px 18px 28px 28px; border-right: 1px solid var(--border-soft);
+    background: var(--bg); font-size: 13px;
+  }
+  .toc .title { font-weight: 600; color: var(--text); font-size: 14px; margin-bottom: 4px; }
+  .toc .crumb { color: var(--faint); font-size: 11px; margin-bottom: 14px; }
+  .toc .label { font-size: 11px; font-weight: 600; color: var(--faint); letter-spacing: .08em; text-transform: uppercase; margin: 16px 0 6px; }
+  .toc a { display: block; padding: 3px 0; color: var(--muted); border-left: 2px solid transparent; padding-left: 10px; margin-left: -10px; }
+  .toc a:hover { color: var(--text); text-decoration: none; border-left-color: var(--border); }
+  .toc .sub { padding-left: 20px; font-size: 12px; }
+
+  main { padding: 36px 48px 80px; max-width: 920px; }
+  @media (max-width: 900px) { main { padding: 24px 20px 60px; } }
+
+  h1 { font-size: 28px; line-height: 1.25; margin: 0 0 6px; letter-spacing: -.01em; }
+  h2 { font-size: 19px; margin: 40px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); letter-spacing: -.005em; }
+  h3 { font-size: 15.5px; margin: 26px 0 10px; }
+  h4 { font-size: 13.5px; margin: 18px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  p { margin: 10px 0; }
+  ul, ol { margin: 10px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 28px 0; }
+
+  .meta { color: var(--faint); font-size: 12.5px; margin-bottom: 24px; }
+
+  .tldr {
+    background: var(--info-bg); border: 1px solid #c9def0; border-radius: 8px;
+    padding: 14px 18px; margin: 18px 0 28px;
+  }
+  .tldr h4 { margin: 0 0 6px; color: var(--info); text-transform: none; letter-spacing: 0; font-size: 13.5px; }
+  .tldr ul { margin: 4px 0 0; padding-left: 20px; }
+  .tldr li { margin: 3px 0; font-size: 14px; }
+
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    padding: 2px 7px; border-radius: 10px; vertical-align: middle;
+    text-transform: uppercase; letter-spacing: .04em; line-height: 1.5;
+  }
+  .badge.ok     { background: var(--ok-bg);     color: var(--ok); }
+  .badge.warn   { background: var(--warn-bg);   color: var(--warn); }
+  .badge.danger { background: var(--danger-bg); color: var(--danger); }
+  .badge.info   { background: var(--info-bg);   color: var(--info); }
+  .badge.muted  { background: #e8e7e0;          color: #5a5a55; }
+  .badge.neutral { background: #e8e7e0; color: #5a5a55; }
+  .badge.yes     { background: var(--ok-bg); color: var(--ok); }
+  .badge.no      { background: #f0efea; color: #7a7a72; }
+
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  th { background: #f3f2ec; font-weight: 600; font-size: 12.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border); }
+  tr:hover td { background: #fbfaf3; }
+
+  .helpers code { background: transparent; padding: 0; color: var(--text); font-weight: 500; }
+  .helpers td:nth-child(2) { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
+
+  .config-matrix { margin: 16px 0; }
+  .config-matrix table { font-size: 13px; }
+  .config-matrix th:first-child, .config-matrix td:first-child { font-weight: 600; }
+  .config-matrix td { text-align: center; }
+  .config-matrix td:first-child { text-align: left; font-family: ui-monospace, monospace; }
+  .check { color: var(--ok); font-weight: 700; }
+  .dash  { color: var(--faint); }
+
+  .decisions { display: grid; gap: 10px; margin: 14px 0; }
+  .decision {
+    display: grid; grid-template-columns: 170px 1fr; gap: 14px;
+    padding: 10px 14px; border-left: 3px solid var(--accent); background: #f6f8fc; border-radius: 0 6px 6px 0;
+  }
+  .decision .key { font-weight: 600; color: var(--accent); font-size: 13px; }
+  .decision .val { font-size: 13.5px; }
+
+  .pipeline {
+    background: var(--info-bg); border: 1px solid #c9def0; border-radius: 8px;
+    padding: 14px 18px; margin: 14px 0; font-size: 13.5px;
+  }
+  .pipeline h4 { color: var(--info); margin: 0 0 8px; text-transform: none; letter-spacing: 0; font-size: 13.5px; }
+  .pipeline .flow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 6px 0; font-family: ui-monospace, monospace; font-size: 12px; }
+  .pipeline .step { background: #fff; padding: 4px 9px; border-radius: 4px; border: 1px solid #c9def0; }
+  .pipeline .arrow { color: var(--info); font-weight: 600; }
+  .pipeline .step.novel { background: #e3f2e9; border-color: #a8c9b0; font-weight: 600; }
+
+  .callout {
+    border-left: 3px solid var(--accent); background: var(--accent-soft);
+    padding: 8px 14px; margin: 12px 0; border-radius: 0 6px 6px 0; font-size: 13.5px;
+  }
+
+  .cross-block {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 14px; margin: 12px 0; font-size: 13.5px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+
+  .param-group {
+    background: var(--surface); border: 1px solid var(--border-soft); border-radius: 8px;
+    padding: 6px 14px 14px; margin: 10px 0; display: grid; gap: 6px;
+  }
+  .param-group .row { display: grid; grid-template-columns: 120px 1fr; gap: 10px; font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--border-soft); }
+  .param-group .row:last-child { border-bottom: 0; }
+  .param-group .key { font-weight: 600; color: var(--accent); font-family: ui-monospace, monospace; font-size: 12px; }
+  .param-group .val { color: var(--muted); }
+
+  details { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 6px; padding: 8px 14px; margin: 10px 0; }
+  details[open] { background: #fbfaf3; }
+  summary { cursor: pointer; font-weight: 600; font-size: 13.5px; color: var(--muted); user-select: none; }
+  summary:hover { color: var(--text); }
+  details pre, details p { margin-top: 10px; }
+
+  ul.plain { list-style: none; padding-left: 0; }
+  ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--border-soft); font-size: 12px; }
+  ul.plain li:last-child { border-bottom: 0; }
+
+  .component-list { display: grid; gap: 6px; margin: 8px 0; }
+  .component-list .item { padding: 6px 0 6px 0; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 12px 0; }
+  @media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc">
+  <div class="title">Ablation Study Design</div>
+  <div class="crumb">configs_cp_lns/20260512_ablation.md</div>
+
+  <div class="label">Sections</div>
+  <a href="#tldr">TL;DR</a>
+  <a href="#context">Research Context</a>
+  <a href="#configs">Configurations</a>
+  <a href="#c1">— C1 (Bottom Line)</a>
+  <a href="#c2">— C2 (2010s SOTA)</a>
+  <a href="#c3">— C3 (+LB-Disp)</a>
+  <a href="#c4">— C4 (+PW-CP)</a>
+  <a href="#c5">— C5 (Full IGC)</a>
+  <a href="#comparisons">Key Comparisons</a>
+  <a href="#params">Parameter Summary</a>
+  <a href="#files">File Mapping</a>
+
+  <div class="label">Glossary</div>
+  <ul class="plain">
+    <li><b>EDD</b> — Earliest Due Date rule</li>
+    <li><b>LB-Disp</b> — LB-derived dispatching rules</li>
+    <li><b>LBE/LBL/LBA</b> — Earliest/Latest/Average LB order</li>
+    <li><b>NEH-MS</b> — NEH insertion, makespan tie-breaker</li>
+    <li><b>PW-CP</b> — Prefix-Window Constraint Programming</li>
+    <li><b>II</b> — Insertion Improvement (local search)</li>
+    <li><b>Base-CP</b> — Final CP-SAT refinement</li>
+    <li><b>IGC</b> — Full method (both novel components)</li>
+    <li><b>MCF</b> — Minimum-Cost Flow</li>
+  </ul>
+</nav>
+
+<main>
+
+<h1>Ablation Study Design: Fm|prmu|ΣTj</h1>
+<div class="meta">
+  <span>configs_cp_lns/20260512_ablation.md</span>
+</div>
+
+<section id="tldr" class="tldr">
+  <h4>At a glance</h4>
+  <ul>
+    <li>Five ablation configurations (C1–C5) for permutation flow shop total tardiness</li>
+    <li><strong>2×2 factorial design</strong> + bottom-line baseline: LB-derived dispatching rules (LBE/LBL/LBA) × PW-CP sliding-window CP engine</li>
+    <li>C1: EDD → Base-CP (floor); C2: 2010s SOTA heuristic pipeline; C3: +LB-dispatching; C4: +PW-CP; C5: full IGC method</li>
+    <li>Key contrasts: C2→C3 (LB effect), C2→C4 (PW-CP effect), C3→C5 and C4→C5 (cross-validation)</li>
+  </ul>
+</section>
+
+<h2 id="context">Research Context</h2>
+
+<p>Two novel algorithmic components are proposed for the permutation flow shop total tardiness problem:</p>
+
+<div class="component-list">
+  <div class="item"><strong>LB-derived dispatching rules</strong> (LBE, LBL, LBA): three job-priority orders extracted from the minimum-cost-flow solution of the preemptive last-stage relaxation.</div>
+  <div class="item"><strong>PW-CP</strong> (Prefix-Window Constraint Programming): an iterative sliding-window CP engine that interleaves CP subproblem solving with insertion improvement, replacing the earlier (ineffective) BD-CP.</div>
+</div>
+
+<p>The following established methods constitute the known-method backbone across configurations:</p>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; margin: 8px 0;">
+  <div><strong>EDD</strong> — Earliest Due Date priority rule</div>
+  <div><strong>NEH-MS</strong> — NEH insertion heuristic with makespan tie-breaker, adapted for total tardiness</div>
+  <div><strong>II(1)</strong> — Insertion Improvement (single-job, best-improvement, multi-pass until convergence)</div>
+  <div><strong>Base-CP</strong> — Final CP-SAT refinement of the full permutation model</div>
+</div>
+
+<h2 id="configs">Configurations</h2>
+
+<p>Five ablation configurations form a <strong>2×2 factorial design</strong> with an additional bottom-line baseline:</p>
+
+<div class="config-matrix">
+<table>
+  <thead>
+    <tr><th>Config</th><th>EDD</th><th>LB-Disp</th><th>NEH-MS</th><th>PW-CP</th><th>II(1)</th><th>Base-CP</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>C1</td><td><span class="check">✓</span></td><td><span class="dash">—</span></td><td><span class="dash">—</span></td><td><span class="dash">—</span></td><td><span class="dash">—</span></td><td><span class="check">✓</span></td></tr>
+    <tr><td>C2</td><td><span class="check">✓</span></td><td><span class="dash">—</span></td><td><span class="check">✓</span></td><td><span class="dash">—</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+    <tr><td>C3</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="dash">—</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+    <tr><td>C4</td><td><span class="check">✓</span></td><td><span class="dash">—</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+    <tr><td>C5</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="c1">C1 — Bottom Line</h3>
+
+<div class="pipeline">
+  <h4>Pipeline</h4>
+  <div class="flow">
+    <span class="step">EDD</span><span class="arrow">→</span>
+    <span class="step">Base-CP</span>
+  </div>
+</div>
+
+<p>Classical priority-rule dispatching followed by a pure CP-SAT solve. Serves as the practical performance floor: what a practitioner obtains by simply feeding an EDD sequence into a modern CP solver.</p>
+
+<h3 id="c2">C2 — 2010s SOTA Baseline</h3>
+
+<div class="pipeline">
+  <h4>Pipeline</h4>
+  <div class="flow">
+    <span class="step">EDD</span><span class="arrow">→</span>
+    <span class="step">NEH-MS</span><span class="arrow">→</span>
+    <span class="step">II(1, multi-pass)</span><span class="arrow">→</span>
+    <span class="step">Base-CP</span>
+  </div>
+</div>
+
+<p>Best known heuristic pipeline from prior work: EDD-informed NEH construction, followed by first-improvement insertion local search, with final CP refinement.</p>
+<p>This configuration contains <strong>no novel component</strong> and represents the strongest baseline achievable with known methods.</p>
+
+<h3 id="c3">C3 — +LB-derived Dispatching Rules</h3>
+
+<div class="pipeline">
+  <h4>Pipeline</h4>
+  <div class="flow">
+    <span class="step">EDD + LB-Disp<br>(LBE/LBL/LBA)</span><span class="arrow">→</span>
+    <span class="step">NEH-MS</span><span class="arrow">→</span>
+    <span class="step">II(1, multi-pass)</span><span class="arrow">→</span>
+    <span class="step">Base-CP</span>
+  </div>
+</div>
+
+<p>Differs from C2 only in the initial dispatching phase: the best permutation among EDD and the three LB-derived orders (LBE, LBL, LBA) is selected before NEH-MS and subsequent improvement.</p>
+
+<div class="callout"><strong>C2 → C3 isolates the contribution of the LB-derived dispatching rules.</strong></div>
+
+<h3 id="c4">C4 — +PW-CP</h3>
+
+<div class="pipeline">
+  <h4>Pipeline</h4>
+  <div class="flow">
+    <span class="step">EDD</span><span class="arrow">→</span>
+    <span class="step">NEH-MS</span><span class="arrow">→</span>
+    <span class="step" style="background:#e3f2e9;border-color:#a8c9b0;">PW-CP<br>B=7</span><span class="arrow">→</span>
+    <span class="step">II(1, 1-pass)</span>
+    <span class="arrow" style="font-size:16px;">↻</span>
+    <span class="step" style="background:#fbeed5;border-color:#e8c585;">repeat</span><span class="arrow">→</span>
+    <span class="step">Base-CP</span>
+  </div>
+</div>
+
+<p>Differs from C2 by adding the PW-CP loop after NEH-MS. Inside PW-CP, the CP subproblem optimizes a sliding window of <code>B=7</code> jobs (<code>profile_fixed_cnt=0</code>) with adaptive step size (<code>step_on_improve=7</code>, <code>step_on_no_improve=1</code>), interleaved with a single II pass (<code>max_passes=1</code>). The outer <code>repeat_while_improvement</code> loop ensures convergence.</p>
+
+<div class="callout"><strong>C2 → C4 isolates the contribution of PW-CP.</strong></div>
+
+<h3 id="c5">C5 — IGC (Full Method)</h3>
+
+<div class="pipeline">
+  <h4>Pipeline</h4>
+  <div class="flow">
+    <span class="step" style="background:#e3f2e9;border-color:#a8c9b0;">EDD + LB-Disp<br>(LBE/LBL/LBA)</span><span class="arrow">→</span>
+    <span class="step">NEH-MS</span><span class="arrow">→</span>
+    <span class="step" style="background:#e3f2e9;border-color:#a8c9b0;">PW-CP<br>B=7</span><span class="arrow">→</span>
+    <span class="step">II(1, 1-pass)</span>
+    <span class="arrow" style="font-size:16px;">↻</span>
+    <span class="step" style="background:#fbeed5;border-color:#e8c585;">repeat</span><span class="arrow">→</span>
+    <span class="step">Base-CP</span>
+  </div>
+</div>
+
+<p>Both novel components combined. Serves as the full IGC algorithm.</p>
+
+<div class="cross-block">
+  <span><strong>C3 → C5</strong> cross-validates the PW-CP effect under the LB-dispatching baseline.</span>
+  <span><strong>C4 → C5</strong> cross-validates the LB-dispatching effect under the PW-CP baseline.</span>
+</div>
+
+<h2 id="comparisons">Key Comparisons</h2>
+
+<div class="decisions">
+  <div class="decision">
+    <div class="key">C1 → C2</div>
+    <div class="val">How much do NEH-MS + II improve over pure CP-SAT? (context only)</div>
+  </div>
+  <div class="decision" style="border-left-color:var(--ok);background:#f4faee;">
+    <div class="key" style="color:var(--ok);"><strong>C2 → C3</strong></div>
+    <div class="val"><strong>Does the LB-derived dispatching improve solution quality over EDD?</strong></div>
+  </div>
+  <div class="decision" style="border-left-color:var(--ok);background:#f4faee;">
+    <div class="key" style="color:var(--ok);"><strong>C2 → C4</strong></div>
+    <div class="val"><strong>Does PW-CP improve solution quality over known heuristics alone?</strong></div>
+  </div>
+  <div class="decision">
+    <div class="key">C3 → C5</div>
+    <div class="val">Does PW-CP remain effective when combined with LB-dispatching?</div>
+  </div>
+  <div class="decision">
+    <div class="key">C4 → C5</div>
+    <div class="val">Does LB-dispatching add value on top of PW-CP?</div>
+  </div>
+</div>
+
+<h2 id="params">Parameter Summary</h2>
+
+<div class="param-group">
+  <div class="row"><span class="key">EDD</span><span class="val">sort by <code>d_j</code> ascending</span></div>
+  <div class="row"><span class="key">LB-dispatch</span><span class="val">MCF solve on preemptive last-stage relaxation → extract LBE (earliest), LBL (latest), LBA (average) orders → dispatch each, retain best</span></div>
+  <div class="row"><span class="key">NEH-MS</span><span class="val">NEH insertion with <code>tie_breaker = makespan</code></span></div>
+  <div class="row"><span class="key">II (multi-pass)</span><span class="val"><code>subseq_size=1</code>, <code>first_improvement=false</code>, <code>max_passes</code> unset (convergence)</span></div>
+  <div class="row"><span class="key">PW-CP</span><span class="val"><code>added_batch_size=7</code>, <code>profile_fixed_cnt=0</code>, <code>step_size_on_improve=7</code>, <code>step_size_on_no_improve=1</code>, <code>max_time_per_add=10s</code>, <code>solver_thread_cnt=1</code></span></div>
+  <div class="row"><span class="key">II (1-pass)</span><span class="val"><code>subseq_size=1</code>, <code>first_improvement=false</code>, <code>max_passes=1</code></span></div>
+  <div class="row"><span class="key">Base-CP</span><span class="val"><code>computational_time=null</code> (remaining budget), <code>solver_thread_cnt=1</code></span></div>
+  <div class="row"><span class="key">All</span><span class="val"><code>seed=42</code>, total wall-clock limit per instance controlled by <code>stopping_criteria.yaml</code></span></div>
+</div>
+
+<h2 id="files">File Mapping</h2>
+
+<div class="helpers">
+<table>
+  <thead><tr><th>Config</th><th>YAML File</th></tr></thead>
+  <tbody>
+    <tr><td><strong>C1</strong></td><td><code>20260512_ablation_c1.yaml</code></td></tr>
+    <tr><td><strong>C2</strong></td><td><code>20260512_ablation_c2.yaml</code></td></tr>
+    <tr><td><strong>C3</strong></td><td><code>20260512_ablation_c3.yaml</code></td></tr>
+    <tr><td><strong>C4</strong></td><td><code>20260512_ablation_c4.yaml</code></td></tr>
+    <tr><td><strong>C5</strong></td><td><code>20260512_ablation_c5.yaml</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<hr>
+<p style="font-size: 12px; color: var(--faint);">Source: <code>configs_cp_lns/20260512_ablation.md</code> (markdown remains authoritative; this HTML is a spatial view).</p>
+
+</main>
+</div>
+</body>
+</html>
