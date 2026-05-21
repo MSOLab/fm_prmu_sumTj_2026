@@ -246,6 +246,26 @@ class SingleMachinePreemptionMcf:
         avg = self.get_job_2_average_time_map()
         return sorted(self.calJ, key=lambda j: avg[j])
 
+    def get_job_2_lb_contribution_map(self) -> dict[str, int]:
+        """각 작업의 LB 목적함수 기여도: 해당 작업이 속한 모든 block의 비용 합.
+
+        Σ_j contribution[j] == get_obj_value().
+        """
+        contrib: dict[str, int] = {j: 0 for j in self.calJ}
+        for blk in self.get_blocks():
+            contrib[blk.job_id] += blk.cost
+        return contrib
+
+    def get_job_lb_contrib_sequence(self) -> list[str]:
+        """(LB 기여도 오름차순, 동률시 due date 오름차순) 정렬.
+
+        기여도가 0인 (LP가 마감 안에 끼워 넣은) job을 먼저, 기여도가 큰
+        (LP조차 어쩔 수 없이 늦은) job을 뒤로. LB == 0 인 경우 자연스럽게
+        EDD로 환원된다.
+        """
+        contrib = self.get_job_2_lb_contribution_map()
+        return sorted(self.calJ, key=lambda j: (contrib[j], self.d[j]))
+
     def get_blocks(self) -> list[PreemptiveBlock]:
         """단위 슬롯 흐름을 같은 job의 연속 구간(block) 단위로 묶는다.
 

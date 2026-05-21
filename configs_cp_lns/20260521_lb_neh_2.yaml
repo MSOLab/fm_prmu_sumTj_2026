@@ -1,5 +1,6 @@
 - method: set_random_seed
   seed: 42
 - method: compute_preemptive_last_stage_lb
+  use_lb_contrib_seq_only: true
   init_by_neh_ms: true
   draw_preemptive_lb_breakdown: false

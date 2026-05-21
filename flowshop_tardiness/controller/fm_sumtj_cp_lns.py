@@ -1224,6 +1224,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     def compute_preemptive_last_stage_lb(
         self,
+        use_lb_contrib_seq_only: bool = False,
         init_by_neh_ms: bool = False,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
@@ -1260,40 +1261,56 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     return schedule
                 return self.get_dispatched_schedule(seq)
 
-            seq_by_start = last_stage_only_mdl.get_job_start_sequence()
-            schedule_by_start = _make_schedule_from(seq_by_start)
-            obj_value_by_start = self.get_obj_value(schedule_by_start)
-
-            seq_by_end = last_stage_only_mdl.get_job_completion_sequence()
-            schedule_by_end = _make_schedule_from(seq_by_end)
-            obj_value_by_end = self.get_obj_value(schedule_by_end)
-
-            seq_by_avg = last_stage_only_mdl.get_job_average_sequence()
-            schedule_by_avg = _make_schedule_from(seq_by_avg)
-            obj_value_by_avg = self.get_obj_value(schedule_by_avg)
-
             label = "NEH-MS" if init_by_neh_ms else "Dispatched"
-            logging.info("%s schedules' total tardiness:", label)
-            logging.info(" - by start time sequence: %d", obj_value_by_start)
-            logging.info(" - by completion time sequence: %d", obj_value_by_end)
-            logging.info(" - by average time sequence: %d", obj_value_by_avg)
-            # Choose the best among the three sequence-based candidates
-            best_obj_value = min(obj_value_by_start, obj_value_by_end, obj_value_by_avg)
-            if best_obj_value == obj_value_by_start:
-                best_schedule = schedule_by_start
-                method_used = "start time"
-            elif best_obj_value == obj_value_by_end:
-                best_schedule = schedule_by_end
-                method_used = "completion time"
+
+            if use_lb_contrib_seq_only:
+                seq_by_contribution = (
+                    last_stage_only_mdl.get_job_lb_contrib_sequence()
+                )
+                best_schedule = _make_schedule_from(seq_by_contribution)
+                best_obj_value = self.get_obj_value(best_schedule)
+                method_used = "LB contribution"
+                logging.info(
+                    "%s schedule by LB contribution sequence: total tardiness = %d",
+                    label,
+                    best_obj_value,
+                )
             else:
-                best_schedule = schedule_by_avg
-                method_used = "average time"
-            logging.info(
-                "Among %s schedules, best total tardiness is %d by %s sequence.",
-                label,
-                best_obj_value,
-                method_used,
-            )
+                seq_by_start = last_stage_only_mdl.get_job_start_sequence()
+                schedule_by_start = _make_schedule_from(seq_by_start)
+                obj_value_by_start = self.get_obj_value(schedule_by_start)
+
+                seq_by_end = last_stage_only_mdl.get_job_completion_sequence()
+                schedule_by_end = _make_schedule_from(seq_by_end)
+                obj_value_by_end = self.get_obj_value(schedule_by_end)
+
+                seq_by_avg = last_stage_only_mdl.get_job_average_sequence()
+                schedule_by_avg = _make_schedule_from(seq_by_avg)
+                obj_value_by_avg = self.get_obj_value(schedule_by_avg)
+
+                logging.info("%s schedules' total tardiness:", label)
+                logging.info(" - by start time sequence: %d", obj_value_by_start)
+                logging.info(" - by completion time sequence: %d", obj_value_by_end)
+                logging.info(" - by average time sequence: %d", obj_value_by_avg)
+                # Choose the best among the three sequence-based candidates
+                best_obj_value = min(
+                    obj_value_by_start, obj_value_by_end, obj_value_by_avg
+                )
+                if best_obj_value == obj_value_by_start:
+                    best_schedule = schedule_by_start
+                    method_used = "start time"
+                elif best_obj_value == obj_value_by_end:
+                    best_schedule = schedule_by_end
+                    method_used = "completion time"
+                else:
+                    best_schedule = schedule_by_avg
+                    method_used = "average time"
+                logging.info(
+                    "Among %s schedules, best total tardiness is %d by %s sequence.",
+                    label,
+                    best_obj_value,
+                    method_used,
+                )
 
             # Create report and register the new solution
             report = FsSubroutineReport(
