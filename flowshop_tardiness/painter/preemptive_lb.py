@@ -35,7 +35,7 @@ class PreemptiveLbBreakdownPlotter:
             {
                 "svg.fonttype": "none",
                 "font.family": "sans-serif",
-                "font.sans-serif": ["Arial"],
+                "font.sans-serif": ["Arial", "Liberation Sans", "DejaVu Sans"],
                 "text.usetex": False,
             }
         ):
