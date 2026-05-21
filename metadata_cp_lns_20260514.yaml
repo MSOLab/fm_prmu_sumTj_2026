@@ -2,11 +2,11 @@
 vrm_common_params_rel_path: "resources/vrm_common_params.yaml"
 baseline_csv_path: "resources/vrm_ref/naderi2023CPOCodeResult.csv"
 input_dir: "resources/vrm"
-# benchmark_idx_list:
-#   - 1
-#   - 100
-#   - 300
-#   - 540
+benchmark_idx_list:
+  - 1
+  - 100
+  - 300
+  - 540
 first: 1
 last: 540
 benchmark_filename_format: "{}.txt"
@@ -17,14 +17,14 @@ dicts_of_i_o_data_path:
     subroutine_flow_rel_path: "configs_cp_lns/20260514_lb_neh.yaml"
     output_dir: "20260514_lb_neh"
     description: "LB (init by NEH-MS)"
-  - stopping_criteria_rel_path: "configs_cp_lns/stopping_criteria_nm.yaml"
-    subroutine_flow_rel_path: "configs_cp_lns/20260515_ablation_c3.yaml"
-    output_dir: "20260515_ablation_c3"
-    description: "LB + EDD + NEH_MS + II(1) + Base CP"
-  - stopping_criteria_rel_path: "configs_cp_lns/stopping_criteria_nm.yaml"
-    subroutine_flow_rel_path: "configs_cp_lns/20260515_ablation_c5.yaml"
-    output_dir: "20260515_ablation_c5"
-    description: "LB + EDD + NEH_MS + PW-CP(7,0,7,1) + II(1) + Base CP"
+  # - stopping_criteria_rel_path: "configs_cp_lns/stopping_criteria_nm.yaml"
+  #   subroutine_flow_rel_path: "configs_cp_lns/20260515_ablation_c3.yaml"
+  #   output_dir: "20260515_ablation_c3"
+  #   description: "LB + EDD + NEH_MS + II(1) + Base CP"
+  # - stopping_criteria_rel_path: "configs_cp_lns/stopping_criteria_nm.yaml"
+  #   subroutine_flow_rel_path: "configs_cp_lns/20260515_ablation_c5.yaml"
+  #   output_dir: "20260515_ablation_c5"
+  #   description: "LB + EDD + NEH_MS + PW-CP(7,0,7,1) + II(1) + Base CP"
 
 # Output and Logging configuration
 output_dir_scenarios: "Outputs_scenarios"
@@ -32,7 +32,7 @@ scenario_log_filename: "multi_scenario_runner.log"
 result_dir_name: "results"
 
 # Execution configuration
-instance_worker_cnt: 12
+instance_worker_cnt: 4
 
 # Analysis and plotting options
 draw_gantt: false

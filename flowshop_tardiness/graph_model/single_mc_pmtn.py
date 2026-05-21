@@ -15,6 +15,15 @@ class McfSolution:
     job_completion_sequence: list[str]
 
 
+@dataclass
+class PreemptiveBlock:
+    job_id: str
+    start_t: int  # first unit slot (inclusive)
+    end_t: int  # last unit slot (inclusive)
+    cost: int  # Σ c_{j,t} over the block
+    tardy_cost: int  # Σ c_{j,t} restricted to t > d_j (== cost in current formulation)
+
+
 class SingleMachinePreemptionMcf:
     """
     원래의 시간지수 모델을 그대로 네트워크(최소비용흐름)로 변환한 구현.
@@ -236,6 +245,59 @@ class SingleMachinePreemptionMcf:
     def get_job_average_sequence(self) -> list[str]:
         avg = self.get_job_2_average_time_map()
         return sorted(self.calJ, key=lambda j: avg[j])
+
+    def get_blocks(self) -> list[PreemptiveBlock]:
+        """단위 슬롯 흐름을 같은 job의 연속 구간(block) 단위로 묶는다.
+
+        c_{j,t} 가 t <= d_j 에서 0이므로 cost 와 tardy_cost 는 동일하지만,
+        시각화에서 tardy 영역을 구분 표시하기 위해 별도 계산해 둔다.
+        """
+        x = self.get_variable_value_dict()
+        # 시간 t -> 처리 중인 job (없으면 None)
+        slot_job: dict[int, str | None] = {t: None for t in self.calT}
+        for j in self.calJ:
+            for t, val in x[j].items():
+                if val > 0.5:
+                    slot_job[t] = j
+
+        blocks: list[PreemptiveBlock] = []
+        cur_j: str | None = None
+        cur_start: int = 0
+        cur_cost: int = 0
+        cur_tardy: int = 0
+
+        def flush(end_t: int) -> None:
+            if cur_j is not None:
+                blocks.append(
+                    PreemptiveBlock(
+                        job_id=cur_j,
+                        start_t=cur_start,
+                        end_t=end_t,
+                        cost=cur_cost,
+                        tardy_cost=cur_tardy,
+                    )
+                )
+
+        for t in self.calT:
+            j = slot_job[t]
+            if j is None:
+                flush(t - 1)
+                cur_j = None
+                cur_cost = 0
+                cur_tardy = 0
+                continue
+            if j != cur_j:
+                flush(t - 1)
+                cur_j = j
+                cur_start = t
+                cur_cost = 0
+                cur_tardy = 0
+            c_jt = self.c[j][t]
+            cur_cost += c_jt
+            if t > self.d[j]:
+                cur_tardy += c_jt
+        flush(self.calT[-1] if self.calT else 0)
+        return blocks
 
     def extract_solution(self) -> McfSolution:
         return McfSolution(

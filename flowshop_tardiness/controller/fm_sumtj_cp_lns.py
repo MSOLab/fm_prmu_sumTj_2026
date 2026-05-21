@@ -9,7 +9,10 @@ from routix import DynamicDataObject, ElapsedTimer
 from routix.util.comparison import float_a_stl_b
 from schore.schedule_examples.shop.flow import FlowshopSchedule
 
-from ..report import FsSubroutineReport
+from flowshop_tardiness.graph_model.single_mc_pmtn import SingleMachinePreemptionMcf
+from flowshop_tardiness.painter.preemptive_lb import PreemptiveLbBreakdownPlotter
+from flowshop_tardiness.report import FsSubroutineReport
+
 from .controller_core import FlowshopTardinessControllerCore
 from .flowshop_batch_eval import PermutationFlowshopSubseqEvaluator
 from .list_window_slider import window_slide_over_list
@@ -1224,8 +1227,8 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         init_by_neh_ms: bool = False,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
+        draw_preemptive_lb_breakdown: bool = False,
     ) -> None:
-        from ..graph_model.single_mc_pmtn import SingleMachinePreemptionMcf
 
         sub_timer = ElapsedTimer()
         last_stage_only_mdl = SingleMachinePreemptionMcf.from_instance(self.instance)
@@ -1238,6 +1241,14 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 obj_bound,
                 sub_timer.get_formatted_elapsed_time(),
             )
+
+            if draw_preemptive_lb_breakdown:
+                breakdown_path = self.get_file_path_for_subroutine(
+                    "_preemptive_lb_breakdown.png"
+                )
+                PreemptiveLbBreakdownPlotter().export(
+                    breakdown_path, last_stage_only_mdl
+                )
 
             def _make_schedule_from(seq: list[str]) -> FlowshopSchedule:
                 if init_by_neh_ms:
