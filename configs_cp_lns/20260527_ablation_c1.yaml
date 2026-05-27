@@ -1,12 +1,8 @@
 - method: set_random_seed
   seed: 42
-- method: initialize_by_edd
 - method: initialize_by_nehms
 - method: compute_preemptive_last_stage_lb
-  init_method: neh-ms
-- method: improve_by_insertion
-  subseq_size: 1
-  first_improvement: false
+  init_method: lb_only
 - method: set_cp_model_as_base_cp_model
 - method: solve_base_cp_model
   computational_time: null

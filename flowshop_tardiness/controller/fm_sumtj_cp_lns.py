@@ -3,7 +3,7 @@ import math
 import random
 import time
 from collections import defaultdict
-from typing import Callable, Sequence
+from typing import Callable, Literal, Sequence
 
 from routix import DynamicDataObject, ElapsedTimer
 from routix.util.comparison import float_a_stl_b
@@ -16,6 +16,7 @@ from .list_window_slider import window_slide_over_list
 from .schedule_metric import ScheduleMetric
 
 REL_TOL = 1e-9  # for safe float comparisons
+InitMethod = Literal["dispatch", "neh-ms", "lb_only"]
 
 
 class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
@@ -1221,7 +1222,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     def compute_preemptive_last_stage_lb(
         self,
-        init_by_neh_ms: bool = False,
+        init_method: InitMethod = "dispatch",
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ) -> None:
@@ -1231,78 +1232,34 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         last_stage_only_mdl = SingleMachinePreemptionMcf.from_instance(self.instance)
         last_stage_only_mdl.solve()
 
-        if last_stage_only_mdl.is_optimal():
-            obj_bound = last_stage_only_mdl.get_obj_value()
-            logging.info(
-                "Preemptive last-stage-only model solved optimally with objective value %d; took %s",
-                obj_bound,
+        if not last_stage_only_mdl.is_optimal():
+            logging.warning(
+                "compute_preemptive_last_stage_lb: MCF model not optimal; "
+                "skipping LB registration (init_method=%s, elapsed=%s)",
+                init_method,
                 sub_timer.get_formatted_elapsed_time(),
             )
+            return
 
-            def _make_schedule_from(seq: list[str]) -> FlowshopSchedule:
-                if init_by_neh_ms:
-                    schedule, _ = self._build_neh_schedule(
-                        seq,
-                        tie_breaker="makespan",
-                        error_if_infeasible=error_if_infeasible,
-                    )
-                    return schedule
-                return self.get_dispatched_schedule(seq)
+        obj_bound = last_stage_only_mdl.get_obj_value()
+        logging.info(
+            "compute_preemptive_last_stage_lb: MCF LB = %d (init_method=%s, took %s)",
+            obj_bound,
+            init_method,
+            sub_timer.get_formatted_elapsed_time(),
+        )
 
-            seq_by_start = last_stage_only_mdl.get_job_start_sequence()
-            schedule_by_start = _make_schedule_from(seq_by_start)
-            obj_value_by_start = self.get_obj_value(schedule_by_start)
-
-            seq_by_end = last_stage_only_mdl.get_job_completion_sequence()
-            schedule_by_end = _make_schedule_from(seq_by_end)
-            obj_value_by_end = self.get_obj_value(schedule_by_end)
-
-            seq_by_avg = last_stage_only_mdl.get_job_average_sequence()
-            schedule_by_avg = _make_schedule_from(seq_by_avg)
-            obj_value_by_avg = self.get_obj_value(schedule_by_avg)
-
-            label = "NEH-MS" if init_by_neh_ms else "Dispatched"
-            logging.info("%s schedules' total tardiness:", label)
-            logging.info(" - by start time sequence: %d", obj_value_by_start)
-            logging.info(" - by completion time sequence: %d", obj_value_by_end)
-            logging.info(" - by average time sequence: %d", obj_value_by_avg)
-            # Choose the best among the three sequence-based candidates
-            best_obj_value = min(obj_value_by_start, obj_value_by_end, obj_value_by_avg)
-            if best_obj_value == obj_value_by_start:
-                best_schedule = schedule_by_start
-                method_used = "start time"
-            elif best_obj_value == obj_value_by_end:
-                best_schedule = schedule_by_end
-                method_used = "completion time"
-            else:
-                best_schedule = schedule_by_avg
-                method_used = "average time"
-            logging.info(
-                "Among %s schedules, best total tardiness is %d by %s sequence.",
-                label,
-                best_obj_value,
-                method_used,
-            )
-
-            # Create report and register the new solution
+        if init_method == "lb_only":
+            log_time = self.timer.elapsed_sec
             report = FsSubroutineReport(
                 elapsed_time=sub_timer.elapsed_sec,
-                obj_value=best_obj_value,
+                obj_value=None,
                 obj_bound=obj_bound,
-                is_init=True,
+                is_init=False,
             )
             sub_timer.reset()
-            was_updated = self.solution_manager.register(report, best_schedule)
+            self.solution_manager.register(report, None)
 
-            # Log
-            log_time = self.timer.elapsed_sec
-            last_obj_value = self.obj_store.get_last_obj_value()
-            best_obj_value = (
-                best_obj_value
-                if last_obj_value is None or best_obj_value < last_obj_value
-                else last_obj_value
-            )
-            self.add_obj_value_log(log_time, best_obj_value, is_maximize=None)
             last_obj_bound = self.obj_store.get_last_obj_bound()
             best_obj_bound = (
                 obj_bound
@@ -1312,11 +1269,90 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             self.add_obj_bound_log(log_time, best_obj_bound, is_maximize=None)
             _last_timestamp_note = self._get_call_context_of_current_method()
             self.obj_store.add_last_timestamp_note(
-                _last_timestamp_note, obj_value_is_valid=True, obj_bound_is_valid=True
+                _last_timestamp_note,
+                obj_value_is_valid=False,
+                obj_bound_is_valid=True,
             )
-            # Draw Gantt chart if the solution is an improvement
-            if was_updated and draw_gantt:
-                self.export_incumbent_to_yaml()
+            return
+
+        def _make_schedule_from(seq: list[str]) -> FlowshopSchedule:
+            if init_method == "neh-ms":
+                schedule, _ = self._build_neh_schedule(
+                    seq,
+                    tie_breaker="makespan",
+                    error_if_infeasible=error_if_infeasible,
+                )
+                return schedule
+            return self.get_dispatched_schedule(seq)
+
+        seq_by_start = last_stage_only_mdl.get_job_start_sequence()
+        schedule_by_start = _make_schedule_from(seq_by_start)
+        obj_value_by_start = self.get_obj_value(schedule_by_start)
+
+        seq_by_end = last_stage_only_mdl.get_job_completion_sequence()
+        schedule_by_end = _make_schedule_from(seq_by_end)
+        obj_value_by_end = self.get_obj_value(schedule_by_end)
+
+        seq_by_avg = last_stage_only_mdl.get_job_average_sequence()
+        schedule_by_avg = _make_schedule_from(seq_by_avg)
+        obj_value_by_avg = self.get_obj_value(schedule_by_avg)
+
+        label = "NEH-MS" if init_method == "neh-ms" else "Dispatched"
+        logging.info("%s schedules' total tardiness:", label)
+        logging.info(" - by start time sequence: %d", obj_value_by_start)
+        logging.info(" - by completion time sequence: %d", obj_value_by_end)
+        logging.info(" - by average time sequence: %d", obj_value_by_avg)
+        # Choose the best among the three sequence-based candidates
+        best_obj_value = min(obj_value_by_start, obj_value_by_end, obj_value_by_avg)
+        if best_obj_value == obj_value_by_start:
+            best_schedule = schedule_by_start
+            method_used = "start time"
+        elif best_obj_value == obj_value_by_end:
+            best_schedule = schedule_by_end
+            method_used = "completion time"
+        else:
+            best_schedule = schedule_by_avg
+            method_used = "average time"
+        logging.info(
+            "Among %s schedules, best total tardiness is %d by %s sequence.",
+            label,
+            best_obj_value,
+            method_used,
+        )
+
+        # Create report and register the new solution
+        report = FsSubroutineReport(
+            elapsed_time=sub_timer.elapsed_sec,
+            obj_value=best_obj_value,
+            obj_bound=obj_bound,
+            is_init=True,
+        )
+        sub_timer.reset()
+        was_updated = self.solution_manager.register(report, best_schedule)
+
+        # Log
+        log_time = self.timer.elapsed_sec
+        last_obj_value = self.obj_store.get_last_obj_value()
+        best_obj_value = (
+            best_obj_value
+            if last_obj_value is None or best_obj_value < last_obj_value
+            else last_obj_value
+        )
+        self.add_obj_value_log(log_time, best_obj_value, is_maximize=None)
+        last_obj_bound = self.obj_store.get_last_obj_bound()
+        best_obj_bound = (
+            obj_bound
+            if last_obj_bound is None or obj_bound > last_obj_bound
+            else last_obj_bound
+        )
+        self.add_obj_bound_log(log_time, best_obj_bound, is_maximize=None)
+        _last_timestamp_note = self._get_call_context_of_current_method()
+        self.obj_store.add_last_timestamp_note(
+            _last_timestamp_note, obj_value_is_valid=True, obj_bound_is_valid=True
+        )
+        # Draw Gantt chart if the solution is an improvement
+        if was_updated and draw_gantt:
+            self.export_incumbent_to_yaml()
 
     # Subroutine: Prefix-window CP
 
