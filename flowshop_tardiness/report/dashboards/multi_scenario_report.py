@@ -7,6 +7,9 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from routix.report.subroutine_report_statistics import (
+    SubroutineReportStatisticsKeys,
+)
 from xlsxwriter import Workbook
 from xlsxwriter.worksheet import Worksheet
 
@@ -57,8 +60,16 @@ def case_ratio(
     m2 = m_zero & (a < 0)
 
     v0 = np.nan if both_zero_val is None else both_zero_val
-    v1p = np.nan if divisor_zero_dividend_positive_val is None else divisor_zero_dividend_positive_val
-    v1n = np.nan if divisor_zero_dividend_negative_val is None else divisor_zero_dividend_negative_val
+    v1p = (
+        np.nan
+        if divisor_zero_dividend_positive_val is None
+        else divisor_zero_dividend_positive_val
+    )
+    v1n = (
+        np.nan
+        if divisor_zero_dividend_negative_val is None
+        else divisor_zero_dividend_negative_val
+    )
 
     out[m0] = v0
     out[m1] = v1p
@@ -80,12 +91,14 @@ def build_dashboard_df(
 ) -> pd.DataFrame:
     try:
         best_obj_value_df = raw_summary_df.pivot_table(
-            index="insName", columns="scenario", values="bestObj"
+            index=SubroutineReportStatisticsKeys.INSTANCE_NAME,
+            columns="scenario",
+            values="bestObj",
         ).reset_index()
 
         if baseline_df is not None and not baseline_df.empty:
             rename_map = {
-                baseline_instance_col: "insName",
+                baseline_instance_col: SubroutineReportStatisticsKeys.INSTANCE_NAME,
                 baseline_obj_val_col: "baselineObjVal",
                 baseline_obj_bound_col: "baselineBound",
             }
@@ -99,7 +112,11 @@ def build_dashboard_df(
             baseline_subset[baseline_instance_col] = baseline_subset[
                 baseline_instance_col
             ].astype(str)
-            best_obj_value_df["insName"] = best_obj_value_df["insName"].astype(str)
+            best_obj_value_df[SubroutineReportStatisticsKeys.INSTANCE_NAME] = (
+                best_obj_value_df[SubroutineReportStatisticsKeys.INSTANCE_NAME].astype(
+                    str
+                )
+            )
             baseline_subset.rename(columns=rename_map, inplace=True)
 
             if baseline_subset.columns.duplicated().any():
@@ -112,7 +129,7 @@ def build_dashboard_df(
             dashboard_df = pd.merge(
                 best_obj_value_df,
                 baseline_subset,
-                on="insName",
+                on=SubroutineReportStatisticsKeys.INSTANCE_NAME,
                 how="left",
             )
         else:
@@ -131,7 +148,9 @@ def build_dashboard_df(
             "rpdf_col_name_format", rpd_col_formats.difference_format
         )
         scenarios = [
-            col for col in best_obj_value_df.columns if col != "insName"
+            col
+            for col in best_obj_value_df.columns
+            if col != SubroutineReportStatisticsKeys.INSTANCE_NAME
         ]
 
         has_baseline_val = (
@@ -161,7 +180,9 @@ def build_dashboard_df(
                 rpdv_series.loc[mask_both_zero] = 0.0
                 rpdv_series.loc[mask_bks_zero_sc_pos] = 0.01
                 rpdv_series.loc[mask_bks_zero_sc_neg] = -0.01
-                rpdv_series.loc[mask_else] = ((sc - bks) / sc)[mask_else].astype("Float64")
+                rpdv_series.loc[mask_else] = ((sc - bks) / sc)[mask_else].astype(
+                    "Float64"
+                )
                 dashboard_df[rpdv_col_name_format.format(scenario)] = rpdv_series
 
         if has_baseline_bound:
@@ -180,7 +201,7 @@ def build_dashboard_df(
                     sc - bks, (sc + bks) / 2, both_zero_val=0
                 )
 
-        ordered_columns = ["insName"]
+        ordered_columns = [SubroutineReportStatisticsKeys.INSTANCE_NAME]
         obj_val_cols = [col for col in scenarios]
         baseline_obj_val_col_list = (
             ["baselineObjVal"] if "baselineObjVal" in dashboard_df.columns else []
@@ -218,17 +239,17 @@ def build_dashboard_df(
 
         summary_rows: list[dict[str, Any]] = []
         for stat_name, stat_func in stat_pairs:
-            row: dict[str, Any] = {"insName": stat_name}
+            row: dict[str, Any] = {
+                SubroutineReportStatisticsKeys.INSTANCE_NAME: stat_name
+            }
             for col in final_dashboard.columns:
-                if col != "insName":
+                if col != SubroutineReportStatisticsKeys.INSTANCE_NAME:
                     if pd.api.types.is_numeric_dtype(final_dashboard[col]):
                         row[col] = getattr(final_dashboard[col], stat_func)()
             summary_rows.append(row)
 
         summary_df = pd.DataFrame(summary_rows)
-        final_dashboard = pd.concat(
-            [final_dashboard, summary_df], ignore_index=True
-        )
+        final_dashboard = pd.concat([final_dashboard, summary_df], ignore_index=True)
 
         return final_dashboard
 
@@ -278,7 +299,7 @@ def write_multi_scenario_excel_report(
                                 col.replace(rpd_col_formats.difference_prefix, ""),
                             )
                         )
-                    elif col == "insName":
+                    elif col == SubroutineReportStatisticsKeys.INSTANCE_NAME:
                         header.append(("", "insId"))
                     elif col == "baselineObjVal":
                         header.append(("", "baselineObjVal"))
@@ -315,9 +336,7 @@ def write_multi_scenario_excel_report(
                             rel_diff_first_col = col_idx
                         if rel_diff_last_col < col_idx:
                             rel_diff_last_col = col_idx
-                        worksheet.set_column(
-                            col_idx, col_idx, max_len, percent_format
-                        )
+                        worksheet.set_column(col_idx, col_idx, max_len, percent_format)
 
                 if rel_diff_first_col is not None:
                     worksheet.conditional_format(
@@ -371,9 +390,7 @@ def write_multi_scenario_excel_report(
 
             # 4. Baseline_Data
             if baseline_df is not None and not baseline_df.empty:
-                baseline_df.to_excel(
-                    writer, sheet_name="Baseline_Data", index=False
-                )
+                baseline_df.to_excel(writer, sheet_name="Baseline_Data", index=False)
                 worksheet = writer.sheets["Baseline_Data"]
                 for col_idx, col_name in enumerate(baseline_df.columns):
                     max_len = (
@@ -414,9 +431,7 @@ def aggregate_scenario_summaries(
         all_summary_dfs.append(df)
 
     raw_summary_df = pd.concat(all_summary_dfs, ignore_index=True)
-    raw_summary_df.to_csv(
-        out_dir / "all_scenarios_summary_endpoint.csv", index=False
-    )
+    raw_summary_df.to_csv(out_dir / "all_scenarios_summary_endpoint.csv", index=False)
 
     trimmed_df = apply_timelimit_trim(raw_summary_df, out_dir)
     trimmed_df.to_csv(out_dir / "all_scenarios_summary.csv", index=False)

@@ -20,15 +20,16 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
+from routix.report.subroutine_report_statistics import (
+    SubroutineReportStatisticsKeys,
+)
 
 from flowshop_tardiness.io_solution import OBJ_LOG_FN_FORMAT, RESULT_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
 
-def _last_value_at_or_before(
-    data: dict, threshold_sec: float
-) -> float | None:
+def _last_value_at_or_before(data: dict, threshold_sec: float) -> float | None:
     """Latest numeric value whose timestamp key is ``<= threshold_sec``."""
     best_t = -math.inf
     best_v: float | None = None
@@ -59,9 +60,7 @@ def _load_obj_log_series(obj_log_path: Path) -> tuple[dict, dict]:
     )
 
 
-def _resolve_obj_log_path(
-    run_dir: Path, scenario: str, ins_name: str
-) -> Path | None:
+def _resolve_obj_log_path(run_dir: Path, scenario: str, ins_name: str) -> Path | None:
     base = run_dir / scenario / ins_name
     in_results = base / RESULT_DIR_NAME / OBJ_LOG_FN_FORMAT.format(ins_name)
     if in_results.exists():
@@ -72,9 +71,7 @@ def _resolve_obj_log_path(
     return None
 
 
-def apply_timelimit_trim(
-    summary_df: pd.DataFrame, run_dir: Path
-) -> pd.DataFrame:
+def apply_timelimit_trim(summary_df: pd.DataFrame, run_dir: Path) -> pd.DataFrame:
     """Return a copy of ``summary_df`` with values trimmed to ``timelimit``.
 
     For each row, reads the matching ``<ins>_obj_log.yaml`` and replaces:
@@ -90,7 +87,13 @@ def apply_timelimit_trim(
     """
     if summary_df.empty:
         return summary_df
-    required = {"scenario", "insName", "timelimit", "bestObj", "bestBound"}
+    required = {
+        "scenario",
+        SubroutineReportStatisticsKeys.INSTANCE_NAME,
+        "timelimit",
+        "bestObj",
+        "bestBound",
+    }
     missing = required - set(summary_df.columns)
     if missing:
         logger.warning(
@@ -116,7 +119,7 @@ def apply_timelimit_trim(
 
     for _, row in out.iterrows():
         scenario = str(row["scenario"])
-        ins_name = str(row["insName"])
+        ins_name = str(row[SubroutineReportStatisticsKeys.INSTANCE_NAME])
         try:
             timelimit = float(row["timelimit"])
         except (TypeError, ValueError):
@@ -152,11 +155,7 @@ def apply_timelimit_trim(
                     new_time = min(float(orig_time), timelimit)
                 if has_init:
                     init = row.get("initObj")
-                    if (
-                        pd.notna(init)
-                        and pd.notna(new_obj)
-                        and float(init) != 0
-                    ):
+                    if pd.notna(init) and pd.notna(new_obj) and float(init) != 0:
                         new_improve = (float(init) - float(new_obj)) / float(init)
                 if v_at is not None or b_at is not None:
                     trimmed_count += 1

@@ -17,6 +17,9 @@ from fs_config import BaselineColumnMapping
 from ga_ctrlr_multi_instance import FsMultiInstanceRunner
 from ga_ctrlr_single_instance import FsSingleInstanceRunner
 from output_filenames import OutputFilenames
+from routix.report.subroutine_report_statistics import (
+    SubroutineReportStatisticsKeys,
+)
 
 
 class FsMultiScenarioRunner(
@@ -163,13 +166,15 @@ class FsMultiScenarioRunner(
         try:
             # 1. Pivot the raw data to get scenarios as columns
             best_obj_value_df = raw_summary_df.pivot_table(
-                index="instanceName", columns="scenario", values="bestObj"
+                index=SubroutineReportStatisticsKeys.INSTANCE_NAME,
+                columns="scenario",
+                values="bestObj",
             ).reset_index()
 
             # 2. Merge with baseline data if available
             if self.baseline_df is not None and not self.baseline_df.empty:
                 rename_map = {
-                    self.baseline_instance_col: "instanceName",
+                    self.baseline_instance_col: SubroutineReportStatisticsKeys.INSTANCE_NAME,
                     self.baseline_obj_val_col: "baselineObjVal",
                     self.baseline_obj_bound_col: "baselineBound",
                 }
@@ -184,9 +189,11 @@ class FsMultiScenarioRunner(
                 baseline_subset[self.baseline_instance_col] = baseline_subset[
                     self.baseline_instance_col
                 ].astype(str)
-                best_obj_value_df["instanceName"] = best_obj_value_df[
-                    "instanceName"
-                ].astype(str)
+                best_obj_value_df[SubroutineReportStatisticsKeys.INSTANCE_NAME] = (
+                    best_obj_value_df[
+                        SubroutineReportStatisticsKeys.INSTANCE_NAME
+                    ].astype(str)
+                )
                 baseline_subset.rename(columns=rename_map, inplace=True)
 
                 if baseline_subset.columns.duplicated().any():
@@ -199,7 +206,7 @@ class FsMultiScenarioRunner(
                 dashboard_df = pd.merge(
                     best_obj_value_df,
                     baseline_subset,
-                    on="instanceName",
+                    on=SubroutineReportStatisticsKeys.INSTANCE_NAME,
                     how="left",
                 )
             else:
@@ -218,7 +225,9 @@ class FsMultiScenarioRunner(
                 "rpdf_col_name_format", self.relative_percentage_difference_col_format
             )
             scenarios = [
-                col for col in best_obj_value_df.columns if col != "instanceName"
+                col
+                for col in best_obj_value_df.columns
+                if col != SubroutineReportStatisticsKeys.INSTANCE_NAME
             ]
 
             has_baseline_val = (
@@ -276,7 +285,7 @@ class FsMultiScenarioRunner(
                     )
 
             # 4. Define the desired column order
-            ordered_columns = ["instanceName"]
+            ordered_columns = [SubroutineReportStatisticsKeys.INSTANCE_NAME]
             obj_val_cols = [col for col in scenarios]
             baseline_obj_val_col = (
                 ["baselineObjVal"] if "baselineObjVal" in dashboard_df.columns else []
@@ -318,9 +327,11 @@ class FsMultiScenarioRunner(
 
             summary_rows: list[dict[str, Any]] = []
             for stat_name, stat_func in self.stat_name_func_pairs:
-                row: dict[str, Any] = {"instanceName": stat_name}
+                row: dict[str, Any] = {
+                    SubroutineReportStatisticsKeys.INSTANCE_NAME: stat_name
+                }
                 for col in final_dashboard.columns:
-                    if col != "instanceName":
+                    if col != SubroutineReportStatisticsKeys.INSTANCE_NAME:
                         if pd.api.types.is_numeric_dtype(final_dashboard[col]):
                             row[col] = getattr(final_dashboard[col], stat_func)()
                 summary_rows.append(row)
@@ -411,7 +422,7 @@ class FsMultiScenarioRunner(
                                     ),
                                 )
                             )
-                        elif col == "instanceName":
+                        elif col == SubroutineReportStatisticsKeys.INSTANCE_NAME:
                             header.append(("", "insId"))
                         elif col == "baselineObjVal":
                             header.append(("", "baselineObjVal"))

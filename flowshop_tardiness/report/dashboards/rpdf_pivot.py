@@ -19,12 +19,15 @@ import logging
 from pathlib import Path
 
 import pandas as pd
+from routix.report.subroutine_report_statistics import (
+    SubroutineReportStatisticsKeys,
+)
 
 logger = logging.getLogger(__name__)
 
 
 COMPARISON_COLUMNS: tuple[str, ...] = (
-    "insName",
+    SubroutineReportStatisticsKeys.INSTANCE_NAME,
     "scenarioName",
     "n",
     "c",
@@ -84,7 +87,9 @@ def build_rpdf_comparison_df(
         return pd.DataFrame(columns=list(COMPARISON_COLUMNS))
 
     df = summary_df.copy()
-    df["insName"] = df["insName"].astype(str)
+    df[SubroutineReportStatisticsKeys.INSTANCE_NAME] = df[
+        SubroutineReportStatisticsKeys.INSTANCE_NAME
+    ].astype(str)
     df["scenarioName"] = df["scenario"].astype(str).map(_scenario_short_name)
     df["n"] = df["job_count"]
     df["c"] = df["stage_count"]
@@ -100,13 +105,15 @@ def build_rpdf_comparison_df(
         ]
         bdf = bdf[keep_cols].rename(
             columns={
-                baseline_instance_col: "insName",
+                baseline_instance_col: SubroutineReportStatisticsKeys.INSTANCE_NAME,
                 baseline_obj_val_col: "BKS",
                 baseline_obj_bound_col: "LB",
             }
         )
-        bdf = bdf.drop_duplicates(subset=["insName"], keep="first")
-        df = df.merge(bdf, on="insName", how="left")
+        bdf = bdf.drop_duplicates(
+            subset=[SubroutineReportStatisticsKeys.INSTANCE_NAME], keep="first"
+        )
+        df = df.merge(bdf, on=SubroutineReportStatisticsKeys.INSTANCE_NAME, how="left")
     else:
         df["BKS"] = float("nan")
         df["LB"] = float("nan")
@@ -126,7 +133,7 @@ def build_rpdf_comparison_df(
     df["time%"] = df["elapsedTime"] / df["timelimit"]
 
     out = df[list(COMPARISON_COLUMNS)].sort_values(
-        ["insName", "scenarioName"]
+        [SubroutineReportStatisticsKeys.INSTANCE_NAME, "scenarioName"]
     )
     return out.reset_index(drop=True)
 
