@@ -1,0 +1,41 @@
+# Full-experiment metadata: Vallada & Ruiz (2010) GAPR vs GAPRsu
+# over all 540 VRM instances, with the paper's parameters (P_size=30 etc.,
+# identical to configs_vr_2010_gapr/subroutine_flow_20260120.yaml).
+#
+#   GAPR   = paper's plain GAPR  -> speedup: none   (no insertion speedup)
+#   GAPRsu = paper's speedup GAPR -> speedup: vr2010 (§3.3 prefix bookkeeping)
+
+# Input data configuration
+vrm_common_params_rel_path: "resources/vrm_common_params.yaml"
+baseline_csv_path: "resources/vrm_ref/naderi2023CPOCodeResult.csv"
+input_dir: "resources/vrm"
+first: 1
+last: 540
+benchmark_filename_format: "{}.txt"
+
+# Scenario configurations
+dicts_of_i_o_data_path:
+  - stopping_criteria_rel_path: "configs_vr_2010_gapr_none/stopping_criteria.yaml"
+    subroutine_flow_rel_path: "configs_vr_2010_gapr_none/subroutine_flow_20260120.yaml"
+    output_dir : "configs_vr_2010_gapr_none/20260120"
+    description: "GAPR (none, p=30)"
+  - stopping_criteria_rel_path: "configs_vr_2010_gapr_vr2010/stopping_criteria.yaml"
+    subroutine_flow_rel_path: "configs_vr_2010_gapr_vr2010/subroutine_flow_20260120.yaml"
+    output_dir : "configs_vr_2010_gapr_vr2010/20260120"
+    description: "GAPRsu (vr2010, p=30)"
+
+# Output and Logging configuration
+output_dir_scenarios: "Outputs_scenarios"
+scenario_log_filename: "multi_scenario_runner.log"
+result_dir_name: "results"
+
+# Execution configuration
+instance_worker_cnt: 24
+
+# Analysis and plotting options
+draw_gantt: false
+painter_thread_cnt: 8
+result_gantt_filename_format: "{}_result_gantt.svg"
+draw_progress_plot: true
+progress_plot_filename_format: "{}_progress_plot.png"
+drop_first_values_percent: 0.0

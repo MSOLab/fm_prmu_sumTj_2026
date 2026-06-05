@@ -2,7 +2,7 @@ import argparse
 import logging
 import random
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
@@ -11,11 +11,22 @@ from schore.schedule_examples.shop.flow import FlowshopOperation, FlowshopSchedu
 from flowshop_tardiness.controller.flowshop_batch_eval import (
     PermutationFlowshopSubseqEvaluator,
 )
+from flowshop_tardiness.controller.flowshop_vr2010_eval import (
+    NaiveInsertionEvaluator,
+    VR2010InsertionEvaluator,
+)
 from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite
 from flowshop_tardiness.report import FsSubroutineReport
 
 from ..genetic_algorithm_model import PopulationManager
 from .base_flowshop_controller import BaseFlowshopController
+
+# Selectable insertion-evaluation speedup for GAPR (see flowshop_vr2010_eval).
+#   "fv2020": Fernandez-Viagas et al. (2020), the modern default.
+#   "vr2010": Vallada & Ruiz (2010) §3.3 prefix bookkeeping (faithful).
+#   "none":   no speedup, full recompute per position.
+InsertionSpeedup = Literal["fv2020", "vr2010", "none"]
+_INSERTION_SPEEDUPS: tuple[InsertionSpeedup, ...] = ("fv2020", "vr2010", "none")
 
 
 class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
@@ -522,6 +533,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         pressure: float | None = None,
         P_m: float | None = None,
         P_ls: float | None = None,
+        speedup: InsertionSpeedup = "fv2020",
     ):
         """Genetic Algorithm with Path Relinking for Flowshop Tardiness by Vallada and Ruiz (2010).
 
@@ -536,6 +548,12 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
                 If None, defaults to 0.02. Defaults to None.
             P_ls (float | None, optional): Local search probability.
                 If None, defaults to 0.15. Defaults to None.
+            speedup (InsertionSpeedup, optional): Insertion-evaluation speedup
+                used by local search and NEH construction. All three modes
+                produce identical objective values and differ only in CPU cost.
+                "fv2020" (default) = Fernandez-Viagas et al. (2020);
+                "vr2010" = Vallada & Ruiz (2010) §3.3 prefix bookkeeping;
+                "none" = no speedup. Defaults to "fv2020".
         """
         # --- defaults ---
         if P_size is None:
@@ -549,12 +567,19 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         if P_ls is None:
             P_ls = 0.15
 
+        # Literal is not enforced at runtime (routix dispatches via getattr/**kwargs),
+        # so validate explicitly.
+        if speedup not in _INSERTION_SPEEDUPS:
+            raise ValueError(f"Unknown speedup option: {speedup!r}")
+        self._insertion_speedup: InsertionSpeedup = speedup
+
         _pressure = self._normalize_pressure(pressure)
 
         sub_timer = ElapsedTimer()
         logging.info(
             "Starting GAPR method with parameters: "
-            f"P_size={P_size}, Div={div}, Pressure={_pressure}, P_m={P_m}, P_ls={P_ls}"
+            f"P_size={P_size}, Div={div}, Pressure={_pressure}, "
+            f"P_m={P_m}, P_ls={P_ls}, speedup={speedup}"
         )
         # Statistics
         stats: dict[str, Any] = {
@@ -840,7 +865,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         else:
             _job_id_seq = job_id_seq
 
-        evaluator, job_id_to_idx, _ = self._get_new_acc_evaluator()
+        evaluator, job_id_to_idx, _ = self._get_insertion_evaluator()
 
         # convert current sequence to index sequence
         pi_idx = [job_id_to_idx[j] for j in seq_now]
@@ -850,18 +875,17 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         best_pos_list, _ = evaluator.get_best_position(pi_idx, sigma_idx_seq)
         return best_pos_list
 
-    def _get_new_acc_evaluator(self):
-        """
-        Build (and cache) a PermutationFlowshopSubseqEvaluator that uses 0-based
-        integer job indices internally.
+    def _build_pdue_idx(
+        self,
+    ) -> tuple[list[list[int]], list[int], dict[str, int], dict[int, str]]:
+        """Build 0-based ``(p, due, job_id_to_idx, idx_to_job_id)`` for evaluators.
+
+        ``p[i][j]`` is the processing time of job index ``j`` on stage index
+        ``i``; ``due[j]`` is its due date.
 
         Returns:
-            (evaluator, job_id_to_idx, idx_to_job_id)
+            (p, due, job_id_to_idx, idx_to_job_id)
         """
-        # cache on controller instance to avoid rebuilding on every call
-        if hasattr(self, "_new_acc_cache") and self._new_acc_cache is not None:
-            return self._new_acc_cache
-
         job_ids: list[str] = list(self.instance.job_id_list)
         stage_ids: list[str] = list(self.stage_ids)
 
@@ -884,12 +908,39 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
             j = job_id_to_idx[jid]
             due[j] = int(self.instance.job_2_duedate_map[jid])
 
-        evaluator = PermutationFlowshopSubseqEvaluator(p, due)
+        return p, due, job_id_to_idx, idx_to_job_id
 
-        self._new_acc_cache: tuple[
-            PermutationFlowshopSubseqEvaluator, dict[str, int], dict[int, str]
-        ] = (evaluator, job_id_to_idx, idx_to_job_id)
-        return self._new_acc_cache
+    def _get_insertion_evaluator(self):
+        """
+        Build (and cache, per speedup mode) the single-job insertion evaluator
+        selected by ``self._insertion_speedup`` (default "fv2020"). All three
+        evaluators share the same ``get_best_position`` contract and use 0-based
+        integer job indices internally.
+
+        Returns:
+            (evaluator, job_id_to_idx, idx_to_job_id)
+        """
+        mode: InsertionSpeedup = getattr(self, "_insertion_speedup", "fv2020")
+        cache: dict[InsertionSpeedup, tuple] = (
+            getattr(self, "_insertion_eval_cache", None) or {}
+        )
+        self._insertion_eval_cache = cache
+        if mode in cache:
+            return cache[mode]
+
+        p, due, job_id_to_idx, idx_to_job_id = self._build_pdue_idx()
+
+        if mode == "fv2020":
+            evaluator = PermutationFlowshopSubseqEvaluator(p, due)
+        elif mode == "vr2010":
+            evaluator = VR2010InsertionEvaluator(p, due)
+        elif mode == "none":
+            evaluator = NaiveInsertionEvaluator(p, due)
+        else:
+            raise ValueError(f"Unknown speedup option: {mode!r}")
+
+        cache[mode] = (evaluator, job_id_to_idx, idx_to_job_id)
+        return cache[mode]
 
     # End NEHedd helper (not used in GA-EDD)
 
@@ -983,8 +1034,8 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         if n <= 2:
             return solution
 
-        # Get NEW evaluator + id<->idx mapping (cached)
-        evaluator, job_id_to_idx, idx_to_job_id = self._get_new_acc_evaluator()
+        # Get the selected insertion evaluator + id<->idx mapping (cached)
+        evaluator, job_id_to_idx, idx_to_job_id = self._get_insertion_evaluator()
 
         # Current solution in idx form
         pi_idx_full: list[int] = [job_id_to_idx[j] for j in solution]

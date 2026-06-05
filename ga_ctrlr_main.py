@@ -25,7 +25,7 @@ from ga_ctrlr_multi_scenario import FsMultiScenarioRunner
 from ga_ctrlr_single_instance import FsSingleInstanceRunner
 from output_filenames import OutputFilenames
 
-MAIN_METADATA_FILENAME = "ga_ctrlr_metadata.yaml"
+MAIN_METADATA_FILENAME = "ga_ctrlr_metadata_gapr_2010.yaml"
 
 def main():
     e_timer = ElapsedTimer()
