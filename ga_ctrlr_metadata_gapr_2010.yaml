@@ -1,6 +1,6 @@
 # Full-experiment metadata: Vallada & Ruiz (2010) GAPR vs GAPRsu
 # over all 540 VRM instances, with the paper's parameters (P_size=30 etc.,
-# identical to configs_vr_2010_gapr/subroutine_flow_20260120.yaml).
+# identical to configs_vr_2010_gapr_fv2020/subroutine_flow_20260120.yaml).
 #
 #   GAPR   = paper's plain GAPR  -> speedup: none   (no insertion speedup)
 #   GAPRsu = paper's speedup GAPR -> speedup: vr2010 (§3.3 prefix bookkeeping)
