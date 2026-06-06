@@ -25,7 +25,8 @@ from ga_ctrlr_multi_scenario import FsMultiScenarioRunner
 from ga_ctrlr_single_instance import FsSingleInstanceRunner
 from output_filenames import OutputFilenames
 
-MAIN_METADATA_FILENAME = "ga_ctrlr_metadata_gapr_2010.yaml"
+MAIN_METADATA_FILENAME = "ga_ctrlr_metadata_gapr_20reps.yaml"
+
 
 def main():
     e_timer = ElapsedTimer()
@@ -112,9 +113,7 @@ def main():
         stopping_criteria_dict = read_yaml(path_config.stopping_criteria_rel_path)
 
         # Validate the flow if FULL_RUN or RESUME
-        validator = SubroutineFlowValidator(
-            FlowshopTardinessGeneticAlgorithmController
-        )
+        validator = SubroutineFlowValidator(FlowshopTardinessGeneticAlgorithmController)
         if run_mode in {RunMode.FULL_RUN, RunMode.RESUME}:
             try:
                 validator.validate(DynamicDataObject.from_obj(subroutine_flow_obj))

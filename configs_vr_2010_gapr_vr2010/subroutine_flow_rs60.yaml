@@ -1,0 +1,9 @@
+- method: set_random_seed
+  seed: 60
+- method: gapr
+  P_size: 30
+  div: 0.4
+  pressure: 0.3
+  P_m: 0.02
+  P_ls: 0.15
+  speedup: vr2010
