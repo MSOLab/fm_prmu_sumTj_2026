@@ -3,7 +3,45 @@ vrm_common_params_rel_path: "resources/vrm_common_params.yaml"
 baseline_csv_path: "resources/vrm_ref/naderi2023CPOCodeResult.csv"
 input_dir: "resources/vrm"
 benchmark_idx_list:
-  - 1
+  # - 1
+  - 401
+  - 402
+  - 403
+  - 404
+  - 405
+  - 411
+  - 412
+  - 413
+  - 414
+  - 415
+  - 416
+  - 417
+  - 418
+  - 419
+  - 420
+  - 461
+  - 462
+  - 463
+  - 464
+  - 465
+  - 471
+  - 472
+  - 473
+  - 474
+  - 475
+  - 476
+  - 477
+  - 478
+  - 479
+  - 480
+  - 533
+  - 534
+  - 535
+  - 536
+  - 537
+  - 538
+  - 539
+  - 540
 # first: 1
 # last: 540
 benchmark_filename_format: "{}.txt"
