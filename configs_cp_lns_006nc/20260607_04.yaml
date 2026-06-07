@@ -1,0 +1,16 @@
+- method: set_random_seed
+  seed: 42
+- method: initialize_by_nehms
+- method: compute_preemptive_last_stage_lb
+  init_method: lb_only
+- method: incremental_pw_cp
+  start_batch_size: 3
+  end_batch_size: 8
+  max_time_per_add: 10
+  solver_thread_cnt: 1
+  improvement_by_insertion_after_every_pw_cp: true
+  repeat_at_end_batch_size_while_improving: true
+# - method: set_cp_model_as_base_cp_model
+# - method: solve_base_cp_model
+#   computational_time: null
+#   solver_thread_cnt: 1

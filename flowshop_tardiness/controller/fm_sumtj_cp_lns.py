@@ -1628,3 +1628,131 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                         f"[Repeat] Max no-improve reached ({_max_no_improve}). Stopping repeats."
                     )
                     break
+
+    def incremental_pw_cp(
+        self,
+        start_batch_size: int,
+        end_batch_size: int,
+        max_time_per_add: float | None = None,
+        solver_thread_cnt: int | None = None,
+        improvement_by_insertion_after_every_pw_cp: bool = True,
+        repeat_at_end_batch_size_while_improving: bool = True,
+    ) -> None:
+        """Runs pw_cp with incrementally increasing batch size.
+
+        Executes ``pw_cp`` sequentially for each batch size from
+        ``start_batch_size`` to ``end_batch_size`` (inclusive), optionally
+        followed by ``improve_by_insertion(subseq_size=1, max_passes=1)``
+        after every ``pw_cp`` step. Stops early only when the global stopping
+        condition is met; no improvement-based stopping criterion is applied
+        during the ramp-up.
+
+        When ``repeat_at_end_batch_size_while_improving`` is True, after the
+        ramp-up reaches ``end_batch_size`` an extra polish phase repeats the
+        ``end_batch_size`` step while the incumbent objective keeps strictly
+        improving (same logic as ``repeat_while_improvement``), stopping on the
+        first non-improving repetition or when the global stopping condition is
+        met.
+
+        Each step is dispatched via ``temporarily_extended_context`` +
+        ``_run_flow`` so that per-step ``_obj_log.yaml`` paths are distinct.
+
+        Args:
+            start_batch_size (int): Starting batch size (>= 1).
+            end_batch_size (int): Ending batch size, inclusive
+                (>= start_batch_size).
+            max_time_per_add (float | None): Time limit per CP solve call
+                inside ``pw_cp``. Passed through unchanged. Defaults to None.
+            solver_thread_cnt (int | None): Number of CP solver threads.
+                Passed through to ``pw_cp`` unchanged. Defaults to None.
+            improvement_by_insertion_after_every_pw_cp (bool): When True,
+                runs ``improve_by_insertion(subseq_size=1, max_passes=1)``
+                after each ``pw_cp`` call. Defaults to True.
+            repeat_at_end_batch_size_while_improving (bool): When True, repeats
+                the ``end_batch_size`` step after the ramp-up while the
+                incumbent objective strictly improves. Defaults to True.
+
+        Raises:
+            ValueError: If ``start_batch_size < 1`` or
+                ``end_batch_size < start_batch_size``.
+        """
+        if start_batch_size < 1:
+            raise ValueError(f"start_batch_size must be >= 1, got {start_batch_size}")
+        if end_batch_size < start_batch_size:
+            raise ValueError(
+                f"end_batch_size ({end_batch_size}) must be >= start_batch_size ({start_batch_size})"
+            )
+
+        subroutine_name = "incr_pw_cp"
+
+        def build_steps(batch_size: int) -> list[dict]:
+            steps: list[dict] = [
+                {
+                    "method": "pw_cp",
+                    "params": {
+                        "added_batch_size": batch_size,
+                        "profile_fixed_cnt": 0,
+                        "step_size_on_improve": batch_size,
+                        "step_size_on_no_improve": 1,
+                        "max_time_per_add": max_time_per_add,
+                        "solver_thread_cnt": solver_thread_cnt,
+                    },
+                },
+            ]
+            if improvement_by_insertion_after_every_pw_cp:
+                steps.append(
+                    {
+                        "method": "improve_by_insertion",
+                        "params": {"subseq_size": 1, "max_passes": 1},
+                    }
+                )
+            return steps
+
+        def run_step(batch_size: int) -> None:
+            with self.temporarily_extended_context(subroutine_name):
+                self._run_flow(DynamicDataObject.from_obj(build_steps(batch_size)))
+
+        for batch_size in range(start_batch_size, end_batch_size + 1):
+            if self.is_stopping_condition():
+                logging.info(
+                    f"[IncrementalPwCp] Stopping condition met at batch_size={batch_size}."
+                )
+                break
+            logging.info(f"[IncrementalPwCp] batch_size={batch_size}")
+            run_step(batch_size)
+
+        if not repeat_at_end_batch_size_while_improving:
+            return
+
+        # Polish phase: keep repeating the end_batch_size step while the
+        # incumbent objective strictly improves (same logic as
+        # repeat_while_improvement).
+        incumbent_sol = self.solution_manager.get_incumbent()
+        obj_before = (
+            math.inf if incumbent_sol is None else self.get_obj_value(incumbent_sol)
+        )
+        while True:
+            if self.is_stopping_condition():
+                logging.info(
+                    "[IncrementalPwCp] Stopping condition met during end-batch repeat."
+                )
+                break
+            logging.info(
+                f"[IncrementalPwCp] Repeating end_batch_size={end_batch_size} while improving."
+            )
+            run_step(end_batch_size)
+
+            incumbent_sol = self.solution_manager.get_incumbent()
+            obj_after = (
+                math.inf if incumbent_sol is None else self.get_obj_value(incumbent_sol)
+            )
+            if float_a_stl_b(obj_after, obj_before):
+                logging.info(
+                    f"[IncrementalPwCp] Improvement ({obj_before} -> {obj_after}). Continuing."
+                )
+                obj_before = obj_after
+            else:
+                logging.info(
+                    f"[IncrementalPwCp] No improvement ({obj_before} -> {obj_after}). Stopping end-batch repeat."
+                )
+                break
