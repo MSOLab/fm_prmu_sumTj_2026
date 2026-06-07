@@ -1,0 +1,46 @@
+# Input data configuration
+vrm_common_params_rel_path: "resources/vrm_common_params.yaml"
+baseline_csv_path: "resources/vrm_ref/naderi2023CPOCodeResult.csv"
+input_dir: "resources/vrm"
+benchmark_idx_list:
+  # - 1
+  - 416
+  - 417
+  - 418
+  - 419
+  - 420
+  - 476
+  - 477
+  - 478
+  - 479
+  - 480
+# first: 1
+# last: 540
+benchmark_filename_format: "{}.txt"
+
+# Scenario configurations
+dicts_of_i_o_data_path:
+  - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
+    subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_01.yaml"
+    output_dir: "20260607_01"
+    description: "NEH-MS -> repeat(SW-CP(7,0,7,1,10,1), II(1))"
+  - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
+    subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_02.yaml"
+    output_dir: "20260607_02"
+    description: "NEH-MS -> repeat(SW-CP(8,0,8,1,15,1), II(1))"
+
+# Output and Logging configuration
+output_dir_scenarios: "Outputs_scenarios"
+scenario_log_filename: "multi_scenario_runner.log"
+result_dir_name: "results"
+
+# Execution configuration
+instance_worker_cnt: 10
+
+# Analysis and plotting options
+draw_gantt: false
+painter_thread_cnt: 8
+result_gantt_filename_format: "{}_result_gantt.svg"
+draw_progress_plot: true
+progress_plot_filename_format: "{}_progress_plot.png"
+drop_first_values_percent: 0.0
