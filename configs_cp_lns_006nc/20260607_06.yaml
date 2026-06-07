@@ -13,7 +13,7 @@
       step_size_on_no_improve: 1
       max_time_per_add: 15
       solver_thread_cnt: 1
-      refresh_deadline_every_step: false
+      refresh_deadline_every_step: true
     - method: improve_by_insertion
       subseq_size: 1
       first_improvement: false

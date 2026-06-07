@@ -1366,6 +1366,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         solver_thread_cnt: int | None = None,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
+        refresh_deadline_every_step: bool = False,
     ):
         """
         Builds a CP-guided solution using job sequence of the incumbent solution.
@@ -1388,6 +1389,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 Defaults to False.
             draw_gantt (bool, optional): Whether to save Gantt charts for intermediate and final solutions.
                 Defaults to False.
+            refresh_deadline_every_step (bool, optional): When False (default), the per-stage LCT upper
+                bound is derived once from the initial right-justified reference schedule (current
+                behavior; guarantees only sweep-level non-increase). When True, LCT is recomputed
+                every iteration for per-iteration monotonicity. Defaults to False.
         """
         sub_timer = ElapsedTimer()
 
@@ -1422,6 +1427,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             solver_thread_cnt=solver_thread_cnt,
             error_if_infeasible=error_if_infeasible,
             draw_gantt=draw_gantt,
+            refresh_deadline_every_step=refresh_deadline_every_step,
         )
         obj_value = self.get_obj_value(result.schedule)
         logging.info(f"PW-CP done with total tardiness {obj_value}")
@@ -1637,6 +1643,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         solver_thread_cnt: int | None = None,
         improvement_by_insertion_after_every_pw_cp: bool = True,
         repeat_at_end_batch_size_while_improving: bool = True,
+        refresh_deadline_every_step: bool = False,
     ) -> None:
         """Runs pw_cp with incrementally increasing batch size.
 
@@ -1671,6 +1678,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             repeat_at_end_batch_size_while_improving (bool): When True, repeats
                 the ``end_batch_size`` step after the ramp-up while the
                 incumbent objective strictly improves. Defaults to True.
+            refresh_deadline_every_step (bool): Passed through to each ``pw_cp`` step. When True,
+                pw_cp recomputes the per-stage LCT bound every iteration for per-iteration
+                monotonicity. Defaults to False (current behavior).
 
         Raises:
             ValueError: If ``start_batch_size < 1`` or
@@ -1696,6 +1706,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                         "step_size_on_no_improve": 1,
                         "max_time_per_add": max_time_per_add,
                         "solver_thread_cnt": solver_thread_cnt,
+                        "refresh_deadline_every_step": refresh_deadline_every_step,
                     },
                 },
             ]

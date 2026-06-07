@@ -159,6 +159,46 @@ def test_run_two_batches(pw_cp, mock_context):
     assert mock_context.solve_cp_model_2.call_count >= 2
 
 
+def test_run_refresh_deadline_every_step(pw_cp, mock_context):
+    """Smoke-test the refresh_deadline_every_step=True LCT branch.
+
+    With added_batch_size=1 and 2 jobs, the first iteration has
+    last_job_is_included=False, so the per-iteration LCT recomputation
+    (_make_all_dispatched + push_back) path is exercised.
+    """
+    job_sequence = ["J1", "J2"]
+
+    def build_side_effect(sub_instance, **kwargs):
+        m_mdl = MagicMock()
+        m_params = MagicMock(spec=Params)
+        m_params.j_list = list(range(len(sub_instance.job_id_list)))
+        m_vars = MagicMock(spec=IndirectPrecVars)
+        m_vars.total_tardiness = MagicMock()
+        m_vars.sum_latest_completion = MagicMock()
+        m_vars.prec = {}
+        for j1, j2 in permutations(m_params.j_list, 2):
+            m_vars.prec[j1, j2] = 1
+            m_vars.prec[j2, j1] = 0
+        return m_mdl, m_params, m_vars
+
+    pw_cp.builder = MagicMock()
+    pw_cp.builder.build.side_effect = build_side_effect
+
+    mock_context.solver.Value.side_effect = lambda x: x
+    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: params.j_list
+
+    result = pw_cp.run(
+        job_sequence=job_sequence,
+        added_batch_size=1,
+        solver_thread_cnt=1,
+        refresh_deadline_every_step=True,
+    )
+
+    assert isinstance(result, PwCpResult)
+    assert len(result.schedule.get_last_stage_job_list()) == 2
+    assert mock_context.solve_cp_model_2.call_count >= 2
+
+
 def test_log_snapshot(pw_cp, mock_context):
     """Test that _log_snapshot actually records objective values in sub_obj_store."""
 

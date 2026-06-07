@@ -3,43 +3,49 @@ vrm_common_params_rel_path: "resources/vrm_common_params.yaml"
 baseline_csv_path: "resources/vrm_ref/naderi2023CPOCodeResult.csv"
 input_dir: "resources/vrm"
 benchmark_idx_list:
-  # - 1
-  - 416
-  - 417
-  - 418
-  - 419
-  - 420
-  - 476
-  - 477
-  - 478
-  - 479
-  - 480
+  - 1
 # first: 1
 # last: 540
 benchmark_filename_format: "{}.txt"
 
 # Scenario configurations
 dicts_of_i_o_data_path:
-  - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
-    subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_00.yaml"
-    output_dir: "20260607_00"
-    description: "NEH-MS, LBinit(NEH-MS)"
+  # - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
+  #   subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_00.yaml"
+  #   output_dir: "20260607_00"
+  #   description: "NEH-MS, LBinit(NEH-MS)"
   # - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
   #   subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_01.yaml"
   #   output_dir: "20260607_01"
-  #   description: "NEH-MS -> repeat(SW-CP(7,0,7,1,10,1), II(1))"
+  #   description: "NEH-MS -> repeat(SW-CP(7,0,7,1,10,1,false), II(1))"
   # - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
   #   subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_02.yaml"
   #   output_dir: "20260607_02"
-  #   description: "NEH-MS -> repeat(SW-CP(8,0,8,1,15,1), II(1))"
+  #   description: "NEH-MS -> repeat(SW-CP(8,0,8,1,15,1,false), II(1))"
   # - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
   #   subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_03.yaml"
   #   output_dir: "20260607_03"
-  #   description: "NEH-MS -> ISW-CP(5,7,10,1,true)"
+  #   description: "NEH-MS -> ISW-CP(5,7,10,1,false,true)"
   # - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
   #   subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_04.yaml"
   #   output_dir: "20260607_04"
-  #   description: "NEH-MS -> ISW-CP(3,8,10,1,true)"
+  #   description: "NEH-MS -> ISW-CP(3,8,10,1,false,true)"
+  - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
+    subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_05.yaml"
+    output_dir: "20260607_05"
+    description: "NEH-MS -> repeat(SW-CP(7,0,7,1,10,1,true), II(1))"
+  - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
+    subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_06.yaml"
+    output_dir: "20260607_06"
+    description: "NEH-MS -> repeat(SW-CP(8,0,8,1,15,1,true), II(1))"
+  - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
+    subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_07.yaml"
+    output_dir: "20260607_07"
+    description: "NEH-MS -> ISW-CP(5,7,10,1,true,true)"
+  - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
+    subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_08.yaml"
+    output_dir: "20260607_08"
+    description: "NEH-MS -> ISW-CP(3,8,10,1,true,true)"
 
 # Output and Logging configuration
 output_dir_scenarios: "Outputs_scenarios"

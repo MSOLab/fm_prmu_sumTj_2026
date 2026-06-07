@@ -219,6 +219,7 @@ class PwCpConstructor:
         solver_thread_cnt: int | None = None,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
+        refresh_deadline_every_step: bool = False,
     ) -> PwCpResult:
         """
         Run the Prefix-Window CP (PW-CP) algorithm.
@@ -245,6 +246,11 @@ class PwCpConstructor:
                 Defaults to False.
             draw_gantt (bool, optional): Whether to save Gantt charts for intermediate and final solutions.
                 Defaults to False.
+            refresh_deadline_every_step (bool, optional): When False (default), the per-stage LCT
+                upper bound is derived once from the initial right-justified reference schedule S^R
+                (current behavior; guarantees only sweep-level non-increase). When True, S^R/LCT is
+                recomputed every iteration from the current state (committed CP order + remaining
+                incumbent order), right-justified, which yields per-iteration monotonicity. Defaults to False.
 
         Returns:
             PwCpResult: The result containing the final schedule, objective value, and log store.
@@ -326,6 +332,7 @@ class PwCpConstructor:
                 max_time_per_add=max_time_per_add,
                 error_if_infeasible=error_if_infeasible,
                 draw_gantt=draw_gantt,
+                refresh_deadline_every_step=refresh_deadline_every_step,
             )
         finally:
             self._st = None
@@ -624,6 +631,7 @@ class PwCpConstructor:
         max_time_per_add: float | None = None,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
+        refresh_deadline_every_step: bool = False,
     ) -> PwCpResult:
         """
         Main loop for the PW-CP algorithm.
@@ -633,7 +641,7 @@ class PwCpConstructor:
 
         Args:
             given_sol (PermutationFlowshopScheduleLite): The initial schedule used as a reference
-                for LCT estimation (push-back mechanism).
+                for LCT estimation (push-back mechanism). Used when refresh_deadline_every_step is False.
             solver_thread_cnt (int | None, optional): Number of threads for the CP solver.
                 Defaults to None (1 thread).
             max_time_per_add (float | None, optional): Time limit for each CP solving iteration.
@@ -641,6 +649,9 @@ class PwCpConstructor:
             error_if_infeasible (bool, optional): Whether to raise an error if infeasibility occurs.
                 Defaults to False.
             draw_gantt (bool, optional): Whether to save Gantt charts. Defaults to False.
+            refresh_deadline_every_step (bool, optional): When True, recomputes the right-justified
+                reference schedule S^R every iteration from the current state for per-iteration
+                monotonicity. When False (default), uses the fixed given_sol (current behavior).
 
         Returns:
             PwCpResult: The final result of the PW-CP run.
@@ -706,9 +717,17 @@ class PwCpConstructor:
                 stage_2_est_map = {}
 
             if not st.last_job_is_included:
-                stage_2_lct_map = given_sol.get_stage_2_start_time_map(
-                    st.not_added_first_job
-                )
+                if refresh_deadline_every_step:
+                    # 직전 상태(committed CP순서 + remaining incumbent순서)를 right-justify하여
+                    # 현재 tardiness를 보존하는 기준에서 LCT를 산출 -> iteration 단위 단조성.
+                    rj_ref = self._make_all_dispatched(st.time_fixed_sol, st.time_fixed_pool)
+                    rj_ref.push_back_tail_jobs_keep_tardiness(self.job_cnt)
+                    stage_2_lct_map = rj_ref.get_stage_2_start_time_map(st.not_added_first_job)
+                else:
+                    # 고정 S^R(run() 1회 계산)에서 LCT -> sweep 단위 보장(현행).
+                    stage_2_lct_map = given_sol.get_stage_2_start_time_map(
+                        st.not_added_first_job
+                    )
             else:
                 stage_2_lct_map = {}
 
