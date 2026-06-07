@@ -360,24 +360,31 @@ class PwCpConstructor:
         picked_obj_val: int,
         note: str,
         timestamp: float,
-        iter_report: CpsatSolverReport | None = None,
-        draw_gantt: bool = False,
+        bound_val: int | None = None,
     ) -> None:
-        """Log a snapshot of the current state.
+        """Record one iteration snapshot into the sub objective store.
 
         Args:
-            picked_obj_val (int): The objective value of the picked solution.
-            note (str): A note to attach to the log.
+            picked_obj_val (int): Total tardiness of the fully-dispatched schedule
+                (time-fixed prefix + remaining jobs). Stored in the
+                "ObjVal after dispatch" series.
+            note (str): A note to attach to the log entry (number of fixed jobs).
             timestamp (float): The timestamp for the log entry.
-                If None, the current subroutine timer's elapsed time is used.
-                Defaults to None.
-            iter_report (CpsatSolverReport | None, optional): CP solver report for the iteration.
-                If provided, objective bounds are extracted.
-                Defaults to None.
+            bound_val (int | None, optional): Total tardiness of the time-fixed
+                prefix only, i.e. the objective *before* dispatching the remaining
+                tail. Stored in the "ObjVal before dispatch" series so the tail
+                contribution (= after - before), which the CP subproblem never
+                optimizes, is reviewable afterwards. Defaults to None.
         """
         sub_obj_store = self._require_state().sub_obj_store
         sub_obj_store.add_obj_value(timestamp, picked_obj_val, is_maximize=None)
-        sub_obj_store.add_last_timestamp_note(note, obj_value_is_valid=True)
+        if bound_val is not None:
+            sub_obj_store.add_obj_bound(timestamp, bound_val, is_maximize=None)
+        sub_obj_store.add_last_timestamp_note(
+            note,
+            obj_value_is_valid=True,
+            obj_bound_is_valid=bound_val is not None,
+        )
 
     def _solve_cp_model_lexico_for_batch(
         self,
@@ -649,6 +656,16 @@ class PwCpConstructor:
         # Last step size used
         last_step_size: int = st.added_batch_size
 
+        # --- Monotonicity diagnostics ---
+        # Each committed batch is kept within its per-stage window [EST, LCT]
+        # derived from the right-justified reference schedule S^R, which keeps the
+        # realized objective <= the incumbent pw_cp started from. That does NOT make
+        # the internal trajectory monotone: S^R's slack (vs already-improved states)
+        # can be spent by the phase-2 secondary objective, raising the last-stage
+        # makespan and delaying the tail. Track the previous fully-dispatched
+        # objective so any such cross-iteration increase is flagged and explained.
+        prev_full_obj_val: int | None = None
+
         # Repeat until no more jobs to optimize
         while len(st.remaining_jobs) > (step_size - last_step_size):
             st.iter_idx += 1
@@ -781,10 +798,11 @@ class PwCpConstructor:
 
             # 2) overflow -> commit into time-fixed
             overflow_cnt: int = len(st.profile_fixed_jobs) - self.profile_fixed_cnt
+            newly_committed_jobs: list[str] = []
             if overflow_cnt > 0:
-                to_commit: list[str] = st.profile_fixed_jobs[:overflow_cnt]
+                newly_committed_jobs = st.profile_fixed_jobs[:overflow_cnt]
                 st.profile_fixed_jobs = st.profile_fixed_jobs[overflow_cnt:]
-                st.extend_time_fixed_jobs(to_commit)
+                st.extend_time_fixed_jobs(newly_committed_jobs)
 
             # 3) remaining_jobs update
             st.remaining_jobs = [
@@ -796,10 +814,105 @@ class PwCpConstructor:
                 ]
 
             # --- Log ---
-            # Create a full schedule
+            # Realized objective = total tardiness of the fully-dispatched schedule:
+            #   time-fixed prefix (CP-decided order) + remaining jobs (incumbent order).
             full_sol = self._make_all_dispatched(st.time_fixed_sol, st.time_fixed_pool)
             full_obj_val = full_sol.get_total_tardiness()
             note = str(len(st.time_fixed_pool) + len(st.profile_fixed_jobs))
+
+            # --- Monotonicity diagnostics ---
+            # pw_cp is non-increasing *relative to the incumbent it started from*:
+            # each committed batch is bounded, on every stage, by its LCT = the next
+            # job's start in the right-justified reference schedule S^R, which keeps
+            # the greedily dispatched tail within S^R. That bound is NECESSARY but
+            # not sufficient for monotonicity *across iterations*: S^R is computed
+            # once from the original incumbent, so it carries slack relative to
+            # already-improved intermediate states. The phase-2 secondary objective
+            # (minimize the sum of per-stage makespans) can spend that slack by
+            # raising the LAST-stage makespan to lower earlier stages, delaying the
+            # tail and raising total tardiness vs the previous iteration (while still
+            # staying <= the original incumbent). So an increase here is a property
+            # of the current design, not a window-bound violation -- but verify the
+            # bound really holds and record what the reorder spent.
+            committed_obj = st.time_fixed_sol.get_total_tardiness()
+            tail_obj = full_obj_val - committed_obj  # not seen by the CP objective
+            cp_obj = getattr(iter_report, "obj_value", None)
+
+            # Sanity check: makespan of the last committed job must be <= LCT on
+            # every stage. A violation here would be a genuine bug.
+            makespan_after = st.time_fixed_sol.get_stage_2_makespan_map()
+            window_violations: list[tuple[str, int, int]] = [
+                (stage_name, makespan_after[stage_name], lct_i)
+                for stage_name, lct_i in stage_2_lct_map.items()
+                if stage_name in makespan_after and makespan_after[stage_name] > lct_i
+            ]
+
+            logging.info(
+                "(iter %d) full_obj=%d [committed=%d + tail=%d] "
+                "cp(committed+window)=%s newly_committed=%d window_violations=%d",
+                st.iter_idx,
+                full_obj_val,
+                committed_obj,
+                tail_obj,
+                cp_obj,
+                len(newly_committed_jobs),
+                len(window_violations),
+            )
+
+            if window_violations:
+                logging.warning(
+                    "(iter %d) WINDOW BOUND VIOLATED on %d stage(s) (committed makespan "
+                    "> LCT): %s. The bound must hold, so this is a genuine bug. "
+                    "newly_committed=%s",
+                    st.iter_idx,
+                    len(window_violations),
+                    window_violations[:10],
+                    newly_committed_jobs,
+                )
+
+            if prev_full_obj_val is not None and full_obj_val > prev_full_obj_val:
+                # Smoking gun: last-stage makespan of the SAME committed jobs in
+                # incumbent order vs the CP-chosen order (both within LCT). The
+                # difference is the S^R slack the reorder spent on the last stage.
+                last_stage = ctx.stage_ids[-1] if ctx.stage_ids else None
+                cp_msp_last = (
+                    makespan_after.get(last_stage) if last_stage is not None else None
+                )
+                lct_last = (
+                    stage_2_lct_map.get(last_stage) if last_stage is not None else None
+                )
+                inc_msp_last = None
+                if last_stage is not None and newly_committed_jobs:
+                    committed_set = set(newly_committed_jobs)
+                    inc_order = [j for j in self.job_sequence if j in committed_set]
+                    inc_sched = PermutationFlowshopScheduleLite(
+                        ctx.stage_ids,
+                        job_2_stage_2_p_map=ctx.job_2_stage_2_p_dict,
+                        job_2_due_map=ctx.instance.job_2_duedate_map,
+                    )
+                    inc_sched.extend_jobs(inc_order, stage_2_est_map=stage_2_est_map)
+                    inc_msp_last = inc_sched.get_stage_2_makespan_map().get(last_stage)
+                logging.warning(
+                    "(iter %d) FULL OBJECTIVE INCREASED %d -> %d (%+d) "
+                    "[committed=%d + tail=%d]; window bound %s. Reorder spent S^R slack: "
+                    "last-stage committed makespan incumbent-order=%s -> CP-order=%s "
+                    "(LCT=%s); the larger last-stage makespan delays the greedily "
+                    "dispatched tail. Still <= the starting incumbent, but non-monotone "
+                    "across iterations. Newly committed (CP order): %s.",
+                    st.iter_idx,
+                    prev_full_obj_val,
+                    full_obj_val,
+                    full_obj_val - prev_full_obj_val,
+                    committed_obj,
+                    tail_obj,
+                    "HELD" if not window_violations else "VIOLATED",
+                    inc_msp_last,
+                    cp_msp_last,
+                    lct_last,
+                    newly_committed_jobs,
+                )
+
+            prev_full_obj_val = full_obj_val
 
             if draw_gantt:
                 if len(st.time_fixed_pool) > 1:
@@ -837,8 +950,7 @@ class PwCpConstructor:
                 picked_obj_val=full_obj_val,
                 note=note,
                 timestamp=last_timestamp,
-                iter_report=iter_report,
-                draw_gantt=draw_gantt,
+                bound_val=committed_obj,
             )
 
         # ---- finalize: full sequence = committed + profile_fixed + remaining ----
