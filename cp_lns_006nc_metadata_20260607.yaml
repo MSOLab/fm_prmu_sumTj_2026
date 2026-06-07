@@ -20,6 +20,10 @@ benchmark_filename_format: "{}.txt"
 
 # Scenario configurations
 dicts_of_i_o_data_path:
+  - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
+    subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_00.yaml"
+    output_dir: "20260607_00"
+    description: "NEH-MS, LBinit(NEH-MS)"
   # - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
   #   subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_01.yaml"
   #   output_dir: "20260607_01"
@@ -28,14 +32,14 @@ dicts_of_i_o_data_path:
   #   subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_02.yaml"
   #   output_dir: "20260607_02"
   #   description: "NEH-MS -> repeat(SW-CP(8,0,8,1,15,1), II(1))"
-  - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
-    subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_03.yaml"
-    output_dir: "20260607_03"
-    description: "NEH-MS -> ISW-CP(5,7,10,1,true)"
-  - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
-    subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_04.yaml"
-    output_dir: "20260607_04"
-    description: "NEH-MS -> ISW-CP(3,8,10,1,true)"
+  # - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
+  #   subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_03.yaml"
+  #   output_dir: "20260607_03"
+  #   description: "NEH-MS -> ISW-CP(5,7,10,1,true)"
+  # - stopping_criteria_rel_path: "configs_cp_lns_006nc/stopping_criteria_t120.yaml"
+  #   subroutine_flow_rel_path: "configs_cp_lns_006nc/20260607_04.yaml"
+  #   output_dir: "20260607_04"
+  #   description: "NEH-MS -> ISW-CP(3,8,10,1,true)"
 
 # Output and Logging configuration
 output_dir_scenarios: "Outputs_scenarios"
