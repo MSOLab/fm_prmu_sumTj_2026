@@ -101,3 +101,44 @@ configs.
 - Tests: `tests/test_obj_log_trim.py`
 - Aggregation hook: `fs_multi_scenario_runner.py` (look for
   `apply_timelimit_trim` call after `raw_summary_df` is built)
+
+## Accelerate integer completion-time DP (ΣTj evaluation)
+
+### Problem
+
+The hot op across solvers is the integer completion-time recurrence
+`C[i] = max(prev[i], C[i-1]) + p[i][job]`. It is profiled via
+`cprofile_main_simulate_append.py` (targets
+`FlowshopTardinessCpLnsController._simulate_append`). The current cost is
+**Python interpreter overhead, not arithmetic throughput**: the same DP is
+duplicated in 4+ places, the CP-LNS hot path uses `dict[str,int]` keyed by
+stage names (`fm_sumtj_cp_lns.py:444-467,573-673`) and rebuilds
+`ScheduleMetric.p_ij` per insertion position (`:660-669`). No
+numba/cupy/torch/jax in the stack — pure Python lists/dicts. Integers only
+(confirmed).
+
+### Approach
+
+Compile first, GPU later. Staged, result-invariant (must not change any
+objective value by a single integer — existing equivalence tests are the
+oracle):
+
+- **Phase 1 (main, no GPU):** consolidate the DP into one `@njit` kernel
+  module (DRY single source of truth), route all evaluators through it as
+  thin wrappers, and de-dict the CP-LNS hot path (int-indexed arrays, drop
+  per-position `p_ij` rebuild). Expect ~10–100× from compilation alone.
+- **Phase 2 (optional, gated on Phase 1 measurement):** GPU
+  permutation-across batch (one thread per sequence) for GA
+  offspring/multistart scoring. Use position-independent *naive* insertion
+  on GPU, not the FV2020 boundary-walk (not position-parallel). CP-SAT /
+  CPLEX solve is out of scope.
+
+### Plan doc
+
+Full staged plan with file refs, test strategy (reuses
+`test_insertion_speedup_equivalence.py` et al. as oracle), branch + work
+order, and acceptance criteria:
+**`plans/20260613_numba_jit_dp_eval_accel.md`**.
+
+Do this on a separate branch (`20260613_numba_dp_eval`), not on the
+results-for-defence branch.
