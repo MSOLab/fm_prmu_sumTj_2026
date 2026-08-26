@@ -17,6 +17,7 @@ from .schedule_metric import ScheduleMetric
 
 REL_TOL = 1e-9  # for safe float comparisons
 InitMethod = Literal["dispatch", "neh-ms", "lb_only"]
+_INIT_METHODS: tuple[InitMethod, ...] = ("dispatch", "neh-ms", "lb_only")
 
 
 class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
@@ -1227,6 +1228,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         draw_gantt: bool = False,
     ) -> None:
         from ..graph_model.single_mc_pmtn import SingleMachinePreemptionMcf
+
+        # Literal is not enforced at runtime (routix dispatches via getattr/**kwargs),
+        # so validate explicitly.
+        if init_method not in _INIT_METHODS:
+            raise ValueError(f"Unknown init_method: {init_method!r}")
 
         sub_timer = ElapsedTimer()
         last_stage_only_mdl = SingleMachinePreemptionMcf.from_instance(self.instance)
