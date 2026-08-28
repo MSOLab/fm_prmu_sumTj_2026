@@ -7,7 +7,8 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from flowshop_tardiness.io_solution import OBJ_LOG_FN_FORMAT, RESULT_DIR_NAME as DEFAULT_RESULTS_DIR
+from flowshop_tardiness.io_solution import OBJ_LOG_FN_FORMAT
+from flowshop_tardiness.io_solution import RESULT_DIR_NAME as DEFAULT_RESULTS_DIR
 
 # Default constants
 DEFAULT_CONTROLLER_LOG_NAME = "subroutine_controller.log"
@@ -37,9 +38,7 @@ def _read_instance_timelimit(instance_dir: Path, instance_id: str) -> float | No
     return v if v > 0 else None
 
 
-def _last_obj_value_at_or_before(
-    obj_data: dict, threshold_sec: float
-) -> float | None:
+def _last_obj_value_at_or_before(obj_data: dict, threshold_sec: float) -> float | None:
     """Latest numeric obj value whose timestamp key is ``<= threshold_sec``."""
     best_t = float("-inf")
     best_v: float | None = None

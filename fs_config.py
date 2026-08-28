@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Any, List
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -30,6 +30,7 @@ class BaselineColumnMapping(BaseModel):
     )
     obj_val: str = Field("BKS", description="Column name for the objective value.")
     obj_bound: str = Field("LB", description="Column name for the objective bound.")
+
 
 class MainMetadata(BaseModel):
     """
@@ -66,7 +67,7 @@ class MainMetadata(BaseModel):
     )
 
     # Scenario configurations
-    dicts_of_i_o_data_path: List[ScenarioPathConfig] = Field(
+    dicts_of_i_o_data_path: list[ScenarioPathConfig] = Field(
         ...,
         alias="dicts_of_i_o_data_path",
         description="List of configurations for each scenario.",

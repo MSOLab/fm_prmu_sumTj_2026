@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.11.9",
     "pyyaml>=6.0.2",
     "routix",
+    "ruff>=0.16.5",
     "schore",
     "xlsxwriter>=3.2.9",
 ]
@@ -30,4 +31,7 @@ python_files = "test_*.py"
 python_functions = "test_*"
 pythonpath = ["."]
 
-
+[tool.ruff.format]
+# ruff 0.16 formats Python blocks inside Markdown by default; plan/report docs
+# quote historical code verbatim, so leave Markdown alone.
+exclude = ["*.md"]

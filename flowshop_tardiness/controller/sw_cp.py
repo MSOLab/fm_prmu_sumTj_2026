@@ -720,9 +720,13 @@ class SwCpConstructor:
                 if refresh_deadline_every_step:
                     # 직전 상태(committed CP순서 + remaining incumbent순서)를 right-justify하여
                     # 현재 tardiness를 보존하는 기준에서 LCT를 산출 -> iteration 단위 단조성.
-                    rj_ref = self._make_all_dispatched(st.time_fixed_sol, st.time_fixed_pool)
+                    rj_ref = self._make_all_dispatched(
+                        st.time_fixed_sol, st.time_fixed_pool
+                    )
                     rj_ref.push_back_tail_jobs_keep_tardiness(self.job_cnt)
-                    stage_2_lct_map = rj_ref.get_stage_2_start_time_map(st.not_added_first_job)
+                    stage_2_lct_map = rj_ref.get_stage_2_start_time_map(
+                        st.not_added_first_job
+                    )
                 else:
                     # 고정 S^R(run() 1회 계산)에서 LCT -> sweep 단위 보장(현행).
                     stage_2_lct_map = given_sol.get_stage_2_start_time_map(
@@ -785,8 +789,7 @@ class SwCpConstructor:
                 )
 
             # clamp step_size to remaining length
-            if step_size > len(st.remaining_jobs):
-                step_size = len(st.remaining_jobs)
+            step_size = min(step_size, len(st.remaining_jobs))
 
             logging.info(
                 "(iter %d) improve=%s -> step_size=%d (rule=%s, batch=%d)",

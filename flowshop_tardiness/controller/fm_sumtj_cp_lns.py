@@ -3,7 +3,8 @@ import math
 import random
 import time
 from collections import defaultdict
-from typing import Callable, Literal, Sequence
+from collections.abc import Callable, Sequence
+from typing import Literal
 
 from routix import DynamicDataObject, ElapsedTimer
 from routix.util.comparison import float_a_stl_b
@@ -317,8 +318,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             for i in i_list:
                 p = pmap[job_id][i]
                 start_time = f[i]
-                if prev > start_time:
-                    start_time = prev
+                start_time = max(start_time, prev)
                 end_time = start_time + p
                 f[i] = end_time
                 prev = end_time
@@ -460,8 +460,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         prev = 0
         for i in self.stage_ids:
             start = stage_2_endtime_map[i]
-            if prev > start:
-                start = prev
+            start = max(start, prev)
             end = start + pmap[i]
             return_dict[i] = end
             prev = end
@@ -512,8 +511,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             f_new = self._simulate_append(f_prev, j)
             C_last = f_new[self.last_stage_id]
             Tj = C_last - dmap[j]
-            if Tj < 0:
-                Tj = 0
+            Tj = max(Tj, 0)
             pos_2_stage_2_endtime_map[j_idx + 1] = f_new
             prefix_sumTj[j_idx + 1] = prefix_sumTj.get(j_idx, 0) + Tj
         return pos_2_stage_2_endtime_map, prefix_sumTj
@@ -605,8 +603,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             new_f = self._simulate_append(f0, job_id)
             Cmax = new_f[self.last_stage_id]
             sumTj = Cmax - dmap[job_id]
-            if sumTj < 0:
-                sumTj = 0
+            sumTj = max(sumTj, 0)
             return 0, ScheduleMetric(
                 sumTj,
                 [new_f[i] for i in self.stage_ids],
@@ -685,10 +682,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     return pos, new_metric
 
             # choose best
-            if (best_crit1 is None) or (crit1 < best_crit1):
-                best_pos, best_metric = pos, new_metric
-                best_crit1, best_crit2 = crit1, crit2
-            elif (crit1 == best_crit1) and (best_crit2 is None or crit2 < best_crit2):
+            if (
+                (best_crit1 is None)
+                or (crit1 < best_crit1)
+                or (crit1 == best_crit1)
+                and (best_crit2 is None or crit2 < best_crit2)
+            ):
                 best_pos, best_metric = pos, new_metric
                 best_crit1, best_crit2 = crit1, crit2
                 # if still tied, earlier position is preferred (stable)

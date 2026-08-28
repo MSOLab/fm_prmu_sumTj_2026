@@ -133,5 +133,63 @@ extend-select = ["I"]
 
 **하지 않은 것:**
 - **§2 isort 도입 안 함.** 리네임과 무관한 리포 전역 import 재정렬을 같은 커밋에 섞지 않기 위해
-  별도 작업으로 미룸. `pyproject.toml`은 손대지 않았다.
+  별도 작업으로 미룸. `pyproject.toml`은 손대지 않았다. → **2026-08-28 별도 작업으로 수행, §8 참조.**
 - `Outputs_scenarios/`의 과거 결과 파일명(`*-pw_cp_obj_log.yaml` 38,386개)은 그대로 둔다.
+
+## 8. §2 (isort) 수행 결과 (2026-08-28)
+
+`uv add ruff` (ruff 0.16.5) 후 §2를 단독 커밋으로 수행했다.
+
+**계획과 달랐던 점 — ruff 0.16의 기본 규칙셋:**
+- §2는 "ruff default = E4/E7/E9/F"를 전제로 썼지만, **ruff 0.16.5의 기본 규칙셋은 훨씬
+  넓다** (B/C4/DTZ/G/LOG/PIE/PL/RUF/S/SIM/TRY/UP/W/YTT 등). 즉 `extend-select = ["I"]`
+  하나만 추가해도 isort 외에 수백 건의 위반이 함께 표면화된다.
+- `pyproject.toml` 주석은 이 사실에 맞춰 "Keep ruff's default rule set"으로 적었다.
+- 규칙셋을 옛 기본값으로 되돌리는 `select` 핀 고정은 하지 않았다 (별도 결정 사항).
+- **추가 확인 (2026-08-28): `I001`(unsorted-imports)은 ruff 0.16.5에서 이미 기본 활성이다.**
+  `ruff check --isolated`(설정 0개)로 413개 규칙이 켜지고 그 안에 `I001`이 포함된다.
+  `extend-select = ["I"]`가 실제로 추가하는 건 `I002`(missing-required-import) 하나뿐이고,
+  이는 `lint.isort.required-imports`를 설정하지 않으면 아무것도 하지 않는다.
+  → **import 정렬 9건은 `uv add ruff`만으로도 일어났을 것**이며, `[tool.ruff.lint]` 섹션은
+  동작상 no-op이다. 의도를 명시하고 향후 기본값 변경에 대비하는 핀으로만 남겨둔다.
+- 잔존 331건 중 `E`/`F`는 **0건**이다. 즉 계획서가 가정한 옛 기본값(E4/E7/E9/F)이었다면
+  이 리포는 clean이었고, 331건은 전부 넓어진 기본 규칙셋에서 나온 것이다.
+
+**`ruff format`이 Markdown까지 건드리는 문제 (§3 위반) — 배제 설정 추가:**
+- ruff 0.16의 `format`은 **Markdown 안의 Python 코드블록도 기본으로 포매팅**한다.
+  최초 실행에서 `plans/20260527_*.md`, `plans/20260605_*.md`, `plans/20260607_*.md`,
+  `plans/cross_run_analysis_aggregator.md`, `docs/algorithm/sw_cp.md` 6개가 변경됐다.
+- 이는 §3 "과거 서술형 plan/보고서의 인용 발췌는 그대로 둔다"에 어긋나므로 되돌리고,
+  `[tool.ruff.format] exclude = ["*.md"]`를 추가했다. (`ruff check`는 원래 `.md`를
+  스캔하지 않으므로 lint 쪽에는 영향 없음.)
+
+**결과:**
+- `uv run ruff check --fix`: 489건 중 **158건 자동 수정**, 331건 잔존.
+  주요 수정: I001 unsorted-imports 9, UP035 deprecated-import 28
+  (`typing.Sequence/Iterable/Iterator/Callable` → `collections.abc`),
+  FURB136/PLR1730 if-expr-min-max → `min()`/`max()` 29, RUF100 unused-noqa 6,
+  PIE808 4, RUF022 3, SIM118 2, W605 2, F401 1, PLR0402 1, UP045 1.
+- `uv run ruff format`: **20개 파일 재포매팅** (`.md` 제외 후 96개 파일 clean).
+- 변경 범위는 `.py`와 `pyproject.toml`뿐 — config YAML, `Outputs_scenarios/`,
+  문서는 건드리지 않았다.
+- 검증: `uv run pytest tests/` **77 passed** (수행 전과 동일).
+
+**잔존 위반 331건 (별도 처리 대상, 이번 작업에서 손대지 않음):**
+
+| 규칙 | 건수 | 내용 |
+| --- | ---: | --- |
+| LOG015 | 249 | root-logger-call (`logging.info(...)` 직접 호출) |
+| BLE001 | 23 | blind-except |
+| G201 | 22 | logging-exc-info |
+| DTZ005 | 8 | call-datetime-now-without-tzinfo |
+| RUF007 | 6 | zip-instead-of-pairwise |
+| SIM102 | 5 | collapsible-if |
+| RUF046 | 4 | unnecessary-cast-to-int |
+| RUF012 | 3 | mutable-class-default |
+| TRY004 | 3 | type-check-without-type-error |
+| EXE001 | 2 | shebang-not-executable |
+| 기타 1건씩 | 6 | SIM113, SIM103, SIM115, PLW0177, S112, PLC3002 |
+
+- LOG015가 전체의 75%다. 모듈 레벨 `logger = logging.getLogger(__name__)` 도입 여부는
+  로깅 정책 결정이므로 별도 작업으로 분리한다.
+- `--unsafe-fixes`로만 고쳐지는 12건이 있으나 이번엔 적용하지 않았다.

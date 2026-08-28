@@ -1,10 +1,14 @@
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from routix import DynamicDataObject, StoppingCriteria
+from routix.report.subroutine_report_statistics import (
+    SubroutineReportStatisticsKeys,
+)
 from routix.runner import MultiScenarioRunner
 from routix.type_defs import RunMode
 from schore.parameters_examples.shop.flow import (
@@ -17,9 +21,6 @@ from fs_config import BaselineColumnMapping
 from ga_ctrlr_multi_instance import FsMultiInstanceRunner
 from ga_ctrlr_single_instance import FsSingleInstanceRunner
 from output_filenames import OutputFilenames
-from routix.report.subroutine_report_statistics import (
-    SubroutineReportStatisticsKeys,
-)
 
 
 class FsMultiScenarioRunner(
@@ -465,8 +466,7 @@ class FsMultiScenarioRunner(
                         if col_name[0] == "relDiff between baseline":
                             if rel_diff_first_col is None:
                                 rel_diff_first_col = col_idx
-                            if rel_diff_last_col < col_idx:
-                                rel_diff_last_col = col_idx
+                            rel_diff_last_col = max(rel_diff_last_col, col_idx)
                             worksheet.set_column(
                                 col_idx, col_idx, max_len, percent_format
                             )

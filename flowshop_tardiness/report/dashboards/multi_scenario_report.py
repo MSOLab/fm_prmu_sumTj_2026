@@ -334,8 +334,7 @@ def write_multi_scenario_excel_report(
                     if col_name[0] == "relDiff between baseline":
                         if rel_diff_first_col is None:
                             rel_diff_first_col = col_idx
-                        if rel_diff_last_col < col_idx:
-                            rel_diff_last_col = col_idx
+                        rel_diff_last_col = max(rel_diff_last_col, col_idx)
                         worksheet.set_column(col_idx, col_idx, max_len, percent_format)
 
                 if rel_diff_first_col is not None:

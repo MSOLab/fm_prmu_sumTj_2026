@@ -99,8 +99,7 @@ class BaseModelBuilder:
             )
             if i > 0:
                 candid1 = stage_start_time_lb[i - 1] + min(P[i - 1, j] for j in j_list)
-                if stage_est < candid1:
-                    stage_est = candid1
+                stage_est = max(stage_est, candid1)
             stage_start_time_lb[i] = stage_est
             # logging.info(f"Stage {i} start time LB: {self.stage_start_time_lb[i]}")
 

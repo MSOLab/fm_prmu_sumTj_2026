@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from itertools import pairwise
-from typing import Iterable
 
 
 class PermutationFlowshopScheduleLite:
@@ -102,7 +102,7 @@ class PermutationFlowshopScheduleLite:
             else self._stage_2_job_2_end_map[i0][last_j_before_append]
         )
         given_i_est: int = 0 if stage_2_est_map is None else stage_2_est_map.get(i0, 0)
-        this_stage_est = given_i_est if given_i_est > this_stage_est else this_stage_est
+        this_stage_est = max(this_stage_est, given_i_est)
         end_time_dict[i0] = this_stage_est + self._job_2_stage_2_p_map[job_name][i0]
 
         for prev_i, this_i in pairwise(self._stage_name_list):
@@ -115,12 +115,8 @@ class PermutationFlowshopScheduleLite:
             given_i_est = (
                 0 if stage_2_est_map is None else stage_2_est_map.get(this_i, 0)
             )
-            this_stage_est = (
-                given_i_est if given_i_est > this_stage_est else this_stage_est
-            )
-            est: int = (
-                this_stage_est if this_stage_est > prev_stage_est else prev_stage_est
-            )
+            this_stage_est = max(this_stage_est, given_i_est)
+            est: int = max(prev_stage_est, this_stage_est)
             end_time_dict[this_i] = est + self._job_2_stage_2_p_map[job_name][this_i]
 
         return end_time_dict
@@ -236,7 +232,7 @@ class PermutationFlowshopScheduleLite:
                         due_date_room = (
                             d_j - self._stage_2_job_2_end_map[this_i][this_j]
                         )
-                        dist_to_next_i = due_date_room if due_date_room > 0 else 0
+                        dist_to_next_i = max(0, due_date_room)
                     else:
                         # If no due date and last stage, its completion time should not be changed
                         dist_to_next_i = 0

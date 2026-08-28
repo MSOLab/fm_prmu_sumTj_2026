@@ -1,7 +1,8 @@
 import datetime
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from mbls.cpsat import ObjValueBoundStore
 from routix import DynamicDataObject, StoppingCriteria
@@ -48,9 +49,7 @@ class FsSingleInstanceRunner(
         logger: logging.Logger | None = None,
         layout: Any = None,
     ):
-        _stopping_criteria = StoppingCriteria.from_dict(
-            stopping_criteria.to_obj()
-        )
+        _stopping_criteria = StoppingCriteria.from_dict(stopping_criteria.to_obj())
         super().__init__(
             instance=instance,
             shared_param_dict=shared_param_dict,

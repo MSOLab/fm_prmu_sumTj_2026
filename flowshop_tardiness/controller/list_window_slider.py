@@ -1,6 +1,7 @@
 from collections import deque
+from collections.abc import Iterable, Iterator
 from itertools import islice
-from typing import Any, Iterator, Iterable
+from typing import Any
 
 
 def window_slide_over_list(

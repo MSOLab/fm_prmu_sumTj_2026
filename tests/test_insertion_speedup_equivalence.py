@@ -8,7 +8,7 @@ ground truth across many random instances.
 """
 
 import random
-from typing import List, Sequence
+from collections.abc import Sequence
 
 import pytest
 
@@ -32,7 +32,7 @@ def _full_total_tardiness(
         cur = [0] * m
         cur[0] = prev[0] + p[0][job]
         for i in range(1, m):
-            start = prev[i] if prev[i] > cur[i - 1] else cur[i - 1]
+            start = max(cur[i - 1], prev[i])
             cur[i] = start + p[i][job]
         if cur[m - 1] > due[job]:
             total += cur[m - 1] - due[job]
@@ -62,7 +62,7 @@ def _brute_force_best(
 
 def _random_instance(
     rng: random.Random, n: int, m: int, tightness: str
-) -> tuple[List[List[int]], List[int]]:
+) -> tuple[list[list[int]], list[int]]:
     """Random (p, due). ``tightness`` controls how binding the due dates are."""
     p = [[rng.randint(1, 20) for _ in range(n)] for _ in range(m)]
     # A loose lower bound on each job's completion: sum of its processing times.

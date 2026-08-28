@@ -15,7 +15,6 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-
 SERIES_COLORS: tuple[str, ...] = (
     "#1f77b4",
     "#ff7f0e",

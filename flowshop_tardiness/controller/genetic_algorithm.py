@@ -1,8 +1,9 @@
 import argparse
 import logging
 import random
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
 from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
@@ -363,7 +364,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
     def _crossover_linear_order(
         parent_a: tuple[str, ...], parent_b: tuple[str, ...]
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        """
+        r"""
         LOX: linear order crossover (paper definition).
 
         Choose two crossover points a < b.
@@ -397,7 +398,7 @@ class FlowshopTardinessGeneticAlgorithmController(BaseFlowshopController):
         used_mid1 = set(mid1)
 
         # positions outside middle: first then last
-        outside_positions = list(range(0, a)) + list(range(b, n))
+        outside_positions = list(range(a)) + list(range(b, n))
 
         fill_jobs1 = [
             j for j in parent_b if j not in used_mid1

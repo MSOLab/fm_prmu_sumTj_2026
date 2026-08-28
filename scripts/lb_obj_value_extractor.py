@@ -4,7 +4,6 @@ import csv
 import re
 import sys
 from pathlib import Path
-from typing import Optional
 
 PAT_START = re.compile(r"-\s*by start time sequence:\s*([-+]?\d+(?:\.\d+)?)")
 PAT_COMP = re.compile(r"-\s*by completion time sequence:\s*([-+]?\d+(?:\.\d+)?)")
@@ -19,7 +18,7 @@ def _parse_value(s: str) -> float:
         return float("nan")
 
 
-def parse_log(fp: Path) -> Optional[tuple[float, float, float]]:
+def parse_log(fp: Path) -> tuple[float, float, float] | None:
     by_start = by_comp = by_avg = None
     try:
         with fp.open("r", encoding="utf-8", errors="ignore") as f:

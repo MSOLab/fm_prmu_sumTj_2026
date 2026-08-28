@@ -2,8 +2,8 @@
 
 import argparse
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 DEFAULT_REGEX = re.compile(
     r"Objective Value and Bound Over Time plot saved to Outputs_scenarios/20250923T032521_206759/output_600s/nehedd_IC1020/\d+/results/\d+_progress_plot\.png"

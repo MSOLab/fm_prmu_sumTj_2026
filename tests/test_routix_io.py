@@ -36,4 +36,7 @@ start_time_map:
         path = Path(tmpdir) / "test.yaml"
         path.write_text(yaml_content)
         loaded = load_yaml(path)
-        assert loaded["start_time_map"] == {("job1", "stage1"): 0, ("job2", "stage1"): 5}
+        assert loaded["start_time_map"] == {
+            ("job1", "stage1"): 0,
+            ("job2", "stage1"): 5,
+        }

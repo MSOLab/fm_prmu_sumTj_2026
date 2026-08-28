@@ -33,8 +33,8 @@ from .rpdf_scatter_chart import export_method_rpdf_scatter_html
 __all__ = [
     "DEFAULT_RPD_FORMATS",
     "DEFAULT_STAT_PAIRS",
-    "InstanceProgression",
     "PERCENT_AGGREGATORS_JS",
+    "InstanceProgression",
     "RpdColFormats",
     "aggregate_scenario_summaries",
     "apply_timelimit_trim",

@@ -1,13 +1,14 @@
 import random
-from typing import List, Tuple
 
 import pytest
 
-from flowshop_tardiness.controller.flowshop_batch_eval import PermutationFlowshopSubseqEvaluator
+from flowshop_tardiness.controller.flowshop_batch_eval import (
+    PermutationFlowshopSubseqEvaluator,
+)
 
 
 @pytest.fixture(scope="module")
-def flowshop_case() -> Tuple[List[List[int]], List[int], List[int], int]:
+def flowshop_case() -> tuple[list[list[int]], list[int], list[int], int]:
     """Small deterministic instance used by both tests."""
     p = [
         [3, 2, 4, 6],
@@ -43,7 +44,7 @@ def sigma(flowshop_case):
 # ---------------------------
 # Helper: naive full DP for a given sequence
 # ---------------------------
-def naive_completion_times(p: List[List[int]], seq: List[int]) -> List[List[int]]:
+def naive_completion_times(p: list[list[int]], seq: list[int]) -> list[list[int]]:
     """
     Full DP table C[i][j] for permutation flowshop.
     p: processing times [m][n_jobs]
@@ -57,12 +58,12 @@ def naive_completion_times(p: List[List[int]], seq: List[int]) -> List[List[int]
         for i in range(m):
             up = C[i - 1][j] if i > 0 else 0
             left = C[i][j - 1] if j > 0 else 0
-            start = up if up > left else left
+            start = max(left, up)
             C[i][j] = start + p[i][job]
     return C
 
 
-def naive_sum_tardiness(p: List[List[int]], due: List[int], seq: List[int]) -> int:
+def naive_sum_tardiness(p: list[list[int]], due: list[int], seq: list[int]) -> int:
     C = naive_completion_times(p, seq)
     m = len(p)
     total = 0
@@ -74,7 +75,7 @@ def naive_sum_tardiness(p: List[List[int]], due: List[int], seq: List[int]) -> i
     return total
 
 
-def naive_sum_idle(p: List[List[int]], seq: List[int]) -> int:
+def naive_sum_idle(p: list[list[int]], seq: list[int]) -> int:
     """
     Total machine idle time:
       Idle_{i,j} = S_{i,j} - C_{i,j-1}
@@ -95,7 +96,7 @@ def naive_sum_idle(p: List[List[int]], seq: List[int]) -> int:
     return total
 
 
-def insert_job_list(pi: List[int], sigma_list: list[int], pos: int) -> List[int]:
+def insert_job_list(pi: list[int], sigma_list: list[int], pos: int) -> list[int]:
     """Insert sigma into pi at position pos (0..len(pi))."""
     return pi[:pos] + sigma_list + pi[pos:]
 
@@ -169,9 +170,9 @@ def test_best_insertion_matches_naive_one_instance(p, due, pi, sigma):
 def run_random_tests(
     seed: int = 0,
     n_trials: int = 50,
-    m_range: Tuple[int, int] = (2, 5),
-    n_jobs_range: Tuple[int, int] = (4, 10),
-    p_range: Tuple[int, int] = (1, 20),
+    m_range: tuple[int, int] = (2, 5),
+    n_jobs_range: tuple[int, int] = (4, 10),
+    p_range: tuple[int, int] = (1, 20),
 ):
     random.seed(seed)
 

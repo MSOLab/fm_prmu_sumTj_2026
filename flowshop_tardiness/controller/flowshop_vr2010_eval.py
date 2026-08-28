@@ -26,7 +26,7 @@ else raises ``NotImplementedError`` (YAGNI -- makespan tie-breaking is used by
 CP-LNS, not GAPR).
 """
 
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def _single_job(subseq: Sequence[int] | int) -> int:
@@ -89,7 +89,7 @@ class VR2010InsertionEvaluator:
             c = [0] * m
             c[0] = c_prefix[0] + p[0][sigma]
             for i in range(1, m):
-                prev_m = c_prefix[i] if c_prefix[i] > c[i - 1] else c[i - 1]
+                prev_m = max(c[i - 1], c_prefix[i])
                 c[i] = prev_m + p[i][sigma]
             total = prefix_tard + (
                 c[m - 1] - due[sigma] if c[m - 1] > due[sigma] else 0
@@ -101,7 +101,7 @@ class VR2010InsertionEvaluator:
                 cur = [0] * m
                 cur[0] = prev[0] + p[0][job]
                 for i in range(1, m):
-                    prev_m = prev[i] if prev[i] > cur[i - 1] else cur[i - 1]
+                    prev_m = max(cur[i - 1], prev[i])
                     cur[i] = prev_m + p[i][job]
                 if cur[m - 1] > due[job]:
                     total += cur[m - 1] - due[job]
@@ -119,7 +119,7 @@ class VR2010InsertionEvaluator:
                 nc = [0] * m
                 nc[0] = c_prefix[0] + p[0][job]
                 for i in range(1, m):
-                    prev_m = c_prefix[i] if c_prefix[i] > nc[i - 1] else nc[i - 1]
+                    prev_m = max(nc[i - 1], c_prefix[i])
                     nc[i] = prev_m + p[i][job]
                 if nc[m - 1] > due[job]:
                     prefix_tard += nc[m - 1] - due[job]
@@ -153,7 +153,7 @@ class NaiveInsertionEvaluator:
             cur = [0] * m
             cur[0] = prev[0] + p[0][job]
             for i in range(1, m):
-                prev_m = prev[i] if prev[i] > cur[i - 1] else cur[i - 1]
+                prev_m = max(cur[i - 1], prev[i])
                 cur[i] = prev_m + p[i][job]
             if cur[m - 1] > due[job]:
                 total += cur[m - 1] - due[job]

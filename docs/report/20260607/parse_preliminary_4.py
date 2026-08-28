@@ -23,8 +23,13 @@ from collections import Counter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCENARIO_DIR = os.path.join(
-    HERE, "..", "..", "..",
-    "Outputs_scenarios", "20260608T011058_692458", "20260607_00",
+    HERE,
+    "..",
+    "..",
+    "..",
+    "Outputs_scenarios",
+    "20260608T011058_692458",
+    "20260607_00",
 )
 EVA_CSV = os.path.join(HERE, "Eva_Instances_EarlinessTardiness.csv")
 OUT_CSV = os.path.join(HERE, "20260607_preliminary_4.csv")
@@ -37,10 +42,22 @@ RE_AVG = re.compile(r"by average time sequence: (\d+)")
 RE_BEST = re.compile(r"best total tardiness is (\d+) by (\w[\w ]*?) sequence")
 
 COLS = [
-    "insName", "n", "m", "T", "R",
-    "NEH-MS(EDD)", "LBinit_start", "LBinit_completion", "LBinit_average",
-    "best_LBinit", "best_seq", "improve_vs_NEHMS", "improve_pct",
-    "MCF_LB", "Best_VR2010", "delta_best_VR2010",
+    "insName",
+    "n",
+    "m",
+    "T",
+    "R",
+    "NEH-MS(EDD)",
+    "LBinit_start",
+    "LBinit_completion",
+    "LBinit_average",
+    "best_LBinit",
+    "best_seq",
+    "improve_vs_NEHMS",
+    "improve_pct",
+    "MCF_LB",
+    "Best_VR2010",
+    "delta_best_VR2010",
 ]
 
 
@@ -62,8 +79,10 @@ def parse_instance(log_path, eva_row):
     imp = nehms - best_lbinit
     return {
         "insName": eva_row["insName"],
-        "n": eva_row["n"], "m": eva_row["m"],
-        "T": eva_row["T"], "R": eva_row["R"],
+        "n": eva_row["n"],
+        "m": eva_row["m"],
+        "T": eva_row["T"],
+        "R": eva_row["R"],
         "NEH-MS(EDD)": nehms,
         "LBinit_start": s,
         "LBinit_completion": c,
@@ -83,8 +102,9 @@ def main():
     rows = []
     for d in sorted(glob.glob(os.path.join(SCENARIO_DIR, "[0-9]*", ""))):
         ins = os.path.basename(d.rstrip(os.sep))
-        rows.append(parse_instance(
-            os.path.join(d, "subroutine_controller.log"), eva[ins]))
+        rows.append(
+            parse_instance(os.path.join(d, "subroutine_controller.log"), eva[ins])
+        )
 
     with open(OUT_CSV, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=COLS)
@@ -92,11 +112,15 @@ def main():
         w.writerows(rows)
     print(f"wrote {OUT_CSV} ({len(rows)} instances)")
 
-    print(f"mean improve vs NEH-MS(EDD): {round(st.mean(r['improve_vs_NEHMS'] for r in rows))}")
+    print(
+        f"mean improve vs NEH-MS(EDD): {round(st.mean(r['improve_vs_NEHMS'] for r in rows))}"
+    )
     print(f"mean improve %: {round(st.mean(r['improve_pct'] for r in rows), 3)}")
     print(f"best_seq counts: {dict(Counter(r['best_seq'] for r in rows))}")
-    print(f"cases best_LBinit beats NEH-MS(EDD): "
-          f"{sum(1 for r in rows if r['best_LBinit'] < r['NEH-MS(EDD)'])}/{len(rows)}")
+    print(
+        f"cases best_LBinit beats NEH-MS(EDD): "
+        f"{sum(1 for r in rows if r['best_LBinit'] < r['NEH-MS(EDD)'])}/{len(rows)}"
+    )
 
 
 if __name__ == "__main__":
