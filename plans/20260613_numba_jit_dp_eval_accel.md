@@ -155,7 +155,7 @@ Phase 1의 기대 이득과 Phase 2 필요성을 *수치로* 고정한다.
 - **도구:** `numba.cuda`(스택 유지 + Phase 1 정수 커널 재사용, 1순위) >
   `cupy RawKernel` > JAX. numba.cuda면 §3.1 커널과 분기 최소.
 - **적용처:** GA offspring/multistart 동시 채점. **CP-SAT(OR-Tools)·CPLEX solve는
-  대상 아님** — propagation/search는 GPU 직접 가속 불가. CP-LNS/PW-CP에서 GPU가
+  대상 아님** — propagation/search는 GPU 직접 가속 불가. CP-LNS/SW-CP에서 GPU가
   닿는 건 솔버를 감싸는 평가/insertion-improvement 단계뿐.
 - **테스트:** GPU 커널 vs Phase 1 njit CPU 커널 exact-match(랜덤 인스턴스).
   CUDA 디바이스 없으면 `pytest.skip`.

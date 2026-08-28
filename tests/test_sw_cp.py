@@ -5,14 +5,14 @@ from itertools import permutations
 from mbls.cpsat import CpsatSolverReport, CpsatStatus
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
 
-from flowshop_tardiness.controller.pw_cp import PwCpConstructor, PwCpContext, PwCpResult
+from flowshop_tardiness.controller.sw_cp import SwCpConstructor, SwCpContext, SwCpResult
 from flowshop_tardiness.cpsat_model_2.indirect_prec import IndirectPrecVars
 from flowshop_tardiness.cpsat_model_2.params import Params
 
 
 @pytest.fixture
 def mock_context():
-    ctx = MagicMock(spec=PwCpContext)
+    ctx = MagicMock(spec=SwCpContext)
 
     # Setup data attributes
     ctx.instance = MagicMock(spec=FlowshopDuedateParameters)
@@ -80,16 +80,16 @@ def mock_context():
 
 
 @pytest.fixture
-def pw_cp(mock_context):
-    return PwCpConstructor(mock_context)
+def sw_cp(mock_context):
+    return SwCpConstructor(mock_context)
 
 
-def test_initialization(pw_cp, mock_context):
-    assert pw_cp.ctx == mock_context
-    assert pw_cp._st is None
+def test_initialization(sw_cp, mock_context):
+    assert sw_cp.ctx == mock_context
+    assert sw_cp._st is None
 
 
-def test_run_basic_flow(pw_cp, mock_context):
+def test_run_basic_flow(sw_cp, mock_context):
     """Test a simple run with a small batch of jobs."""
     # Use jobs that are NOT J1, J2 to avoid conflict with mock_context defaults if any,
     # but run() clears state so it should be fine.
@@ -109,24 +109,26 @@ def test_run_basic_flow(pw_cp, mock_context):
             m_vars.prec[j2, j1] = 0
         return m_mdl, m_params, m_vars
 
-    pw_cp.builder = MagicMock()
-    pw_cp.builder.build.side_effect = build_side_effect
-    
+    sw_cp.builder = MagicMock()
+    sw_cp.builder.build.side_effect = build_side_effect
+
     # Mock solver values and sequence reconstruction
     mock_context.solver.Value.side_effect = lambda x: x
-    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: params.j_list
+    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: (
+        params.j_list
+    )
 
-    result = pw_cp.run(
+    result = sw_cp.run(
         job_sequence=job_sequence, added_batch_size=2, solver_thread_cnt=1
     )
 
-    assert isinstance(result, PwCpResult)
+    assert isinstance(result, SwCpResult)
     # With batch=2, all 2 jobs are added, CP runs once.
     assert len(result.schedule.get_last_stage_job_list()) == 2
     assert mock_context.solve_cp_model_2.call_count >= 1
 
 
-def test_run_two_batches(pw_cp, mock_context):
+def test_run_two_batches(sw_cp, mock_context):
     """Test running with batch size smaller than job list."""
     job_sequence = ["J1", "J2"]
 
@@ -143,23 +145,25 @@ def test_run_two_batches(pw_cp, mock_context):
             m_vars.prec[j2, j1] = 0
         return m_mdl, m_params, m_vars
 
-    pw_cp.builder = MagicMock()
-    pw_cp.builder.build.side_effect = build_side_effect
-    
+    sw_cp.builder = MagicMock()
+    sw_cp.builder.build.side_effect = build_side_effect
+
     # Mock solver values and sequence reconstruction
     mock_context.solver.Value.side_effect = lambda x: x
-    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: params.j_list
+    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: (
+        params.j_list
+    )
 
-    result = pw_cp.run(
+    result = sw_cp.run(
         job_sequence=job_sequence, added_batch_size=1, solver_thread_cnt=1
     )
 
-    assert isinstance(result, PwCpResult)
+    assert isinstance(result, SwCpResult)
     assert len(result.schedule.get_last_stage_job_list()) == 2
     assert mock_context.solve_cp_model_2.call_count >= 2
 
 
-def test_run_refresh_deadline_every_step(pw_cp, mock_context):
+def test_run_refresh_deadline_every_step(sw_cp, mock_context):
     """Smoke-test the refresh_deadline_every_step=True LCT branch.
 
     With added_batch_size=1 and 2 jobs, the first iteration has
@@ -181,25 +185,27 @@ def test_run_refresh_deadline_every_step(pw_cp, mock_context):
             m_vars.prec[j2, j1] = 0
         return m_mdl, m_params, m_vars
 
-    pw_cp.builder = MagicMock()
-    pw_cp.builder.build.side_effect = build_side_effect
+    sw_cp.builder = MagicMock()
+    sw_cp.builder.build.side_effect = build_side_effect
 
     mock_context.solver.Value.side_effect = lambda x: x
-    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: params.j_list
+    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: (
+        params.j_list
+    )
 
-    result = pw_cp.run(
+    result = sw_cp.run(
         job_sequence=job_sequence,
         added_batch_size=1,
         solver_thread_cnt=1,
         refresh_deadline_every_step=True,
     )
 
-    assert isinstance(result, PwCpResult)
+    assert isinstance(result, SwCpResult)
     assert len(result.schedule.get_last_stage_job_list()) == 2
     assert mock_context.solve_cp_model_2.call_count >= 2
 
 
-def test_log_snapshot(pw_cp, mock_context):
+def test_log_snapshot(sw_cp, mock_context):
     """Test that _log_snapshot actually records objective values in sub_obj_store."""
 
     # Needs at least 2 jobs to enter optimization loop
@@ -221,14 +227,16 @@ def test_log_snapshot(pw_cp, mock_context):
 
         return m_mdl, m_params, m_vars
 
-    pw_cp.builder = MagicMock()
-    pw_cp.builder.build.side_effect = build_side_effect
+    sw_cp.builder = MagicMock()
+    sw_cp.builder.build.side_effect = build_side_effect
 
     # Mock solver values and sequence reconstruction
     mock_context.solver.Value.side_effect = lambda x: x
-    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: params.j_list
+    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: (
+        params.j_list
+    )
 
-    result = pw_cp.run(job_sequence, added_batch_size=1)
+    result = sw_cp.run(job_sequence, added_batch_size=1)
 
     # Verify that log entries exist in the store
     assert len(result.sub_obj_store.obj_value_series) > 0
@@ -237,7 +245,7 @@ def test_log_snapshot(pw_cp, mock_context):
     assert result.sub_obj_store.get_last_obj_value() >= 0
 
 
-def test_solver_infeasible(pw_cp, mock_context):
+def test_solver_infeasible(sw_cp, mock_context):
     """Test handling when solver returns infeasible."""
     # Needs at least 2 jobs to enter optimization loop
     job_sequence = ["J1", "J2"]
@@ -257,12 +265,14 @@ def test_solver_infeasible(pw_cp, mock_context):
             m_vars.prec[j2, j1] = 0
         return m_mdl, m_params, m_vars
 
-    pw_cp.builder = MagicMock()
-    pw_cp.builder.build.side_effect = build_side_effect
-    
+    sw_cp.builder = MagicMock()
+    sw_cp.builder.build.side_effect = build_side_effect
+
     # Mock solver values and sequence reconstruction
     mock_context.solver.Value.side_effect = lambda x: x
-    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: params.j_list
+    mock_context.from_job_prec_get_sequence.side_effect = lambda params, prec: (
+        params.j_list
+    )
 
     # Return infeasible report
     mock_context.solve_cp_model_2.return_value = CpsatSolverReport(
@@ -274,7 +284,7 @@ def test_solver_infeasible(pw_cp, mock_context):
         obj_bound_records=[],
     )
 
-    result = pw_cp.run(job_sequence, added_batch_size=1)
-    assert isinstance(result, PwCpResult)
+    result = sw_cp.run(job_sequence, added_batch_size=1)
+    assert isinstance(result, SwCpResult)
     # Even if infeasible, it should return a schedule with all jobs dispatched (fallback to base)
     assert len(result.schedule.get_last_stage_job_list()) == 2

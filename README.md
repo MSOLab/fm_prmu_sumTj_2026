@@ -30,8 +30,8 @@ same order (permutation flow shop).
 | Genetic | EDD-seeded NEH         | `ga_ctrlr_main.py`       |
 
 - **CP-SAT** with Large Neighborhood Search (LNS) for the primary solver
-- **Prefix-Window CP (PW-CP)**: incremental CP-CP decomposition
-- **PW-CP + insertion improvement**: PW-CP followed by NEH-like insertion passes
+- **Sliding-Window CP (SW-CP)**: incremental CP-CP decomposition
+- **SW-CP + insertion improvement**: SW-CP followed by NEH-like insertion passes
 - Due-date-driven heuristics: EDD, MDD, Slack, SRMWK, NEHedd, NEH-MS
 
 ## Architecture

@@ -1,8 +1,8 @@
-# Prefix-Window CP (PW-CP) Algorithm
+# Sliding-Window CP (SW-CP) Algorithm
 
 ## 개요
 
-PW-CP는 순열 플로우숍(Permutation Flowshop)에서 총 지연(total tardiness)을 최소화하기 위한 **슬라이딩 윈도우 CP 구성 휴리스틱**이다. 초기 작업 순서(시드 솔루션)를 받아, 앞쪽 작업들을 점진적으로 확정해 나가면서 윈도우 내 작업들에 대해 CP(Constraint Programming) 최적화를 수행한다.
+SW-CP는 순열 플로우숍(Permutation Flowshop)에서 총 지연(total tardiness)을 최소화하기 위한 **슬라이딩 윈도우 CP 구성 휴리스틱**이다. 초기 작업 순서(시드 솔루션)를 받아, 앞쪽 작업들을 점진적으로 확정해 나가면서 윈도우 내 작업들에 대해 CP(Constraint Programming) 최적화를 수행한다.
 
 ## 전제 (입력)
 

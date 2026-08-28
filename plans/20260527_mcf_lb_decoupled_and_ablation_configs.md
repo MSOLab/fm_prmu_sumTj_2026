@@ -1,10 +1,15 @@
 # MCF-LB 호출과 init schedule 등록 분리 + 5개 ablation config 재구성
 
+> **[리네임 주석 · 2026-08-26]** 논문 표기에 맞춰 `pw_cp`/`PW-CP`/`PwCp*`/`incr_pw_cp` 는
+> `sw_cp`/`SW-CP`/`SwCp*`/`incr_sw_cp` 로, 모듈 `controller/pw_cp.py` 는
+> `controller/sw_cp.py` 로 이름이 바뀌었다. 본문 서술은 현재 이름으로 갱신했으나,
+> **당시 생성된 결과 파일명·커밋 내용 인용은 사실 보존을 위해 옛 이름(`pw_cp`) 그대로** 둔다.
+
 ## Context
 
 `configs_cp_lns/` 의 ablation config 들을 논문 `Juntaek-PhD-Thesis/contents/fc_prmu_sumTj.tex` §4.1.3 표와 대조한 결과 세 가지 불일치 확인:
 
-1. **thread 수 불일치** — C4/C5의 `solve_base_cp_model.solver_thread_cnt` 와 `pw_cp.solver_thread_cnt` 가 1. 본문 `:617-618` 은 "eight threads" 라고 일관 서술. 다른 SOTA 와 동등 조건을 위해 모두 8로 통일.
+1. **thread 수 불일치** — C4/C5의 `solve_base_cp_model.solver_thread_cnt` 와 `sw_cp.solver_thread_cnt` 가 1. 본문 `:617-618` 은 "eight threads" 라고 일관 서술. 다른 SOTA 와 동등 조건을 위해 모두 8로 통일.
 
 2. **MCF-LB 호출이 init schedule 생성을 강제** — `compute_preemptive_last_stage_lb` (`flowshop_tardiness/controller/fm_sumtj_cp_lns.py:1222`) 는 `init_by_neh_ms` 로 dispatched 후보냐 NEH-MS 후보냐만 가르고 LBE/LBL/LBA best 를 무조건 `solution_manager.register(...)`. "MCF-LB 를 numerical lower bound 로만 쓰고 initialization 에는 손대지 않는" 경로 부재.
 
@@ -213,7 +218,7 @@ configs_cp_lns/20260515_ablation_c5.yaml   (line 6)
 - method: repeat_while_improvement
   n_repeats: 99
   routine_data:
-    - method: pw_cp
+    - method: sw_cp
       added_batch_size: 7
       profile_fixed_cnt: 0
       step_size_on_improve: 7
@@ -241,7 +246,7 @@ configs_cp_lns/20260515_ablation_c5.yaml   (line 6)
 - method: repeat_while_improvement
   n_repeats: 99
   routine_data:
-    - method: pw_cp
+    - method: sw_cp
       added_batch_size: 7
       profile_fixed_cnt: 0
       step_size_on_improve: 7
@@ -280,7 +285,7 @@ configs_cp_lns/20260515_ablation_c5.yaml   (line 6)
 ### Thread 확인
 
 12 인스턴스 parallel smoke run 에서:
-- CP-SAT 로그의 `Parameters: ... num_workers:8` 확인 (pw_cp, solve_base_cp_model 둘 다)
+- CP-SAT 로그의 `Parameters: ... num_workers:8` 확인 (sw_cp, solve_base_cp_model 둘 다)
 - 12 instance × 8 workers = 96 → CPU 사용률 ~100% (이전 12 × 1 = 12.5% 대비)
 
 ### Regression

@@ -39,7 +39,7 @@ SUBROUTINE_SYMBOL_MAP: dict[str, str] = {
     "set_cp_model_as_base_cp_model": "square",
     "improve_by_insertion": "cross",
     "repeat_while_improvement": "star",
-    "pw_cp": "circle",
+    "sw_cp": "circle",
     "solve_base_cp_model": "hexagon",
 }
 

@@ -1360,9 +1360,9 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         if was_updated and draw_gantt:
             self.export_incumbent_to_yaml()
 
-    # Subroutine: Prefix-window CP
+    # Subroutine: Sliding-window CP
 
-    def pw_cp(
+    def sw_cp(
         self,
         added_batch_size: int | None = None,
         profile_fixed_cnt: int | None = None,
@@ -1420,10 +1420,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             output_path = self.get_file_path_for_subroutine("_0_init_solution.yaml")
             self.export_incumbent_to_yaml(output_path=output_path)
 
-        from .pw_cp import PwCpConstructor, PwCpResult
+        from .sw_cp import SwCpConstructor, SwCpResult
 
-        constructor = PwCpConstructor(self)
-        result: PwCpResult = constructor.run(
+        constructor = SwCpConstructor(self)
+        result: SwCpResult = constructor.run(
             job_sequence,
             added_batch_size=added_batch_size,
             profile_fixed_cnt=profile_fixed_cnt,
@@ -1436,7 +1436,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             refresh_deadline_every_step=refresh_deadline_every_step,
         )
         obj_value = self.get_obj_value(result.schedule)
-        logging.info(f"PW-CP done with total tardiness {obj_value}")
+        logging.info(f"SW-CP done with total tardiness {obj_value}")
         # Create report for the final solution and register it
         final_report = FsSubroutineReport(
             elapsed_time=sub_timer.elapsed_sec,
@@ -1641,22 +1641,22 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     )
                     break
 
-    def incremental_pw_cp(
+    def incremental_sw_cp(
         self,
         start_batch_size: int,
         end_batch_size: int,
         max_time_per_add: float | None = None,
         solver_thread_cnt: int | None = None,
-        improvement_by_insertion_after_every_pw_cp: bool = True,
+        improvement_by_insertion_after_every_sw_cp: bool = True,
         repeat_at_end_batch_size_while_improving: bool = True,
         refresh_deadline_every_step: bool = False,
     ) -> None:
-        """Runs pw_cp with incrementally increasing batch size.
+        """Runs sw_cp with incrementally increasing batch size.
 
-        Executes ``pw_cp`` sequentially for each batch size from
+        Executes ``sw_cp`` sequentially for each batch size from
         ``start_batch_size`` to ``end_batch_size`` (inclusive), optionally
         followed by ``improve_by_insertion(subseq_size=1, max_passes=1)``
-        after every ``pw_cp`` step. Stops early only when the global stopping
+        after every ``sw_cp`` step. Stops early only when the global stopping
         condition is met; no improvement-based stopping criterion is applied
         during the ramp-up.
 
@@ -1675,17 +1675,17 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             end_batch_size (int): Ending batch size, inclusive
                 (>= start_batch_size).
             max_time_per_add (float | None): Time limit per CP solve call
-                inside ``pw_cp``. Passed through unchanged. Defaults to None.
+                inside ``sw_cp``. Passed through unchanged. Defaults to None.
             solver_thread_cnt (int | None): Number of CP solver threads.
-                Passed through to ``pw_cp`` unchanged. Defaults to None.
-            improvement_by_insertion_after_every_pw_cp (bool): When True,
+                Passed through to ``sw_cp`` unchanged. Defaults to None.
+            improvement_by_insertion_after_every_sw_cp (bool): When True,
                 runs ``improve_by_insertion(subseq_size=1, max_passes=1)``
-                after each ``pw_cp`` call. Defaults to True.
+                after each ``sw_cp`` call. Defaults to True.
             repeat_at_end_batch_size_while_improving (bool): When True, repeats
                 the ``end_batch_size`` step after the ramp-up while the
                 incumbent objective strictly improves. Defaults to True.
-            refresh_deadline_every_step (bool): Passed through to each ``pw_cp`` step. When True,
-                pw_cp recomputes the per-stage LCT bound every iteration for per-iteration
+            refresh_deadline_every_step (bool): Passed through to each ``sw_cp`` step. When True,
+                sw_cp recomputes the per-stage LCT bound every iteration for per-iteration
                 monotonicity. Defaults to False (current behavior).
 
         Raises:
@@ -1699,12 +1699,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 f"end_batch_size ({end_batch_size}) must be >= start_batch_size ({start_batch_size})"
             )
 
-        subroutine_name = "incr_pw_cp"
+        subroutine_name = "incr_sw_cp"
 
         def build_steps(batch_size: int) -> list[dict]:
             steps: list[dict] = [
                 {
-                    "method": "pw_cp",
+                    "method": "sw_cp",
                     "params": {
                         "added_batch_size": batch_size,
                         "profile_fixed_cnt": 0,
@@ -1716,7 +1716,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     },
                 },
             ]
-            if improvement_by_insertion_after_every_pw_cp:
+            if improvement_by_insertion_after_every_sw_cp:
                 steps.append(
                     {
                         "method": "improve_by_insertion",
@@ -1732,10 +1732,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         for batch_size in range(start_batch_size, end_batch_size + 1):
             if self.is_stopping_condition():
                 logging.info(
-                    f"[IncrementalPwCp] Stopping condition met at batch_size={batch_size}."
+                    f"[IncrementalSwCp] Stopping condition met at batch_size={batch_size}."
                 )
                 break
-            logging.info(f"[IncrementalPwCp] batch_size={batch_size}")
+            logging.info(f"[IncrementalSwCp] batch_size={batch_size}")
             run_step(batch_size)
 
         if not repeat_at_end_batch_size_while_improving:
@@ -1751,11 +1751,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         while True:
             if self.is_stopping_condition():
                 logging.info(
-                    "[IncrementalPwCp] Stopping condition met during end-batch repeat."
+                    "[IncrementalSwCp] Stopping condition met during end-batch repeat."
                 )
                 break
             logging.info(
-                f"[IncrementalPwCp] Repeating end_batch_size={end_batch_size} while improving."
+                f"[IncrementalSwCp] Repeating end_batch_size={end_batch_size} while improving."
             )
             run_step(end_batch_size)
 
@@ -1765,11 +1765,11 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             )
             if float_a_stl_b(obj_after, obj_before):
                 logging.info(
-                    f"[IncrementalPwCp] Improvement ({obj_before} -> {obj_after}). Continuing."
+                    f"[IncrementalSwCp] Improvement ({obj_before} -> {obj_after}). Continuing."
                 )
                 obj_before = obj_after
             else:
                 logging.info(
-                    f"[IncrementalPwCp] No improvement ({obj_before} -> {obj_after}). Stopping end-batch repeat."
+                    f"[IncrementalSwCp] No improvement ({obj_before} -> {obj_after}). Stopping end-batch repeat."
                 )
                 break

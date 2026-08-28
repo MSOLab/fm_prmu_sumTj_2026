@@ -179,7 +179,7 @@
   <a href="#c1">— C1 (Bottom Line)</a>
   <a href="#c2">— C2 (2010s SOTA)</a>
   <a href="#c3">— C3 (+LB-Disp)</a>
-  <a href="#c4">— C4 (+PW-CP)</a>
+  <a href="#c4">— C4 (+SW-CP)</a>
   <a href="#c5">— C5 (Full IGC)</a>
   <a href="#comparisons">Key Comparisons</a>
   <a href="#params">Parameter Summary</a>
@@ -191,7 +191,7 @@
     <li><b>LB-Disp</b> — LB-derived dispatching rules</li>
     <li><b>LBE/LBL/LBA</b> — Earliest/Latest/Average LB order</li>
     <li><b>NEH-MS</b> — NEH insertion, makespan tie-breaker</li>
-    <li><b>PW-CP</b> — Prefix-Window Constraint Programming</li>
+    <li><b>SW-CP</b> — Sliding-Window Constraint Programming</li>
     <li><b>II</b> — Insertion Improvement (local search)</li>
     <li><b>Base-CP</b> — Final CP-SAT refinement</li>
     <li><b>IGC</b> — Full method (both novel components)</li>
@@ -210,9 +210,9 @@
   <h4>At a glance</h4>
   <ul>
     <li>Five ablation configurations (C1–C5) for permutation flow shop total tardiness</li>
-    <li><strong>2×2 factorial design</strong> + bottom-line baseline: LB-derived dispatching rules (LBE/LBL/LBA) × PW-CP sliding-window CP engine</li>
-    <li>C1: EDD → Base-CP (floor); C2: 2010s SOTA heuristic pipeline; C3: +LB-dispatching; C4: +PW-CP; C5: full IGC method</li>
-    <li>Key contrasts: C2→C3 (LB effect), C2→C4 (PW-CP effect), C3→C5 and C4→C5 (cross-validation)</li>
+    <li><strong>2×2 factorial design</strong> + bottom-line baseline: LB-derived dispatching rules (LBE/LBL/LBA) × SW-CP sliding-window CP engine</li>
+    <li>C1: EDD → Base-CP (floor); C2: 2010s SOTA heuristic pipeline; C3: +LB-dispatching; C4: +SW-CP; C5: full IGC method</li>
+    <li>Key contrasts: C2→C3 (LB effect), C2→C4 (SW-CP effect), C3→C5 and C4→C5 (cross-validation)</li>
   </ul>
 </section>
 
@@ -222,7 +222,7 @@
 
 <div class="component-list">
   <div class="item"><strong>LB-derived dispatching rules</strong> (LBE, LBL, LBA): three job-priority orders extracted from the minimum-cost-flow solution of the preemptive last-stage relaxation.</div>
-  <div class="item"><strong>PW-CP</strong> (Prefix-Window Constraint Programming): an iterative sliding-window CP engine that interleaves CP subproblem solving with insertion improvement, replacing the earlier (ineffective) BD-CP.</div>
+  <div class="item"><strong>SW-CP</strong> (Sliding-Window Constraint Programming): an iterative sliding-window CP engine that interleaves CP subproblem solving with insertion improvement, replacing the earlier (ineffective) BD-CP.</div>
 </div>
 
 <p>The following established methods constitute the known-method backbone across configurations:</p>
@@ -241,7 +241,7 @@
 <div class="config-matrix">
 <table>
   <thead>
-    <tr><th>Config</th><th>EDD</th><th>LB-Disp</th><th>NEH-MS</th><th>PW-CP</th><th>II(1)</th><th>Base-CP</th></tr>
+    <tr><th>Config</th><th>EDD</th><th>LB-Disp</th><th>NEH-MS</th><th>SW-CP</th><th>II(1)</th><th>Base-CP</th></tr>
   </thead>
   <tbody>
     <tr><td>C1</td><td><span class="check">✓</span></td><td><span class="dash">—</span></td><td><span class="dash">—</span></td><td><span class="dash">—</span></td><td><span class="dash">—</span></td><td><span class="check">✓</span></td></tr>
@@ -296,14 +296,14 @@
 
 <div class="callout"><strong>C2 → C3 isolates the contribution of the LB-derived dispatching rules.</strong></div>
 
-<h3 id="c4">C4 — +PW-CP</h3>
+<h3 id="c4">C4 — +SW-CP</h3>
 
 <div class="pipeline">
   <h4>Pipeline</h4>
   <div class="flow">
     <span class="step">EDD</span><span class="arrow">→</span>
     <span class="step">NEH-MS</span><span class="arrow">→</span>
-    <span class="step" style="background:#e3f2e9;border-color:#a8c9b0;">PW-CP<br>B=7</span><span class="arrow">→</span>
+    <span class="step" style="background:#e3f2e9;border-color:#a8c9b0;">SW-CP<br>B=7</span><span class="arrow">→</span>
     <span class="step">II(1, 1-pass)</span>
     <span class="arrow" style="font-size:16px;">↻</span>
     <span class="step" style="background:#fbeed5;border-color:#e8c585;">repeat</span><span class="arrow">→</span>
@@ -311,9 +311,9 @@
   </div>
 </div>
 
-<p>Differs from C2 by adding the PW-CP loop after NEH-MS. Inside PW-CP, the CP subproblem optimizes a sliding window of <code>B=7</code> jobs (<code>profile_fixed_cnt=0</code>) with adaptive step size (<code>step_on_improve=7</code>, <code>step_on_no_improve=1</code>), interleaved with a single II pass (<code>max_passes=1</code>). The outer <code>repeat_while_improvement</code> loop ensures convergence.</p>
+<p>Differs from C2 by adding the SW-CP loop after NEH-MS. Inside SW-CP, the CP subproblem optimizes a sliding window of <code>B=7</code> jobs (<code>profile_fixed_cnt=0</code>) with adaptive step size (<code>step_on_improve=7</code>, <code>step_on_no_improve=1</code>), interleaved with a single II pass (<code>max_passes=1</code>). The outer <code>repeat_while_improvement</code> loop ensures convergence.</p>
 
-<div class="callout"><strong>C2 → C4 isolates the contribution of PW-CP.</strong></div>
+<div class="callout"><strong>C2 → C4 isolates the contribution of SW-CP.</strong></div>
 
 <h3 id="c5">C5 — IGC (Full Method)</h3>
 
@@ -322,7 +322,7 @@
   <div class="flow">
     <span class="step" style="background:#e3f2e9;border-color:#a8c9b0;">EDD + LB-Disp<br>(LBE/LBL/LBA)</span><span class="arrow">→</span>
     <span class="step">NEH-MS</span><span class="arrow">→</span>
-    <span class="step" style="background:#e3f2e9;border-color:#a8c9b0;">PW-CP<br>B=7</span><span class="arrow">→</span>
+    <span class="step" style="background:#e3f2e9;border-color:#a8c9b0;">SW-CP<br>B=7</span><span class="arrow">→</span>
     <span class="step">II(1, 1-pass)</span>
     <span class="arrow" style="font-size:16px;">↻</span>
     <span class="step" style="background:#fbeed5;border-color:#e8c585;">repeat</span><span class="arrow">→</span>
@@ -333,8 +333,8 @@
 <p>Both novel components combined. Serves as the full IGC algorithm.</p>
 
 <div class="cross-block">
-  <span><strong>C3 → C5</strong> cross-validates the PW-CP effect under the LB-dispatching baseline.</span>
-  <span><strong>C4 → C5</strong> cross-validates the LB-dispatching effect under the PW-CP baseline.</span>
+  <span><strong>C3 → C5</strong> cross-validates the SW-CP effect under the LB-dispatching baseline.</span>
+  <span><strong>C4 → C5</strong> cross-validates the LB-dispatching effect under the SW-CP baseline.</span>
 </div>
 
 <h2 id="comparisons">Key Comparisons</h2>
@@ -350,15 +350,15 @@
   </div>
   <div class="decision" style="border-left-color:var(--ok);background:#f4faee;">
     <div class="key" style="color:var(--ok);"><strong>C2 → C4</strong></div>
-    <div class="val"><strong>Does PW-CP improve solution quality over known heuristics alone?</strong></div>
+    <div class="val"><strong>Does SW-CP improve solution quality over known heuristics alone?</strong></div>
   </div>
   <div class="decision">
     <div class="key">C3 → C5</div>
-    <div class="val">Does PW-CP remain effective when combined with LB-dispatching?</div>
+    <div class="val">Does SW-CP remain effective when combined with LB-dispatching?</div>
   </div>
   <div class="decision">
     <div class="key">C4 → C5</div>
-    <div class="val">Does LB-dispatching add value on top of PW-CP?</div>
+    <div class="val">Does LB-dispatching add value on top of SW-CP?</div>
   </div>
 </div>
 
@@ -369,7 +369,7 @@
   <div class="row"><span class="key">LB-dispatch</span><span class="val">MCF solve on preemptive last-stage relaxation → extract LBE (earliest), LBL (latest), LBA (average) orders → dispatch each, retain best</span></div>
   <div class="row"><span class="key">NEH-MS</span><span class="val">NEH insertion with <code>tie_breaker = makespan</code></span></div>
   <div class="row"><span class="key">II (multi-pass)</span><span class="val"><code>subseq_size=1</code>, <code>first_improvement=false</code>, <code>max_passes</code> unset (convergence)</span></div>
-  <div class="row"><span class="key">PW-CP</span><span class="val"><code>added_batch_size=7</code>, <code>profile_fixed_cnt=0</code>, <code>step_size_on_improve=7</code>, <code>step_size_on_no_improve=1</code>, <code>max_time_per_add=10s</code>, <code>solver_thread_cnt=1</code></span></div>
+  <div class="row"><span class="key">SW-CP</span><span class="val"><code>added_batch_size=7</code>, <code>profile_fixed_cnt=0</code>, <code>step_size_on_improve=7</code>, <code>step_size_on_no_improve=1</code>, <code>max_time_per_add=10s</code>, <code>solver_thread_cnt=1</code></span></div>
   <div class="row"><span class="key">II (1-pass)</span><span class="val"><code>subseq_size=1</code>, <code>first_improvement=false</code>, <code>max_passes=1</code></span></div>
   <div class="row"><span class="key">Base-CP</span><span class="val"><code>computational_time=null</code> (remaining budget), <code>solver_thread_cnt=1</code></span></div>
   <div class="row"><span class="key">All</span><span class="val"><code>seed=42</code>, total wall-clock limit per instance controlled by <code>stopping_criteria.yaml</code></span></div>

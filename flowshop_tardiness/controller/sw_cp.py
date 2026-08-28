@@ -16,7 +16,7 @@ from flowshop_tardiness.cpsat_model_2.params import Params
 from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite
 
 
-class PwCpContext(Protocol):
+class SwCpContext(Protocol):
     """
     Minimal dependency interface.
     (FlowshopTardinessControllerCore is effectively designed to satisfy this interface.)
@@ -75,7 +75,7 @@ class PwCpContext(Protocol):
 
 
 @dataclass
-class PwCpRunState:
+class SwCpRunState:
     timer: ElapsedTimer
 
     # --- Job partitions ---
@@ -161,13 +161,13 @@ class PwCpRunState:
 
 
 @dataclass
-class PwCpResult:
+class SwCpResult:
     schedule: FlowshopSchedule
     sub_obj_store: ObjValueBoundStore[int]
     last_obj_value: int
 
 
-class PwCpConstructor:
+class SwCpConstructor:
     # Given solution cache
     job_sequence: list[str]
     job_cnt: int
@@ -177,16 +177,16 @@ class PwCpConstructor:
     step_size_on_improve: int
     step_size_on_no_improve: int
 
-    def __init__(self, ctx: PwCpContext):
+    def __init__(self, ctx: SwCpContext):
         from flowshop_tardiness.cpsat_model_2.indirect_prec import BaseModelBuilder
 
         self.ctx = ctx
         self.builder = BaseModelBuilder()
-        self._st: PwCpRunState | None = None
+        self._st: SwCpRunState | None = None
 
-    def _require_state(self) -> PwCpRunState:
+    def _require_state(self) -> SwCpRunState:
         if self._st is None:
-            raise RuntimeError("PwCpConstructor.run() is not active; state is missing.")
+            raise RuntimeError("SwCpConstructor.run() is not active; state is missing.")
         return self._st
 
     def save_schedule_lite_to_yaml(
@@ -220,9 +220,9 @@ class PwCpConstructor:
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
         refresh_deadline_every_step: bool = False,
-    ) -> PwCpResult:
+    ) -> SwCpResult:
         """
-        Run the Prefix-Window CP (PW-CP) algorithm.
+        Run the Sliding-Window CP (SW-CP) algorithm.
 
         This algorithm incrementally builds a schedule by iteratively solving a CP model
         for a window of jobs. The window slides forward as jobs are fixed.
@@ -253,7 +253,7 @@ class PwCpConstructor:
                 incumbent order), right-justified, which yields per-iteration monotonicity. Defaults to False.
 
         Returns:
-            PwCpResult: The result containing the final schedule, objective value, and log store.
+            SwCpResult: The result containing the final schedule, objective value, and log store.
         """
         ctx = self.ctx
         timer = ElapsedTimer()
@@ -309,7 +309,7 @@ class PwCpConstructor:
             job_2_stage_2_p_map=ctx.job_2_stage_2_p_dict,
             job_2_due_map=ctx.instance.job_2_duedate_map,
         )
-        self._st = PwCpRunState(
+        self._st = SwCpRunState(
             timer=timer,
             remaining_jobs=self.job_sequence.copy(),
             profile_fixed_jobs=[],
@@ -632,9 +632,9 @@ class PwCpConstructor:
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
         refresh_deadline_every_step: bool = False,
-    ) -> PwCpResult:
+    ) -> SwCpResult:
         """
-        Main loop for the PW-CP algorithm.
+        Main loop for the SW-CP algorithm.
 
         Iteratively adds jobs, defines the profile-fixed and optimization windows,
         runs the CP solver, and updates the schedule based on the results.
@@ -654,7 +654,7 @@ class PwCpConstructor:
                 monotonicity. When False (default), uses the fixed given_sol (current behavior).
 
         Returns:
-            PwCpResult: The final result of the PW-CP run.
+            SwCpResult: The final result of the SW-CP run.
         """
         st = self._require_state()
         ctx = self.ctx
@@ -670,7 +670,7 @@ class PwCpConstructor:
         # --- Monotonicity diagnostics ---
         # Each committed batch is kept within its per-stage window [EST, LCT]
         # derived from the right-justified reference schedule S^R, which keeps the
-        # realized objective <= the incumbent pw_cp started from. That does NOT make
+        # realized objective <= the incumbent sw_cp started from. That does NOT make
         # the internal trajectory monotone: S^R's slack (vs already-improved states)
         # can be spent by the phase-2 secondary objective, raising the last-stage
         # makespan and delaying the tail. Track the previous fully-dispatched
@@ -840,7 +840,7 @@ class PwCpConstructor:
             note = str(len(st.time_fixed_pool) + len(st.profile_fixed_jobs))
 
             # --- Monotonicity diagnostics ---
-            # pw_cp is non-increasing *relative to the incumbent it started from*:
+            # sw_cp is non-increasing *relative to the incumbent it started from*:
             # each committed batch is bounded, on every stage, by its LCT = the next
             # job's start in the right-justified reference schedule S^R, which keeps
             # the greedily dispatched tail within S^R. That bound is NECESSARY but
@@ -992,7 +992,7 @@ class PwCpConstructor:
         # record final
         last_obj_val = ctx.get_obj_value(final_solution)
 
-        return PwCpResult(
+        return SwCpResult(
             schedule=final_solution,
             sub_obj_store=st.sub_obj_store,
             last_obj_value=last_obj_val,

@@ -1,8 +1,13 @@
 # 2026-06-07 실험 정리: 제안 알고리즘 vs VR2010 Best 비교 및 튜닝 시도
 
+> **[리네임 주석 · 2026-08-26]** 논문 표기에 맞춰 `pw_cp`/`PW-CP`/`PwCp*`/`incr_pw_cp` 는
+> `sw_cp`/`SW-CP`/`SwCp*`/`incr_sw_cp` 로, 모듈 `controller/pw_cp.py` 는
+> `controller/sw_cp.py` 로 이름이 바뀌었다. 본문 서술은 현재 이름으로 갱신했으나,
+> **당시 생성된 결과 파일명·커밋 내용 인용은 사실 보존을 위해 옛 이름(`pw_cp`) 그대로** 둔다.
+
 > 작성일: 2026-06-08
 >
-> 관련 커밋: `c903fed` (cp-lns-006nc run config/runner), `b187cce` (incremental_pw_cp), `f1cbce7` (LB-init)
+> 관련 커밋: `c903fed` (cp-lns-006nc run config/runner), `b187cce` (당시 `incremental_pw_cp`, 현 `incremental_sw_cp`), `f1cbce7` (LB-init)
 >
 > 실험 환경: 본 리포트의 **모든 계산은 `calop4` 서버에서 수행됨**.
 
@@ -21,7 +26,7 @@
 
 - 설정 파일: [`configs_cp_lns/20260527_ablation_c4.yaml`](../../../configs_cp_lns/20260527_ablation_c4.yaml)
   - 사실상 `20260512_ablation_c4.yaml`과 결과 동일.
-- 구성: `NEH-MS 초기해 → preemptive last-stage LB → repeat_while_improvement( pw_cp(batch=7) → improve_by_insertion )`
+- 구성: `NEH-MS 초기해 → preemptive last-stage LB → repeat_while_improvement( sw_cp(batch=7) → improve_by_insertion )`
 
 ### 1.2 비교 대상 (VR2010 Best)
 
@@ -97,7 +102,7 @@
 
 ### 3.3 incremental PW-CP 구현 + batch ramp 탐색 (preliminary_2)
 
-`incremental_pw_cp` 메서드 신규 구현(커밋 `b187cce`): start_batch_size → end_batch_size로 batch를 점증시키며 각 단계마다 pw_cp 수행, 단계마다 선택적 `improve_by_insertion`, 마지막에 end_batch_size에서 개선되는 동안 반복.
+`incremental_sw_cp`(당시 이름 `incremental_pw_cp`) 메서드 신규 구현(커밋 `b187cce`): start_batch_size → end_batch_size로 batch를 점증시키며 각 단계마다 sw_cp 수행, 단계마다 선택적 `improve_by_insertion`, 마지막에 end_batch_size에서 개선되는 동안 반복.
 
 첫 instance(insName=1, 50×10)에서 (start, end) 조합 9종 비교.
 데이터: [`20260607_preliminary_2.csv`](./20260607_preliminary_2.csv) — 참고로 이 instance의 VR2010 Best = 1,876.
@@ -146,7 +151,7 @@
 
 ### 3.5 LB-init NEH-MS 초기해 품질 (preliminary_4)
 
-개선 단계(pw_cp 등) 없이 **초기화 방식 자체**의 효과를 분리해서 본 실험.
+개선 단계(sw_cp 등) 없이 **초기화 방식 자체**의 효과를 분리해서 본 실험.
 시나리오 `20260607_00` ([`Outputs_scenarios/20260608T011058_692458`](../../../Outputs_scenarios/20260608T011058_692458)): `NEH-MS → compute_preemptive_last_stage_lb(init_method=neh-ms)`.
 
 각 instance마다 **4개의 schedule**이 생성되고, 그중 가장 좋은 것으로 incumbent를 초기화:

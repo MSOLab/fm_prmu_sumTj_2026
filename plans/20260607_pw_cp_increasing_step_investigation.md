@@ -1,22 +1,27 @@
 # 조사 + 수정 계획: PW-CP step 간 objective 증가
 
-> 작성 경위: `pw_cp`(SW-CP)의 per-step `*-pw_cp_obj_log.yaml`에서 objective(total tardiness)가
+> **[리네임 주석 · 2026-08-26]** 논문 표기에 맞춰 `pw_cp`/`PW-CP`/`PwCp*`/`incr_pw_cp` 는
+> `sw_cp`/`SW-CP`/`SwCp*`/`incr_sw_cp` 로, 모듈 `controller/pw_cp.py` 는
+> `controller/sw_cp.py` 로 이름이 바뀌었다. 본문 서술은 현재 이름으로 갱신했으나,
+> **당시 생성된 결과 파일명·커밋 내용 인용은 사실 보존을 위해 옛 이름(`pw_cp`) 그대로** 둔다.
+
+> 작성 경위: `sw_cp`(SW-CP)의 per-step `*-pw_cp_obj_log.yaml`에서 objective(total tardiness)가
 > **감소만 해야 하는데 증가하는** 현상을 발견하여 조사. 조사용 스크립트(`checks/`)와
-> `pw_cp.py`의 진단 로깅을 먼저 작성/stage한 뒤, 사후적으로 본 문서로 정리한다.
+> `sw_cp.py`의 진단 로깅을 먼저 작성/stage한 뒤, 사후적으로 본 문서로 정리한다.
 > 실제 **수정 구현은 별도 대화에서** 수행한다 (§6이 그 구현 명세).
 
 ## 1. 현상
 
-- 설정: `Outputs_scenarios/.../20260607_03/subroutine_flow.yaml` (incremental_pw_cp, batch 5→7,
-  `improvement_by_insertion_after_every_pw_cp: true`, `repeat_at_end_batch_size_while_improving: true`),
+- 설정: `Outputs_scenarios/.../20260607_03/subroutine_flow.yaml` (incremental_sw_cp, batch 5→7,
+  `improvement_by_insertion_after_every_sw_cp: true`, `repeat_at_end_batch_size_while_improving: true`),
   인스턴스 416 (n=350, c=50).
 - `4-incremental_pw_cp.1-incr_pw_cp.1-pw_cp_obj_log.yaml`의 "ObjVal after dispatch"가
   단조 감소하지 않고 여러 지점에서 증가:
   - note 135→140: 2082856 → 2082877 (+21)
   - note 224→229: 2081885 → 2081924 (+39)
   - note 265→270: 2081541 → 2081628 (+87)
-- 이 obj_log는 **단일 pw_cp 호출 내부**의 sliding-window iteration 기록(`result.sub_obj_store`)이다.
-  즉 한 pw_cp 안에서 commit이 진행되며 full objective가 step 간 증가한다.
+- 이 obj_log는 **단일 sw_cp 호출 내부**의 sliding-window iteration 기록(`result.sub_obj_store`)이다.
+  즉 한 sw_cp 안에서 commit이 진행되며 full objective가 step 간 증가한다.
 
 ## 2. 조사 방법 및 근거 (`checks/`)
 
@@ -67,12 +72,12 @@ sys.path 문제로 실패). `PermutationFlowshopScheduleLite`만 사용한 무�
 
 ### 보장 범위 정리
 
-- pw_cp는 **시작 incumbent에 대해서는** 비증가(≤ incumbent)이다(증명·brute-force 일치).
+- sw_cp는 **시작 incumbent에 대해서는** 비증가(≤ incumbent)이다(증명·brute-force 일치).
 - 그러나 **자기 내부 iteration 간에는 단조롭지 않다**. obj_log는 내부 iteration을 기록하므로 증가가 보인다.
 - 과거 분석에서 두 가지를 정정함: (a) "tail 고정→증가 불가"는 release time이 slack만큼 움직이는 점을 놓침,
   (b) "≤ incumbent" 증명을 "단조 감소"로 착각했던 것.
 
-## 4. 이미 적용한 변경 (staged) — `flowshop_tardiness/controller/pw_cp.py`
+## 4. 이미 적용한 변경 (staged) — `flowshop_tardiness/controller/sw_cp.py`
 
 조사용 진단 로깅. **알고리즘 동작은 바꾸지 않음** (관찰만).
 
@@ -91,7 +96,7 @@ sys.path 문제로 실패). `PermutationFlowshopScheduleLite`만 사용한 무�
 
 ## 5. 제안 수정 방식 검토 — "직전 schedule을 매 step right-justify"
 
-사용자 제안: **매 pw_cp step마다 직전 schedule을 right-justify하여 그로부터 LCT window를 계산.**
+사용자 제안: **매 sw_cp step마다 직전 schedule을 right-justify하여 그로부터 LCT window를 계산.**
 
 - "직전 schedule" = 그 step 시작 시점의 현재 상태 = `committed`(CP 순서) + `remaining`(incumbent 순서), left-justified.
 - 이를 right-justify하면 \(S^R\)이 **현재 상태의 tardiness를 보존**하는 기준이 된다.
@@ -119,7 +124,7 @@ sys.path 문제로 실패). `PermutationFlowshopScheduleLite`만 사용한 무�
 ### trade-off / 주의
 
 - refresh는 LCT가 더 tight해져 CP 탐색 자유도가 약간 감소(드물게 최종 해가 ±소량 변동). 위 통계상 무시 가능.
-- 비용: 매 iter `_make_all_dispatched`(O(n·c)) + `push_back`(O(n·c)) 추가. n=350,c=50에서 pw_cp당 ~수백만 연산
+- 비용: 매 iter `_make_all_dispatched`(O(n·c)) + `push_back`(O(n·c)) 추가. n=350,c=50에서 sw_cp당 ~수백만 연산
   → CP solve(10s) 대비 무시 가능.
 
 ## 6. 코드 변경 계획 (별도 대화에서 구현)
@@ -127,7 +132,7 @@ sys.path 문제로 실패). `PermutationFlowshopScheduleLite`만 사용한 무�
 > 목표: \(S^R\)/LCT 출처를 **"run() 1회 계산한 `given_sol`"** 에서 **"매 iteration 직전 상태를 right-justify"** 로 바꾼다.
 > 알고리즘의 나머지(EST, phase1/2, slide 규칙)는 그대로.
 
-### 변경 파일: `flowshop_tardiness/controller/pw_cp.py`
+### 변경 파일: `flowshop_tardiness/controller/sw_cp.py`
 
 **(A) `_run_loop`의 LCT 계산 교체 — 현재 `:708-713`**
 
@@ -178,14 +183,14 @@ else:
 
 ### 검증 (구현 후)
 
-1. `uv run python -m py_compile flowshop_tardiness/controller/pw_cp.py`
+1. `uv run python -m py_compile flowshop_tardiness/controller/sw_cp.py`
 2. `uv run python -m checks.check_swcp_rj_refresh_monotonic` → 0 증가 확인
 3. 인스턴스 416 재실행 → `subroutine_controller.log`에 `FULL OBJECTIVE INCREASED`가 사라지고
    per-step obj_log가 단조 감소인지 확인. 최종 obj가 수정 전 대비 악화되지 않는지 비교.
 
 ### 회귀/주의
 
-- pw_cp 결과(committed sequence)가 바뀌므로 **thesis 실험 수치가 변동**한다 → 재실행 필요.
+- sw_cp 결과(committed sequence)가 바뀌므로 **thesis 실험 수치가 변동**한다 → 재실행 필요.
 - profile_fixed_cnt>0 경로도 동일하게 `not_added_first_job` 기준을 쓰므로 구조 변화 없음(현 설정은 0).
 
 ## 7. `checks/` 파일명 (적용 완료) 및 실행법
@@ -209,8 +214,8 @@ push_back 0/2000, single_step 0/20000, multistep 4/4000, refresh 현재 14 vs re
 
 ## 8. 참조 (구현 전 확인)
 
-- `pw_cp.py` `run()`: `:211` / `given_sol` 생성·push_back `:281-293` / `_run_loop` 호출 `:324`
-- `pw_cp.py` `_run_loop()`: `:620` / LCT 계산 `:708-713` / `_make_all_dispatched` `:333`
+- `sw_cp.py` `run()`: `:211` / `given_sol` 생성·push_back `:281-293` / `_run_loop` 호출 `:324`
+- `sw_cp.py` `_run_loop()`: `:620` / LCT 계산 `:708-713` / `_make_all_dispatched` `:333`
 - `PwCpRunState.not_added_first_job`: `:125`
 - `PermutationFlowshopScheduleLite.push_back_tail_jobs_keep_tardiness`: `flowshop_tardiness/fm_prmu.py:164`
 - 알고리즘 명세(논문): `~/code/Juntaek-PhD-Thesis/contents/fc_prmu_sumTj.tex` (SW-CP, \(S^R\), 윈도우 \([EST, LCT]\))

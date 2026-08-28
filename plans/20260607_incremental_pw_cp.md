@@ -1,12 +1,17 @@
-# Plan: `incremental_pw_cp` 메서드 추가
+# Plan: `incremental_sw_cp` 메서드 추가
+
+> **[리네임 주석 · 2026-08-26]** 논문 표기에 맞춰 `pw_cp`/`PW-CP`/`PwCp*`/`incr_pw_cp` 는
+> `sw_cp`/`SW-CP`/`SwCp*`/`incr_sw_cp` 로, 모듈 `controller/pw_cp.py` 는
+> `controller/sw_cp.py` 로 이름이 바뀌었다. 본문 서술은 현재 이름으로 갱신했으나,
+> **당시 생성된 결과 파일명·커밋 내용 인용은 사실 보존을 위해 옛 이름(`pw_cp`) 그대로** 둔다.
 
 > 이 문서는 Sonnet subagent가 단독으로 구현할 수 있도록 정리된 구현 명세다.
 > 코드 작성 전 아래 "참조 파일/라인"을 먼저 읽어 현재 시그니처를 확인할 것.
 
 ## 목표
 
-`flowshop_tardiness/controller/fm_sumtj_cp_lns.py`에 `incremental_pw_cp` 메서드를 추가한다.
-batch size를 `start_batch_size`부터 `end_batch_size`까지 1씩 늘리면서 `pw_cp`를 순차 실행하고,
+`flowshop_tardiness/controller/fm_sumtj_cp_lns.py`에 `incremental_sw_cp` 메서드를 추가한다.
+batch size를 `start_batch_size`부터 `end_batch_size`까지 1씩 늘리면서 `sw_cp`를 순차 실행하고,
 각 step마다 선택적으로 `improve_by_insertion(subseq_size=1, max_passes=1)`을 실행한다.
 
 - ramp-up 동안에는 improvement 여부를 판단하지 않는다 — 별도 stopping criterion 없이 `end_batch_size`까지 순차 진행한다.
@@ -18,13 +23,13 @@ batch size를 `start_batch_size`부터 `end_batch_size`까지 1씩 늘리면서 
 ## 시그니처
 
 ```python
-def incremental_pw_cp(
+def incremental_sw_cp(
     self,
     start_batch_size: int,
     end_batch_size: int,
     max_time_per_add: float | None = None,
     solver_thread_cnt: int | None = None,
-    improvement_by_insertion_after_every_pw_cp: bool = True,
+    improvement_by_insertion_after_every_sw_cp: bool = True,
     repeat_at_end_batch_size_while_improving: bool = True,
 ) -> None:
 ```
@@ -38,9 +43,9 @@ def incremental_pw_cp(
 
 ## 구현 방식 (중요: 직접 호출 금지)
 
-`pw_cp` / `improve_by_insertion`을 **직접 Python 메서드로 호출하면 안 된다.**
+`sw_cp` / `improve_by_insertion`을 **직접 Python 메서드로 호출하면 안 된다.**
 이 코드베이스에서 서브루틴은 routix 디스패처(`_run_flow` → `_call_method`)를 통해
-method context stack에 push 되어야 하며, 그래야 `pw_cp`가 출력하는
+method context stack에 push 되어야 하며, 그래야 `sw_cp`가 출력하는
 `_obj_log.yaml` 경로가 호출마다 distinct하게 생성된다
 (`get_file_path_for_subroutine`가 context stack의 call_count를 사용함).
 직접 호출하면 매 반복이 동일 경로를 덮어써서 마지막 반복 로그만 남는다.
@@ -53,12 +58,12 @@ method context stack에 push 되어야 하며, 그래야 `pw_cp`가 출력하는
 step 빌드/실행을 지역 함수로 추출해 ramp-up 루프와 polish 단계가 공유한다(DRY).
 
 ```python
-subroutine_name = "incr_pw_cp"  # context stack에 push될 이름 (repeat의 "reps"와 동일한 역할)
+subroutine_name = "incr_pw_cp"  # context stack에 push될 이름 (repeat의 "reps"와 동일한 역할). 현재 코드는 "incr_sw_cp"
 
 def build_steps(batch_size: int) -> list[dict]:
     steps: list[dict] = [
         {
-            "method": "pw_cp",
+            "method": "sw_cp",
             "params": {
                 "added_batch_size": batch_size,
                 "profile_fixed_cnt": 0,
@@ -69,7 +74,7 @@ def build_steps(batch_size: int) -> list[dict]:
             },
         },
     ]
-    if improvement_by_insertion_after_every_pw_cp:
+    if improvement_by_insertion_after_every_sw_cp:
         steps.append(
             {
                 "method": "improve_by_insertion",
@@ -127,14 +132,14 @@ while True:
 
 다음 내용을 포함할 것:
 
-- 메서드 요약: incumbent 시퀀스에 대해 batch size를 늘려가며 `pw_cp`를 순차 실행하고
+- 메서드 요약: incumbent 시퀀스에 대해 batch size를 늘려가며 `sw_cp`를 순차 실행하고
   옵션에 따라 step마다 insertion 개선을 수행한다는 설명.
 - Args:
   - `start_batch_size (int)`: 시작 batch size (>= 1).
   - `end_batch_size (int)`: 종료 batch size (포함, >= start_batch_size).
-  - `max_time_per_add (float | None)`: 각 `pw_cp` CP solve 1회당 시간 제한. `pw_cp`로 그대로 전달.
-  - `solver_thread_cnt (int | None)`: CP 솔버 스레드 수. `pw_cp`로 그대로 전달.
-  - `improvement_by_insertion_after_every_pw_cp (bool)`: 각 `pw_cp` 후
+  - `max_time_per_add (float | None)`: 각 `sw_cp` CP solve 1회당 시간 제한. `sw_cp`로 그대로 전달.
+  - `solver_thread_cnt (int | None)`: CP 솔버 스레드 수. `sw_cp`로 그대로 전달.
+  - `improvement_by_insertion_after_every_sw_cp (bool)`: 각 `sw_cp` 후
     `improve_by_insertion(subseq_size=1, max_passes=1)` 실행 여부. 기본 True.
   - `repeat_at_end_batch_size_while_improving (bool)`: True면 ramp-up 후
     `end_batch_size` step을 incumbent objective가 strict 개선되는 동안 반복. 기본 True.
@@ -144,7 +149,7 @@ while True:
 ## 변경 파일 / 위치
 
 - `flowshop_tardiness/controller/fm_sumtj_cp_lns.py`
-  - `repeat_while_improvement` 메서드(`:1568`) 아래에 `incremental_pw_cp` 추가.
+  - `repeat_while_improvement` 메서드(`:1568`) 아래에 `incremental_sw_cp` 추가.
 
 ## import 확인
 
@@ -157,19 +162,19 @@ while True:
 ## YAML 사용 예시
 
 ```yaml
-- method: incremental_pw_cp
+- method: incremental_sw_cp
   params:
     start_batch_size: 3
     end_batch_size: 10
     max_time_per_add: 10
     solver_thread_cnt: 1
-    improvement_by_insertion_after_every_pw_cp: true
+    improvement_by_insertion_after_every_sw_cp: true
     repeat_at_end_batch_size_while_improving: true
 ```
 
 ## 참조 파일/라인 (구현 전 확인)
 
-- `pw_cp` 메서드: `fm_sumtj_cp_lns.py:1359` (인자: added_batch_size, profile_fixed_cnt,
+- `sw_cp` 메서드: `fm_sumtj_cp_lns.py:1359` (인자: added_batch_size, profile_fixed_cnt,
   step_size_on_improve, step_size_on_no_improve, max_time_per_add, solver_thread_cnt, ...)
 - `improve_by_insertion` 메서드: `fm_sumtj_cp_lns.py:1081` (인자: subseq_size, max_passes, ...)
 - `repeat_while_improvement` 패턴: `fm_sumtj_cp_lns.py:1568` (구조/네이밍 참고)
