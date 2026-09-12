@@ -336,7 +336,7 @@ if __name__ == "__main__":
         sys.path.insert(0, str(repo_root))
 
     instances = []
-    for i in range(0, 2):
+    for i in range(2):
         vrm_path = repo_root / "resources" / "vrm" / f"{i}.txt"
         assert vrm_path.exists(), f"VRM file not found: {vrm_path}"
         with vrm_path.open("r") as f:

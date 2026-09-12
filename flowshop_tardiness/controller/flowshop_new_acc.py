@@ -1,5 +1,5 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from .obj_val_vector import ObjValVector
 
@@ -77,7 +77,7 @@ class PermutationFlowshopEvaluator:
             for i in range(m):  # paper i=1..m
                 up = c[i - 1][j] if i > 0 else 0  # c_{i-1,j} or c_{0,j}=0
                 left = c[i][j - 1] if j > 0 else 0  # c_{i,j-1} or c_{i,0}=0
-                c[i][j] = (up if up > left else left) + self.p[i][job]  # c_{ij}
+                c[i][j] = (max(left, up)) + self.p[i][job]  # c_{ij}
 
         # ============================================================
         # 2) Calculate \bar{c}_{ij} and cp_{ij}  -- Fig.9 middle block
@@ -158,7 +158,7 @@ class PermutationFlowshopEvaluator:
                 left = c[i][j - 1] if j > 0 else 0
                 up = csigma[i - 1][j] if i > 0 else 0
                 # paper: max(c_{i,j-1}, c^{σ}_{i-1,j}) + p_{i,σ}
-                csigma[i][j] = (left if left > up else up) + self.p[i][sigma]
+                csigma[i][j] = (max(up, left)) + self.p[i][sigma]
 
         # ============================================================
         # 4) Calculate AOF_j (prefix objective)  -- Fig.9 bottom block
@@ -321,8 +321,7 @@ class PermutationFlowshopEvaluator:
                 for i in range(i_star + 1, m):
                     # Load[i] currently plays role of "left" (same machine, previous job completion)
                     # Load[i-1] is "up" (previous machine, same job completion)
-                    if Load[i - 1] > Load[i]:
-                        Load[i] = Load[i - 1]
+                    Load[i] = max(Load[i], Load[i - 1])
                     Load[i] += self.p[i][job]
                     C[i][j + 1] = Load[i]
 
@@ -370,8 +369,7 @@ class PermutationFlowshopEvaluator:
                 # end
                 #
                 for i in range(i_star + 1, m):
-                    if Load[i - 1] > Load[i]:
-                        Load[i] = Load[i - 1]
+                    Load[i] = max(Load[i], Load[i - 1])
                     Load[i] += self.p[i][job]
                     C[i][j + 1] = Load[i]
 

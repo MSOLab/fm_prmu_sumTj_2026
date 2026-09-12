@@ -1,7 +1,8 @@
 import datetime
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from mbls.cpsat import ObjValueBoundStore
 from routix import (

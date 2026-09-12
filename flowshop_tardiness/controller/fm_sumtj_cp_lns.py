@@ -3,7 +3,8 @@ import math
 import random
 import time
 from collections import defaultdict
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Literal
 
 from routix import DynamicDataObject, ElapsedTimer
 from routix.util.comparison import float_a_stl_b
@@ -16,6 +17,8 @@ from .list_window_slider import window_slide_over_list
 from .schedule_metric import ScheduleMetric
 
 REL_TOL = 1e-9  # for safe float comparisons
+InitMethod = Literal["dispatch", "neh-ms", "lb_only"]
+_INIT_METHODS: tuple[InitMethod, ...] = ("dispatch", "neh-ms", "lb_only")
 
 
 class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
@@ -315,8 +318,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             for i in i_list:
                 p = pmap[job_id][i]
                 start_time = f[i]
-                if prev > start_time:
-                    start_time = prev
+                start_time = max(start_time, prev)
                 end_time = start_time + p
                 f[i] = end_time
                 prev = end_time
@@ -458,8 +460,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         prev = 0
         for i in self.stage_ids:
             start = stage_2_endtime_map[i]
-            if prev > start:
-                start = prev
+            start = max(start, prev)
             end = start + pmap[i]
             return_dict[i] = end
             prev = end
@@ -510,8 +511,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             f_new = self._simulate_append(f_prev, j)
             C_last = f_new[self.last_stage_id]
             Tj = C_last - dmap[j]
-            if Tj < 0:
-                Tj = 0
+            Tj = max(Tj, 0)
             pos_2_stage_2_endtime_map[j_idx + 1] = f_new
             prefix_sumTj[j_idx + 1] = prefix_sumTj.get(j_idx, 0) + Tj
         return pos_2_stage_2_endtime_map, prefix_sumTj
@@ -603,8 +603,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             new_f = self._simulate_append(f0, job_id)
             Cmax = new_f[self.last_stage_id]
             sumTj = Cmax - dmap[job_id]
-            if sumTj < 0:
-                sumTj = 0
+            sumTj = max(sumTj, 0)
             return 0, ScheduleMetric(
                 sumTj,
                 [new_f[i] for i in self.stage_ids],
@@ -683,10 +682,12 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                     return pos, new_metric
 
             # choose best
-            if (best_crit1 is None) or (crit1 < best_crit1):
-                best_pos, best_metric = pos, new_metric
-                best_crit1, best_crit2 = crit1, crit2
-            elif (crit1 == best_crit1) and (best_crit2 is None or crit2 < best_crit2):
+            if (
+                (best_crit1 is None)
+                or (crit1 < best_crit1)
+                or (crit1 == best_crit1)
+                and (best_crit2 is None or crit2 < best_crit2)
+            ):
                 best_pos, best_metric = pos, new_metric
                 best_crit1, best_crit2 = crit1, crit2
                 # if still tied, earlier position is preferred (stable)
@@ -1221,88 +1222,49 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
 
     def compute_preemptive_last_stage_lb(
         self,
-        init_by_neh_ms: bool = False,
+        init_method: InitMethod = "dispatch",
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
     ) -> None:
         from ..graph_model.single_mc_pmtn import SingleMachinePreemptionMcf
 
+        # Literal is not enforced at runtime (routix dispatches via getattr/**kwargs),
+        # so validate explicitly.
+        if init_method not in _INIT_METHODS:
+            raise ValueError(f"Unknown init_method: {init_method!r}")
+
         sub_timer = ElapsedTimer()
         last_stage_only_mdl = SingleMachinePreemptionMcf.from_instance(self.instance)
         last_stage_only_mdl.solve()
 
-        if last_stage_only_mdl.is_optimal():
-            obj_bound = last_stage_only_mdl.get_obj_value()
-            logging.info(
-                "Preemptive last-stage-only model solved optimally with objective value %d; took %s",
-                obj_bound,
+        if not last_stage_only_mdl.is_optimal():
+            logging.warning(
+                "compute_preemptive_last_stage_lb: MCF model not optimal; "
+                "skipping LB registration (init_method=%s, elapsed=%s)",
+                init_method,
                 sub_timer.get_formatted_elapsed_time(),
             )
+            return
 
-            def _make_schedule_from(seq: list[str]) -> FlowshopSchedule:
-                if init_by_neh_ms:
-                    schedule, _ = self._build_neh_schedule(
-                        seq,
-                        tie_breaker="makespan",
-                        error_if_infeasible=error_if_infeasible,
-                    )
-                    return schedule
-                return self.get_dispatched_schedule(seq)
+        obj_bound = last_stage_only_mdl.get_obj_value()
+        logging.info(
+            "compute_preemptive_last_stage_lb: MCF LB = %d (init_method=%s, took %s)",
+            obj_bound,
+            init_method,
+            sub_timer.get_formatted_elapsed_time(),
+        )
 
-            seq_by_start = last_stage_only_mdl.get_job_start_sequence()
-            schedule_by_start = _make_schedule_from(seq_by_start)
-            obj_value_by_start = self.get_obj_value(schedule_by_start)
-
-            seq_by_end = last_stage_only_mdl.get_job_completion_sequence()
-            schedule_by_end = _make_schedule_from(seq_by_end)
-            obj_value_by_end = self.get_obj_value(schedule_by_end)
-
-            seq_by_avg = last_stage_only_mdl.get_job_average_sequence()
-            schedule_by_avg = _make_schedule_from(seq_by_avg)
-            obj_value_by_avg = self.get_obj_value(schedule_by_avg)
-
-            label = "NEH-MS" if init_by_neh_ms else "Dispatched"
-            logging.info("%s schedules' total tardiness:", label)
-            logging.info(" - by start time sequence: %d", obj_value_by_start)
-            logging.info(" - by completion time sequence: %d", obj_value_by_end)
-            logging.info(" - by average time sequence: %d", obj_value_by_avg)
-            # Choose the best among the three sequence-based candidates
-            best_obj_value = min(obj_value_by_start, obj_value_by_end, obj_value_by_avg)
-            if best_obj_value == obj_value_by_start:
-                best_schedule = schedule_by_start
-                method_used = "start time"
-            elif best_obj_value == obj_value_by_end:
-                best_schedule = schedule_by_end
-                method_used = "completion time"
-            else:
-                best_schedule = schedule_by_avg
-                method_used = "average time"
-            logging.info(
-                "Among %s schedules, best total tardiness is %d by %s sequence.",
-                label,
-                best_obj_value,
-                method_used,
-            )
-
-            # Create report and register the new solution
+        if init_method == "lb_only":
+            log_time = self.timer.elapsed_sec
             report = FsSubroutineReport(
                 elapsed_time=sub_timer.elapsed_sec,
-                obj_value=best_obj_value,
+                obj_value=None,
                 obj_bound=obj_bound,
-                is_init=True,
+                is_init=False,
             )
             sub_timer.reset()
-            was_updated = self.solution_manager.register(report, best_schedule)
+            self.solution_manager.register(report, None)
 
-            # Log
-            log_time = self.timer.elapsed_sec
-            last_obj_value = self.obj_store.get_last_obj_value()
-            best_obj_value = (
-                best_obj_value
-                if last_obj_value is None or best_obj_value < last_obj_value
-                else last_obj_value
-            )
-            self.add_obj_value_log(log_time, best_obj_value, is_maximize=None)
             last_obj_bound = self.obj_store.get_last_obj_bound()
             best_obj_bound = (
                 obj_bound
@@ -1312,15 +1274,94 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             self.add_obj_bound_log(log_time, best_obj_bound, is_maximize=None)
             _last_timestamp_note = self._get_call_context_of_current_method()
             self.obj_store.add_last_timestamp_note(
-                _last_timestamp_note, obj_value_is_valid=True, obj_bound_is_valid=True
+                _last_timestamp_note,
+                obj_value_is_valid=False,
+                obj_bound_is_valid=True,
             )
-            # Draw Gantt chart if the solution is an improvement
-            if was_updated and draw_gantt:
-                self.export_incumbent_to_yaml()
+            return
 
-    # Subroutine: Prefix-window CP
+        def _make_schedule_from(seq: list[str]) -> FlowshopSchedule:
+            if init_method == "neh-ms":
+                schedule, _ = self._build_neh_schedule(
+                    seq,
+                    tie_breaker="makespan",
+                    error_if_infeasible=error_if_infeasible,
+                )
+                return schedule
+            return self.get_dispatched_schedule(seq)
 
-    def pw_cp(
+        seq_by_start = last_stage_only_mdl.get_job_start_sequence()
+        schedule_by_start = _make_schedule_from(seq_by_start)
+        obj_value_by_start = self.get_obj_value(schedule_by_start)
+
+        seq_by_end = last_stage_only_mdl.get_job_completion_sequence()
+        schedule_by_end = _make_schedule_from(seq_by_end)
+        obj_value_by_end = self.get_obj_value(schedule_by_end)
+
+        seq_by_avg = last_stage_only_mdl.get_job_average_sequence()
+        schedule_by_avg = _make_schedule_from(seq_by_avg)
+        obj_value_by_avg = self.get_obj_value(schedule_by_avg)
+
+        label = "NEH-MS" if init_method == "neh-ms" else "Dispatched"
+        logging.info("%s schedules' total tardiness:", label)
+        logging.info(" - by start time sequence: %d", obj_value_by_start)
+        logging.info(" - by completion time sequence: %d", obj_value_by_end)
+        logging.info(" - by average time sequence: %d", obj_value_by_avg)
+        # Choose the best among the three sequence-based candidates
+        best_obj_value = min(obj_value_by_start, obj_value_by_end, obj_value_by_avg)
+        if best_obj_value == obj_value_by_start:
+            best_schedule = schedule_by_start
+            method_used = "start time"
+        elif best_obj_value == obj_value_by_end:
+            best_schedule = schedule_by_end
+            method_used = "completion time"
+        else:
+            best_schedule = schedule_by_avg
+            method_used = "average time"
+        logging.info(
+            "Among %s schedules, best total tardiness is %d by %s sequence.",
+            label,
+            best_obj_value,
+            method_used,
+        )
+
+        # Create report and register the new solution
+        report = FsSubroutineReport(
+            elapsed_time=sub_timer.elapsed_sec,
+            obj_value=best_obj_value,
+            obj_bound=obj_bound,
+            is_init=True,
+        )
+        sub_timer.reset()
+        was_updated = self.solution_manager.register(report, best_schedule)
+
+        # Log
+        log_time = self.timer.elapsed_sec
+        last_obj_value = self.obj_store.get_last_obj_value()
+        best_obj_value = (
+            best_obj_value
+            if last_obj_value is None or best_obj_value < last_obj_value
+            else last_obj_value
+        )
+        self.add_obj_value_log(log_time, best_obj_value, is_maximize=None)
+        last_obj_bound = self.obj_store.get_last_obj_bound()
+        best_obj_bound = (
+            obj_bound
+            if last_obj_bound is None or obj_bound > last_obj_bound
+            else last_obj_bound
+        )
+        self.add_obj_bound_log(log_time, best_obj_bound, is_maximize=None)
+        _last_timestamp_note = self._get_call_context_of_current_method()
+        self.obj_store.add_last_timestamp_note(
+            _last_timestamp_note, obj_value_is_valid=True, obj_bound_is_valid=True
+        )
+        # Draw Gantt chart if the solution is an improvement
+        if was_updated and draw_gantt:
+            self.export_incumbent_to_yaml()
+
+    # Subroutine: Sliding-window CP
+
+    def sw_cp(
         self,
         added_batch_size: int | None = None,
         profile_fixed_cnt: int | None = None,
@@ -1330,6 +1371,7 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
         solver_thread_cnt: int | None = None,
         error_if_infeasible: bool = False,
         draw_gantt: bool = False,
+        refresh_deadline_every_step: bool = False,
     ):
         """
         Builds a CP-guided solution using job sequence of the incumbent solution.
@@ -1352,6 +1394,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                 Defaults to False.
             draw_gantt (bool, optional): Whether to save Gantt charts for intermediate and final solutions.
                 Defaults to False.
+            refresh_deadline_every_step (bool, optional): When False (default), the per-stage LCT upper
+                bound is derived once from the initial right-justified reference schedule (current
+                behavior; guarantees only sweep-level non-increase). When True, LCT is recomputed
+                every iteration for per-iteration monotonicity. Defaults to False.
         """
         sub_timer = ElapsedTimer()
 
@@ -1373,10 +1419,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             output_path = self.get_file_path_for_subroutine("_0_init_solution.yaml")
             self.export_incumbent_to_yaml(output_path=output_path)
 
-        from .pw_cp import PwCpConstructor, PwCpResult
+        from .sw_cp import SwCpConstructor, SwCpResult
 
-        constructor = PwCpConstructor(self)
-        result: PwCpResult = constructor.run(
+        constructor = SwCpConstructor(self)
+        result: SwCpResult = constructor.run(
             job_sequence,
             added_batch_size=added_batch_size,
             profile_fixed_cnt=profile_fixed_cnt,
@@ -1386,9 +1432,10 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
             solver_thread_cnt=solver_thread_cnt,
             error_if_infeasible=error_if_infeasible,
             draw_gantt=draw_gantt,
+            refresh_deadline_every_step=refresh_deadline_every_step,
         )
         obj_value = self.get_obj_value(result.schedule)
-        logging.info(f"PW-CP done with total tardiness {obj_value}")
+        logging.info(f"SW-CP done with total tardiness {obj_value}")
         # Create report for the final solution and register it
         final_report = FsSubroutineReport(
             elapsed_time=sub_timer.elapsed_sec,
@@ -1592,3 +1639,136 @@ class FlowshopTardinessCpLnsController(FlowshopTardinessControllerCore):
                         f"[Repeat] Max no-improve reached ({_max_no_improve}). Stopping repeats."
                     )
                     break
+
+    def incremental_sw_cp(
+        self,
+        start_batch_size: int,
+        end_batch_size: int,
+        max_time_per_add: float | None = None,
+        solver_thread_cnt: int | None = None,
+        improvement_by_insertion_after_every_sw_cp: bool = True,
+        repeat_at_end_batch_size_while_improving: bool = True,
+        refresh_deadline_every_step: bool = False,
+    ) -> None:
+        """Runs sw_cp with incrementally increasing batch size.
+
+        Executes ``sw_cp`` sequentially for each batch size from
+        ``start_batch_size`` to ``end_batch_size`` (inclusive), optionally
+        followed by ``improve_by_insertion(subseq_size=1, max_passes=1)``
+        after every ``sw_cp`` step. Stops early only when the global stopping
+        condition is met; no improvement-based stopping criterion is applied
+        during the ramp-up.
+
+        When ``repeat_at_end_batch_size_while_improving`` is True, after the
+        ramp-up reaches ``end_batch_size`` an extra polish phase repeats the
+        ``end_batch_size`` step while the incumbent objective keeps strictly
+        improving (same logic as ``repeat_while_improvement``), stopping on the
+        first non-improving repetition or when the global stopping condition is
+        met.
+
+        Each step is dispatched via ``temporarily_extended_context`` +
+        ``_run_flow`` so that per-step ``_obj_log.yaml`` paths are distinct.
+
+        Args:
+            start_batch_size (int): Starting batch size (>= 1).
+            end_batch_size (int): Ending batch size, inclusive
+                (>= start_batch_size).
+            max_time_per_add (float | None): Time limit per CP solve call
+                inside ``sw_cp``. Passed through unchanged. Defaults to None.
+            solver_thread_cnt (int | None): Number of CP solver threads.
+                Passed through to ``sw_cp`` unchanged. Defaults to None.
+            improvement_by_insertion_after_every_sw_cp (bool): When True,
+                runs ``improve_by_insertion(subseq_size=1, max_passes=1)``
+                after each ``sw_cp`` call. Defaults to True.
+            repeat_at_end_batch_size_while_improving (bool): When True, repeats
+                the ``end_batch_size`` step after the ramp-up while the
+                incumbent objective strictly improves. Defaults to True.
+            refresh_deadline_every_step (bool): Passed through to each ``sw_cp`` step. When True,
+                sw_cp recomputes the per-stage LCT bound every iteration for per-iteration
+                monotonicity. Defaults to False (current behavior).
+
+        Raises:
+            ValueError: If ``start_batch_size < 1`` or
+                ``end_batch_size < start_batch_size``.
+        """
+        if start_batch_size < 1:
+            raise ValueError(f"start_batch_size must be >= 1, got {start_batch_size}")
+        if end_batch_size < start_batch_size:
+            raise ValueError(
+                f"end_batch_size ({end_batch_size}) must be >= start_batch_size ({start_batch_size})"
+            )
+
+        subroutine_name = "incr_sw_cp"
+
+        def build_steps(batch_size: int) -> list[dict]:
+            steps: list[dict] = [
+                {
+                    "method": "sw_cp",
+                    "params": {
+                        "added_batch_size": batch_size,
+                        "profile_fixed_cnt": 0,
+                        "step_size_on_improve": batch_size,
+                        "step_size_on_no_improve": 1,
+                        "max_time_per_add": max_time_per_add,
+                        "solver_thread_cnt": solver_thread_cnt,
+                        "refresh_deadline_every_step": refresh_deadline_every_step,
+                    },
+                },
+            ]
+            if improvement_by_insertion_after_every_sw_cp:
+                steps.append(
+                    {
+                        "method": "improve_by_insertion",
+                        "params": {"subseq_size": 1, "max_passes": 1},
+                    }
+                )
+            return steps
+
+        def run_step(batch_size: int) -> None:
+            with self.temporarily_extended_context(subroutine_name):
+                self._run_flow(DynamicDataObject.from_obj(build_steps(batch_size)))
+
+        for batch_size in range(start_batch_size, end_batch_size + 1):
+            if self.is_stopping_condition():
+                logging.info(
+                    f"[IncrementalSwCp] Stopping condition met at batch_size={batch_size}."
+                )
+                break
+            logging.info(f"[IncrementalSwCp] batch_size={batch_size}")
+            run_step(batch_size)
+
+        if not repeat_at_end_batch_size_while_improving:
+            return
+
+        # Polish phase: keep repeating the end_batch_size step while the
+        # incumbent objective strictly improves (same logic as
+        # repeat_while_improvement).
+        incumbent_sol = self.solution_manager.get_incumbent()
+        obj_before = (
+            math.inf if incumbent_sol is None else self.get_obj_value(incumbent_sol)
+        )
+        while True:
+            if self.is_stopping_condition():
+                logging.info(
+                    "[IncrementalSwCp] Stopping condition met during end-batch repeat."
+                )
+                break
+            logging.info(
+                f"[IncrementalSwCp] Repeating end_batch_size={end_batch_size} while improving."
+            )
+            run_step(end_batch_size)
+
+            incumbent_sol = self.solution_manager.get_incumbent()
+            obj_after = (
+                math.inf if incumbent_sol is None else self.get_obj_value(incumbent_sol)
+            )
+            if float_a_stl_b(obj_after, obj_before):
+                logging.info(
+                    f"[IncrementalSwCp] Improvement ({obj_before} -> {obj_after}). Continuing."
+                )
+                obj_before = obj_after
+            else:
+                logging.info(
+                    f"[IncrementalSwCp] No improvement ({obj_before} -> {obj_after}). Stopping end-batch repeat."
+                )
+                break

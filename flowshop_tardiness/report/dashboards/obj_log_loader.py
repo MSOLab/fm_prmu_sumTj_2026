@@ -10,8 +10,8 @@ The on-disk layout written by ``FsSingleInstanceRunner`` is::
 Notes mark the END of a controller step. A data point at time ``t`` belongs to
 the segment whose ``(prev_end, end_sec]`` window contains ``t``. The label
 format from routix is ``"<step_idx>-<subroutine_name>"`` for top-level calls
-and ``"5-repeat_while_improvement.1-reps.1-pw_cp"`` for nested ones; for the
-chart we keep the innermost method as ``subroutine_name`` so e.g. ``pw_cp``
+and ``"5-repeat_while_improvement.1-reps.1-sw_cp"`` for nested ones; for the
+chart we keep the innermost method as ``subroutine_name`` so e.g. ``sw_cp``
 gets a stable symbol/legend regardless of which iteration produced it.
 
 Failure policy mirrors the upstream ``ffc_ddw_sum_et`` chart: raise loudly on
@@ -48,7 +48,7 @@ class CallSegment:
     """One controller-step's contribution to a single series."""
 
     call_index: int  # synthetic 1-based sequence index across all notes
-    subroutine_name: str  # innermost method name (e.g. "pw_cp")
+    subroutine_name: str  # innermost method name (e.g. "sw_cp")
     prefixed_subroutine_name: str  # raw note label (may include nested chain)
     global_start_sec: float
     global_end_sec: float
@@ -71,7 +71,7 @@ class InstanceProgression:
 
 
 def _innermost_method_name(label: str) -> str:
-    # "5-repeat_while_improvement.1-reps.1-pw_cp" -> "pw_cp"
+    # "5-repeat_while_improvement.1-reps.1-sw_cp" -> "sw_cp"
     # "2-initialize_by_edd" -> "initialize_by_edd"
     last = label.rsplit(".", 1)[-1]
     m = _STEP_LABEL_RE.match(last)

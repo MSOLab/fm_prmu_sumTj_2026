@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from ortools.graph.python.min_cost_flow import SimpleMinCostFlow
@@ -109,6 +110,30 @@ class SingleMachinePreemptionMcf:
             for j in self.calJ
         }
 
+        # Diagnostic log: instance characterization for LB intuition
+        n = len(self.calJ)
+        slacks = [self.d[j] - self.r[j] - self.p[j] for j in self.calJ]
+        n_potentially_tardy = sum(1 for s in slacks if s < 0)
+        max_cost = max(
+            (cost for j_costs in self.c.values() for cost in j_costs.values()),
+            default=0,
+        )
+        logging.info(
+            "MCF LB instance %s: |J|=%d, t_max=%d, sum_p=%d, "
+            "slack (d_j - r_j - p_j) min/mean/max=%d/%.1f/%d, "
+            "potentially_tardy_jobs=%d/%d, max_unit_cost=%d",
+            self.name,
+            n,
+            self.t_max,
+            sum(self.p.values()),
+            min(slacks),
+            sum(slacks) / n,
+            max(slacks),
+            n_potentially_tardy,
+            n,
+            max_cost,
+        )
+
     def _build_mcf(self) -> None:
         mcf = SimpleMinCostFlow()
 
@@ -166,6 +191,11 @@ class SingleMachinePreemptionMcf:
         if self.status_optimal:
             self.opt_cost = self.mcf.optimal_cost()
         else:
+            logging.warning(
+                "MCF LB solve did not return OPTIMAL for %s: status=%s",
+                self.name,
+                status,
+            )
             self.opt_cost = 0
 
     def is_optimal(self) -> bool:

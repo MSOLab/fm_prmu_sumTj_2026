@@ -5,7 +5,6 @@ method must still contribute to that method's RPDf via carry-forward,
 even though they don't contribute to the time%.
 """
 
-import tempfile
 from pathlib import Path
 
 import pandas as pd

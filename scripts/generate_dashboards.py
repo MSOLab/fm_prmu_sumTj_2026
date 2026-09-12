@@ -101,10 +101,10 @@ def main() -> int:
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
-    from flowshop_tardiness.report.dashboards import (  # noqa: E402  (post sys.path)
+    from flowshop_tardiness.report.dashboards import (
         write_post_run_dashboard_artifacts,
     )
-    from fs_config import BaselineColumnMapping  # noqa: E402
+    from fs_config import BaselineColumnMapping
 
     baseline_csv: Path | None = args.baseline
     column_mapping = BaselineColumnMapping()

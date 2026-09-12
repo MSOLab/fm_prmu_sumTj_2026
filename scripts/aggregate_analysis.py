@@ -18,9 +18,10 @@ import argparse
 import logging
 import shutil
 import sys
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import yaml
 
@@ -41,9 +42,7 @@ def _resolve_and_validate(path: str) -> Path:
     if not p.is_dir():
         raise SystemExit(f"ERROR: scenario directory not found: {p}")
     if not (p / "multi_instance_summary.csv").exists():
-        raise SystemExit(
-            f"ERROR: {p} does not contain multi_instance_summary.csv"
-        )
+        raise SystemExit(f"ERROR: {p} does not contain multi_instance_summary.csv")
     return p
 
 
@@ -143,8 +142,7 @@ def _resolve_baseline(
 
     if len(candidates) > 1:
         logger.error(
-            "Scenarios disagree on baseline_csv_path: %s. "
-            "Pass --baseline explicitly.",
+            "Scenarios disagree on baseline_csv_path: %s. Pass --baseline explicitly.",
             sorted(candidates),
         )
         raise SystemExit(1)
@@ -283,10 +281,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     _materialize_scenarios(scenario_paths, analysis_dir, args.link)
 
-    from flowshop_tardiness.report.dashboards import (  # noqa: E402
+    from flowshop_tardiness.report.dashboards import (
         write_post_run_dashboard_artifacts,
     )
-    from flowshop_tardiness.report.dashboards.multi_scenario_report import (  # noqa: E402
+    from flowshop_tardiness.report.dashboards.multi_scenario_report import (
         DEFAULT_RPD_FORMATS,
         DEFAULT_STAT_PAIRS,
         aggregate_scenario_summaries,
@@ -295,9 +293,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         write_multi_scenario_excel_report,
     )
 
-    summary_df = aggregate_scenario_summaries(
-        scenario_paths, out_dir=analysis_dir
-    )
+    summary_df = aggregate_scenario_summaries(scenario_paths, out_dir=analysis_dir)
 
     baseline_path, column_mapping = _resolve_baseline(
         args.baseline, scenario_paths, repo_root

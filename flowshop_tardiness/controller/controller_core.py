@@ -3,9 +3,10 @@ import heapq
 import logging
 import math
 from collections import defaultdict
+from collections.abc import Sequence
 from itertools import permutations
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from mbls.cpsat import (
     CpsatSolverReport,

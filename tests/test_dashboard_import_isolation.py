@@ -76,8 +76,7 @@ def _list_solver_modules_after(import_stmt: str) -> list[str]:
 def test_solver_libs_not_imported(import_stmt: str) -> None:
     loaded = _list_solver_modules_after(import_stmt)
     assert not loaded, (
-        f"Import should be solver-free but pulled in: {loaded}\n"
-        f"  stmt: {import_stmt}"
+        f"Import should be solver-free but pulled in: {loaded}\n  stmt: {import_stmt}"
     )
 
 

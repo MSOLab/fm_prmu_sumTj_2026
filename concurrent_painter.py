@@ -5,8 +5,8 @@ from mbls.cpsat import ObjValueBoundStore
 from mbls.painter import ObjValueBoundPlotter
 from routix.io import extract_prefix_from_filename
 
-from flowshop_tardiness.painter import GanttPlotter
 from flowshop_tardiness.io_solution import get_end_time_dict, get_start_time_dict
+from flowshop_tardiness.painter import GanttPlotter
 
 
 def draw_gantt_charts_from_solutions(

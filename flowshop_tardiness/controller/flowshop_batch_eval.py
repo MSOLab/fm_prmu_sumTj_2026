@@ -1,8 +1,8 @@
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from .obj_val_vector import ObjValVector
 
@@ -108,7 +108,7 @@ class PermutationFlowshopSubseqEvaluator:
             for i in range(m):
                 up = c[i - 1][j] if i > 0 else 0
                 left = c[i][j - 1] if j > 0 else 0
-                c[i][j] = (up if up > left else left) + p[i][job]
+                c[i][j] = (max(left, up)) + p[i][job]
 
         # 2) reverse DP cbar/cp: m x L
         cbar_full = [[0] * (L + 1) for _ in range(m + 1)]
@@ -162,7 +162,7 @@ class PermutationFlowshopSubseqEvaluator:
                 for i in range(m):
                     left = left_boundary[i] if t == 0 else F_prev_job[i]
                     up = F_curr_job[i - 1] if i > 0 else 0
-                    start = left if left > up else up
+                    start = max(up, left)
                     F_curr_job[i] = start + p[i][job]
                 subseq_last[t][pos] = F_curr_job[m - 1]
                 F_prev_job = F_curr_job
@@ -242,8 +242,7 @@ class PermutationFlowshopSubseqEvaluator:
             if cp[i_star][j] == 1:
                 # Update machines below boundary for current job
                 for i in range(i_star + 1, m):
-                    if Load[i - 1] > Load[i]:
-                        Load[i] = Load[i - 1]
+                    Load[i] = max(Load[i], Load[i - 1])
                     Load[i] += p[i][job]
 
                 # Current job completes on last machine now -> accumulate tardiness
@@ -268,8 +267,7 @@ class PermutationFlowshopSubseqEvaluator:
 
                 # Finish remaining machines for current job
                 for i in range(i_star + 1, m):
-                    if Load[i - 1] > Load[i]:
-                        Load[i] = Load[i - 1]
+                    Load[i] = max(Load[i], Load[i - 1])
                     Load[i] += p[i][job]
 
                 # Current job completes on last machine now -> accumulate tardiness

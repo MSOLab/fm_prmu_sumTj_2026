@@ -7,7 +7,8 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from flowshop_tardiness.io_solution import OBJ_LOG_FN_FORMAT, RESULT_DIR_NAME as DEFAULT_RESULTS_DIR
+from flowshop_tardiness.io_solution import OBJ_LOG_FN_FORMAT
+from flowshop_tardiness.io_solution import RESULT_DIR_NAME as DEFAULT_RESULTS_DIR
 
 # Default constants
 DEFAULT_CONTROLLER_LOG_NAME = "subroutine_controller.log"
@@ -37,9 +38,7 @@ def _read_instance_timelimit(instance_dir: Path, instance_id: str) -> float | No
     return v if v > 0 else None
 
 
-def _last_obj_value_at_or_before(
-    obj_data: dict, threshold_sec: float
-) -> float | None:
+def _last_obj_value_at_or_before(obj_data: dict, threshold_sec: float) -> float | None:
     """Latest numeric obj value whose timestamp key is ``<= threshold_sec``."""
     best_t = float("-inf")
     best_v: float | None = None
@@ -114,7 +113,7 @@ def get_obj_value_for_method(
     prev_obj_value,
 ):
     relevant_times = []
-    # Prefix match (e.g., "6-" matches "6-pw_cp")
+    # Prefix match (e.g., "6-" matches "6-sw_cp")
     for time_str, note in obj_notes.items():
         if note.startswith(method_prefix):
             relevant_times.append(time_str)
@@ -200,7 +199,7 @@ def process_instance(instance_dir: Path, methods_list: list[tuple[str, str]]):
     # Trim method end_sec / obj_value to the configured timelimit so the
     # per-scenario summary CSV (and downstream method-mean charts) reflect the
     # deadline-truncated view, even when the solver wall-clock overran. See
-    # docs/TODO.md "Hard cutoff" for the underlying overrun issue.
+    # TODO.md "Hard cutoff" for the underlying overrun issue.
     timelimit_sec = _read_instance_timelimit(instance_dir, instance_id)
 
     csv_rows = []

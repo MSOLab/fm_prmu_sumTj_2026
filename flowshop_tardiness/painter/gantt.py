@@ -1,9 +1,8 @@
 import logging
 from pathlib import Path
 
-import matplotlib.patches as patches
 import matplotlib.pyplot as plt
-from matplotlib import rc_context
+from matplotlib import patches, rc_context
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
@@ -91,11 +90,11 @@ class GanttPlotter:
         # list of jobs & stages
 
         if job_list is None or len(job_list) == 0:
-            _job_list = sorted({j for (j, _) in start_time_map.keys()})
+            _job_list = sorted({j for (j, _) in start_time_map})
         else:
             _job_list = job_list.copy()
         if stage_list is None or len(stage_list) == 0:
-            _stage_list = sorted({i for (_, i) in start_time_map.keys()})
+            _stage_list = sorted({i for (_, i) in start_time_map})
         else:
             _stage_list = stage_list.copy()
 
@@ -139,7 +138,7 @@ class GanttPlotter:
 
         Returns:
             (int, int): (minimum start time, maximum end time)
-        """  # noqa: E501
+        """
         if not start_time_map or not end_time_map:
             raise ValueError("start_time_map and end_time_map must not be empty.")
 
@@ -194,7 +193,7 @@ class GanttPlotter:
             y (float): Y-axis position.
             show_label (bool, optional): Whether to show the job label. Default is True.
             show_duration (bool, optional): Whether to show the duration. Default is True.
-        """  # noqa: E501
+        """
         duration = e_time - s_time
 
         self.ax.add_patch(

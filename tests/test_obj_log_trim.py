@@ -1,14 +1,15 @@
-import tempfile
 from pathlib import Path
 
 import pandas as pd
 import pytest
 import yaml
+from routix.report.subroutine_report_statistics import (
+    SubroutineReportStatisticsKeys,
+)
 
 from flowshop_tardiness.report.dashboards.obj_log_loader import (
     CallSegment,
     ProgPoint,
-    _build_calls_for_series,
     _truncate_calls_to_timelimit,
     load_instance_progression,
 )
@@ -17,7 +18,6 @@ from flowshop_tardiness.report.dashboards.obj_log_trim import (
     _resolve_obj_log_path,
     apply_timelimit_trim,
 )
-
 
 # ---------- _last_value_at_or_before ----------
 
@@ -126,7 +126,7 @@ def test_trim_overwrites_when_solver_overran(tmp_path: Path):
         [
             {
                 "scenario": "scn",
-                "insName": "1",
+                SubroutineReportStatisticsKeys.INSTANCE_NAME: "1",
                 "timelimit": 300.0,
                 "bestObj": 650.0,
                 "bestBound": 100.0,
@@ -165,7 +165,7 @@ def test_trim_no_op_when_solver_finished_within_limit(tmp_path: Path):
         [
             {
                 "scenario": "scn",
-                "insName": "2",
+                SubroutineReportStatisticsKeys.INSTANCE_NAME: "2",
                 "timelimit": 60.0,
                 "bestObj": 60.0,
                 "bestBound": 30.0,
@@ -189,7 +189,7 @@ def test_trim_leaves_row_untouched_when_obj_log_missing(tmp_path: Path):
         [
             {
                 "scenario": "scn",
-                "insName": "missing",
+                SubroutineReportStatisticsKeys.INSTANCE_NAME: "missing",
                 "timelimit": 100.0,
                 "bestObj": 42.0,
                 "bestBound": 0.0,
@@ -228,7 +228,7 @@ def test_trim_picks_final_logged_value_when_recorded_just_after_limit(
         [
             {
                 "scenario": "scn",
-                "insName": "1",
+                SubroutineReportStatisticsKeys.INSTANCE_NAME: "1",
                 "timelimit": 22.5,
                 "bestObj": 5419.0,
                 "bestBound": 0.0,
@@ -253,7 +253,7 @@ def test_trim_handles_multiple_rows_and_scenarios(tmp_path: Path):
         [
             {
                 "scenario": "a",
-                "insName": "1",
+                SubroutineReportStatisticsKeys.INSTANCE_NAME: "1",
                 "timelimit": 10.0,
                 "bestObj": 80.0,
                 "bestBound": 0.0,
@@ -261,7 +261,7 @@ def test_trim_handles_multiple_rows_and_scenarios(tmp_path: Path):
             },
             {
                 "scenario": "a",
-                "insName": "2",
+                SubroutineReportStatisticsKeys.INSTANCE_NAME: "2",
                 "timelimit": 100.0,
                 "bestObj": 150.0,
                 "bestBound": 0.0,
@@ -269,7 +269,7 @@ def test_trim_handles_multiple_rows_and_scenarios(tmp_path: Path):
             },
             {
                 "scenario": "b",
-                "insName": "1",
+                SubroutineReportStatisticsKeys.INSTANCE_NAME: "1",
                 "timelimit": 10.0,
                 "bestObj": 250.0,
                 "bestBound": 0.0,
@@ -286,7 +286,15 @@ def test_trim_handles_multiple_rows_and_scenarios(tmp_path: Path):
 
 
 def test_trim_skips_when_required_columns_missing(tmp_path: Path):
-    df = pd.DataFrame([{"scenario": "x", "insName": "1", "bestObj": 100.0}])
+    df = pd.DataFrame(
+        [
+            {
+                "scenario": "x",
+                SubroutineReportStatisticsKeys.INSTANCE_NAME: "1",
+                "bestObj": 100.0,
+            }
+        ]
+    )
     out = apply_timelimit_trim(df, tmp_path)
     # No mutation, no added columns
     assert "bestObj_endpoint" not in out.columns
@@ -309,7 +317,7 @@ def test_trim_preserves_original_when_no_value_recorded_before_limit(
         [
             {
                 "scenario": "scn",
-                "insName": "1",
+                SubroutineReportStatisticsKeys.INSTANCE_NAME: "1",
                 "timelimit": 100.0,
                 "bestObj": 50.0,
                 "bestBound": 0.0,
@@ -403,9 +411,7 @@ def test_truncate_synthesizes_endpoint_when_no_point_in_window():
     assert truncated.global_end_sec == 787.5
     assert truncated.global_start_sec == 264.83
     # Carry-forward from the previous call's last value
-    assert [(p.global_sec, p.value) for p in truncated.points] == [
-        (787.5, 1159047.0)
-    ]
+    assert [(p.global_sec, p.value) for p in truncated.points] == [(787.5, 1159047.0)]
 
 
 def test_truncate_returns_calls_unchanged_for_invalid_timelimit():

@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
+from routix.report.subroutine_report_statistics import (
+    SubroutineReportStatisticsKeys,
+)
 
 # phase -> method_name row in method_end_time_and_obj_value.csv (end_sec source)
 PHASE_MAP = [
@@ -102,7 +105,7 @@ def process_instance(instance_dir: Path) -> list[dict]:
             continue
         rows.append(
             {
-                "insName": instance_dir.name,
+                SubroutineReportStatisticsKeys.INSTANCE_NAME: instance_dir.name,
                 "phase": phase,
                 "end_sec": end_sec,
                 "obj_value": eligible[-1],
@@ -152,14 +155,24 @@ def main():
             print(f"[warn] Failed to process {inst_dir.name}: {e}", file=sys.stderr)
 
     out_path = out_dir / "phase_obj_c4.csv"
-    df = pd.DataFrame(all_rows, columns=["insName", "phase", "end_sec", "obj_value"])
+    df = pd.DataFrame(
+        all_rows,
+        columns=[
+            SubroutineReportStatisticsKeys.INSTANCE_NAME,
+            "phase",
+            "end_sec",
+            "obj_value",
+        ],
+    )
     df["_order"] = df["phase"].map(PHASE_ORDER)
-    df = df.sort_values(["insName", "_order"]).drop(columns="_order")
+    df = df.sort_values([SubroutineReportStatisticsKeys.INSTANCE_NAME, "_order"]).drop(
+        columns="_order"
+    )
     df.to_csv(out_path, index=False)
 
     print(f"Wrote {len(df)} rows to {out_path}")
     print(f"  Phases: {sorted(df['phase'].unique())}")
-    print(f"  Instances: {df['insName'].nunique()}")
+    print(f"  Instances: {df[SubroutineReportStatisticsKeys.INSTANCE_NAME].nunique()}")
 
 
 if __name__ == "__main__":

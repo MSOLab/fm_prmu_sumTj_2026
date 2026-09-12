@@ -15,7 +15,6 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-
 SERIES_COLORS: tuple[str, ...] = (
     "#1f77b4",
     "#ff7f0e",
@@ -39,7 +38,7 @@ SUBROUTINE_SYMBOL_MAP: dict[str, str] = {
     "set_cp_model_as_base_cp_model": "square",
     "improve_by_insertion": "cross",
     "repeat_while_improvement": "star",
-    "pw_cp": "circle",
+    "sw_cp": "circle",
     "solve_base_cp_model": "hexagon",
 }
 

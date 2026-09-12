@@ -27,6 +27,9 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from routix.report.subroutine_report_statistics import (
+    SubroutineReportStatisticsKeys,
+)
 
 from flowshop_tardiness.io_solution import OBJ_LOG_FN_FORMAT, RESULT_DIR_NAME
 
@@ -99,7 +102,10 @@ def _instance_metadata_lookup(
     """``(scenario_path, insName) -> {job_count, stage_count, timelimit}``."""
     lookup: dict[tuple[str, str], dict[str, Any]] = {}
     for _, row in summary_df.iterrows():
-        key = (str(row["scenario"]), str(row["insName"]))
+        key = (
+            str(row["scenario"]),
+            str(row[SubroutineReportStatisticsKeys.INSTANCE_NAME]),
+        )
         lookup[key] = {
             "job_count": int(row["job_count"]),
             "stage_count": int(row["stage_count"]),
@@ -145,7 +151,7 @@ def _load_scenario_progressions(
     scenario_df = summary_df[summary_df["scenario"] == scenario_path]
     progressions = []
     for _, row in scenario_df.iterrows():
-        ins_name = str(row["insName"])
+        ins_name = str(row[SubroutineReportStatisticsKeys.INSTANCE_NAME])
         meta = instance_meta.get((scenario_path, ins_name))
         if meta is None:
             continue
@@ -275,7 +281,9 @@ def write_post_run_dashboard_artifacts(
         )
         baseline_map = {
             str(ins): float(grp["bestObj"].min())
-            for ins, grp in summary_df.groupby("insName")
+            for ins, grp in summary_df.groupby(
+                SubroutineReportStatisticsKeys.INSTANCE_NAME
+            )
             if grp["bestObj"].notna().any()
         }
 
@@ -341,7 +349,9 @@ def write_post_run_dashboard_artifacts(
         # 4. Per-scenario scatter HTMLs
         # ------------------------------------------------------------------
         for frame in scenario_frames:
-            scatter_path = _scenario_write_root / frame["scenario_path"] / _SCENARIO_SCATTER_FN
+            scatter_path = (
+                _scenario_write_root / frame["scenario_path"] / _SCENARIO_SCATTER_FN
+            )
             ok = export_method_rpdf_scatter_html(
                 endpoint_df=frame["endpoint_df"],
                 raw_progression_df=frame["raw_progression_df"],
@@ -384,7 +394,9 @@ def write_post_run_dashboard_artifacts(
             continue
         label = _scenario_short_name(scenario_path)
         scenario_entry = {"label": label, "method_points": method_points}
-        per_scenario_path = _scenario_write_root / scenario_path / _SCENARIO_METHOD_MEAN_FN
+        per_scenario_path = (
+            _scenario_write_root / scenario_path / _SCENARIO_METHOD_MEAN_FN
+        )
         if export_method_mean_scatter_html(
             [scenario_entry],
             per_scenario_path,

@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import logging
 import random
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Iterable, Sequence
 
 from routix import DynamicDataObject, ElapsedTimer, StoppingCriteria
 from schore.parameters_examples.shop.flow import FlowshopDuedateParameters
