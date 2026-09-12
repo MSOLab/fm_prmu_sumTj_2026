@@ -11,7 +11,9 @@
 > name (`sw_cp` / SW-CP) throughout, including the log file name that runs
 > write today. The plan paths above keep the old name (`pw_cp`) because that is
 > what the files on disk are called, and so do the log files from the 2026-06
-> runs under `Outputs_scenarios/`.
+> runs under `Outputs_scenarios/`. See
+> [Pre-rename `pw_cp` outputs are frozen](#pre-rename-pw_cp-outputs-are-frozen)
+> for what that means for those run directories.
 
 ## Summary
 
@@ -62,6 +64,32 @@ get per-iteration monotonicity. Among the experiment configs,
 Correction to older notes: an earlier claim that refreshing $S^R$ does not fix
 this was wrong. Refresh works precisely because it re-bases the reference on the
 current, already-improved tardiness instead of the original incumbent's.
+
+## Pre-rename `pw_cp` outputs are frozen
+
+Decision for the rename: run directories produced before `e9ea6dd` are
+read-only history. They stay in `Outputs_scenarios/` and their numbers stay
+quotable, but the code no longer reads them back, and no alias is kept for the
+old name. Concretely, for a directory whose flow still says `pw_cp`:
+
+- `RESUME` is rejected. The cached subroutine flow is re-validated against
+  `FlowshopTardinessCpLnsController`, which no longer has `pw_cp`, so routix
+  reports `Method 'pw_cp' not found`. Flows that also carry
+  `init_by_neh_ms: true` are rejected the same way, because that argument is now
+  `init_method`.
+- `POST_PROCESS_ONLY` is not affected by validation (the flow is only validated
+  for `FULL_RUN` and `RESUME`), so those directories can still be re-analyzed.
+- Their per-iteration notes keep the `pw_cp` label, while
+  `SUBROUTINE_SYMBOL_MAP` in `flowshop_tardiness/report/dashboards/_chart_internals.py`
+  and the method list in `scripts/analysis_metadata.py` now key on `sw_cp`. The
+  old series therefore keep their own `pw_cp` legend entry and fall back to the
+  default chart symbol instead of the `sw_cp` circle.
+- Timelimit trimming is unaffected: `obj_log_trim` reads only the obj_log
+  timestamps, never a method name.
+
+To re-run an old experiment, copy its flow into a new config file, apply the
+renames (`pw_cp` → `sw_cp`, `init_by_neh_ms: true` → `init_method: neh-ms`), and
+start a fresh run instead of resuming.
 
 ## Diagnostics
 
