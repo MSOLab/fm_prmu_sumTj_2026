@@ -8,7 +8,7 @@ dependencies = [
     "cplex>=22.1.2.0",
     "docplex>=2.27.239",
     "mbls",
-    "ortools>=9.14.6206",
+    "ortools>=9.14.6206,<9.15",
     "pydantic>=2.11.9",
     "pyyaml>=6.0.2",
     "routix",
