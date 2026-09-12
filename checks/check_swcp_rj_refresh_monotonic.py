@@ -1,5 +1,13 @@
 import random
+import sys
 from itertools import permutations
+from pathlib import Path
+
+# checks/ is not a package; put the repo root on sys.path so this script can be
+# run directly as `uv run python checks/<name>.py` from anywhere.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite as Sched
 
@@ -63,7 +71,7 @@ def sim_swcp(stages, p, due, pi, B, refresh):
 random.seed(7)
 trials = 8000
 inc_static = inc_refresh = 0
-worse_final = 0
+better_final = worse_final = equal_final = 0
 for t in range(trials):
     n = random.randint(6, 11)
     c = random.randint(2, 4)
@@ -82,10 +90,18 @@ for t in range(trials):
         inc_static += 1
     if any(tr[i + 1] > tr[i] for i in range(len(tr) - 1)):
         inc_refresh += 1
-    if tr[-1] > ts[-1]:  # does refresh hurt final quality?
+    # does refresh change final quality?
+    if tr[-1] < ts[-1]:
+        better_final += 1
+    elif tr[-1] > ts[-1]:
         worse_final += 1
+    else:
+        equal_final += 1
 
 print(f"trials={trials}")
 print(f"  current (S^R once)   : trajectories with an increase = {inc_static}")
 print(f"  proposed (refresh)   : trajectories with an increase = {inc_refresh}")
-print(f"  refresh final WORSE than current final = {worse_final}")
+print(
+    f"  refresh final vs current final: "
+    f"better={better_final} worse={worse_final} equal={equal_final}"
+)

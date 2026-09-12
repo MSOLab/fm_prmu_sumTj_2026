@@ -199,7 +199,7 @@ def process_instance(instance_dir: Path, methods_list: list[tuple[str, str]]):
     # Trim method end_sec / obj_value to the configured timelimit so the
     # per-scenario summary CSV (and downstream method-mean charts) reflect the
     # deadline-truncated view, even when the solver wall-clock overran. See
-    # docs/TODO.md "Hard cutoff" for the underlying overrun issue.
+    # TODO.md "Hard cutoff" for the underlying overrun issue.
     timelimit_sec = _read_instance_timelimit(instance_dir, instance_id)
 
     csv_rows = []

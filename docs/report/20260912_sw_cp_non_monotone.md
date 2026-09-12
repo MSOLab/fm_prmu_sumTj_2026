@@ -52,8 +52,13 @@ plus the remainder in incumbent order), right-justify it, and read the LCT from
 that.
 
 Brute force puts the current design at 14/8000 increasing trajectories and the
-refreshed one at 0/8000, with near-zero change in final quality (better 15 /
-worse 11 / equal 7974).
+refreshed one at 0/8000, with near-zero change in final quality (better 18 /
+worse 19 / equal 7963). Refresh buys per-iteration monotonicity, not a better
+answer: the final objective is unchanged in 99.5% of trials and the remaining
+0.5% splits evenly both ways.
+
+Reproduce with `uv run python checks/check_swcp_rj_refresh_monotonic.py`
+(seed 7, 8000 trials); it prints all five counts above.
 
 **Current state**: implemented in `sw_cp.py` as the `refresh_deadline_every_step`
 argument, defaulting to `False` (the fixed-$S^R$ behavior). Set it to `True` to

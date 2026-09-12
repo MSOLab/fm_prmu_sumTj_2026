@@ -1,4 +1,12 @@
 import random
+import sys
+from pathlib import Path
+
+# checks/ is not a package; put the repo root on sys.path so this script can be
+# run directly as `uv run python checks/<name>.py` from anywhere.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from flowshop_tardiness.fm_prmu import PermutationFlowshopScheduleLite as Sched
 

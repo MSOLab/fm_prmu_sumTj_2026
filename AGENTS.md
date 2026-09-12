@@ -11,6 +11,8 @@ the problem statement and the solver line-up.
   not advisory: the `PreToolUse` hook `.claude/hooks/uv-only-python.sh` denies
   bare invocations.
 - Investigation scripts live in `checks/`; run them the same way.
+- Deferred work lives in the root `TODO.md`, one `##` entry per item that states
+  the problem and a proposed approach. There is no second TODO file.
 - Plans live in `plans/`, named `YYYYMMDD_descriptive_snake_case.md`.
 - Experiment and investigation write-ups live in `docs/report/`. A write-up with
   several files goes in a `YYYYMMDD/` directory, a single document in
