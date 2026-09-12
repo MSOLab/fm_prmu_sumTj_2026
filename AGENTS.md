@@ -45,48 +45,35 @@ Use reader feedback when available; claim reader testing only if it occurred.
 
 ### Coding Principles
 
-#### KISS: Keep It Simple, Stupid
-
-Prefer the simplest implementation that meets current requirements;
-add complexity only when demanded.
-
-#### YAGNI: You ain't gonna need it
-
-Do not add features, abstractions, or configurability until needed.
-
-#### DRY: Don't repeat yourself
-
-Extract duplication only when it represents the same knowledge,
-not merely similar-looking code.
-
-#### SOLID principles
-
-In OO code, keep responsibilities focused, interfaces small, substitutions
-valid, and dependencies aimed at stable abstractions; do not abstract for
-speculative extension.
+- KISS (Keep It Simple, Stupid)
+  - Prefer the simplest implementation that meets current requirements;
+    add complexity only when demanded.
+- YAGNI (You ain't gonna need it)
+  - Do not add features, abstractions, or configurability until needed.
+- DRY (Don't repeat yourself)
+  - Extract duplication only when it represents the same knowledge,
+    not merely similar-looking code.
+- SOLID principles
+  - In OO code, keep responsibilities focused, interfaces small, substitutions
+    valid, and dependencies aimed at stable abstractions; do not abstract for
+    speculative extension.
 
 ### Architectural Patterns
 
-#### Single source of truth architecture
-
-Create and update each data element in one authoritative location;
-derived copies read from it.
+- Single source of truth architecture
+  - Create and update each data element in one authoritative location;
+    derived copies read from it.
 
 ### Best Practices
 
-#### TDD: Test-Driven Development
-
-When changing behavior, write a test and confirm it fails for the expected
-reason, implement the minimum, then improve with tests green. Do not require
-tests for docs or trivial config changes.
-
-#### BDD: Behavior-Driven Development
-
-When useful for requirements, describe stakeholder-visible behavior as one
-Given-When-Then scenario using shared domain terms.
-
-#### Contract-First Development
-
-Before implementing a public API or cross-component boundary, define its
-machine-readable contract, errors, and invariants; treat incompatible changes
-as breaking.
+- TDD (Test-Driven Development)
+  - When changing behavior, write a test and confirm it fails for the expected
+    reason, implement the minimum, then improve with tests green. Do not
+    require tests for docs or trivial config changes.
+- BDD (Behavior-Driven Development)
+  - When useful for requirements, describe stakeholder-visible behavior as one
+    Given-When-Then scenario using shared domain terms.
+- Contract-First Development
+  - Before implementing a public API or cross-component boundary, define its
+    machine-readable contract, errors, and invariants; treat incompatible
+    changes as breaking.
